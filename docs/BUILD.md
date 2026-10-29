@@ -66,6 +66,39 @@ The full configuration registers nine CTest suites. The private factory playback
 suite returns skip code 77 when its content is absent. The remaining tests need
 no original samples or presets. GUI tests use Xvfb and avoid the desktop session.
 
+## Using and checking the standalone app
+
+Launch the executable without a host:
+
+```bash
+"build/plugin/BeatScholarLinux_artefacts/Release/Standalone/Beat Scholar Linux"
+```
+
+Use the cog beside Master to open Audio/MIDI Settings. Choose your output device,
+sample rate, buffer size, and any MIDI inputs or output you want to use. Load a
+sample or local preset, set the tempo, and use the editor's Play/Pause/Stop
+controls. Pause keeps the current position; Stop returns to the beginning.
+
+The standalone app mixes all pads to stereo, including projects saved with
+multiple outputs. The VST3 retains its multiple-output routing and follows the
+host's transport. On a normal close, the app saves its project and tempo; JUCE
+also stores the audio-device setup for the next launch.
+
+For a GUI check that avoids your desktop, settings, and audio devices, run:
+
+```bash
+xvfb-run -a -s '-screen 0 1600x1200x24' python tools/run_standalone_settings_test.py \
+  "build/plugin/BeatScholarLinux_artefacts/Release/Standalone/Beat Scholar Linux" \
+  /tmp/beat-scholar-standalone-check
+```
+
+The helper uses a temporary home directory, an isolated Xvfb display, and null
+audio. It opens settings from the cog, closes them with Escape, enters 137 BPM,
+then closes and reopens the app and compares the saved project. It writes
+screenshots, a log, and a JSON result to the output directory. It disables
+real-time priority only for the test process and its children. It does not
+select or validate a physical audio or MIDI device; that needs a separate check.
+
 ## Local content
 
 The factory lookup uses an absolute `XDG_DATA_HOME` when set, otherwise

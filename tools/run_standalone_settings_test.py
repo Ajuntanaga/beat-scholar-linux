@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Exercise the standalone cog on Modal's isolated Xvfb display, without devices."""
+"""Check standalone settings and state recall on Xvfb, without audio devices."""
 import json
 import os
 from pathlib import Path
 import re
+import resource
 import subprocess
 import sys
 import tempfile
 import time
+import xml.etree.ElementTree as ET
+import zlib
 from PIL import ImageGrab
 
 executable, output = Path(sys.argv[1]), Path(sys.argv[2])
@@ -18,6 +21,11 @@ if match is None:
 pid = Path(f'/tmp/.X{match[1]}-lock').read_text().strip()
 if Path(f'/proc/{pid}/comm').read_text().strip() != 'Xvfb':
     raise RuntimeError('Refusing to control a desktop display')
+
+# ALSA's null device never waits for hardware. Real-time priority lets its
+# callback starve the window manager in a CPU-limited cloud container.
+# This limit applies only to this isolated harness and its child processes.
+resource.setrlimit(resource.RLIMIT_RTPRIO, (0, 0))
 
 def xdo(*args):
     return subprocess.run(['xdotool', *map(str, args)], text=True,
@@ -36,15 +44,42 @@ def wait_window(name, owner):
         time.sleep(0.1)
     raise RuntimeError(f'Window did not appear: {name}')
 
+def saved_project(home):
+    settings = ET.parse(home / '.config' / 'Beat Scholar Linux.settings').getroot()
+    encoded = settings.find("VALUE[@name='filterState']").attrib['val']
+    # JUCE MemoryBlock uses little-endian groups of six bits, with its own
+    # alphabet and a byte-count prefix; it is not RFC 4648 base64.
+    length, encoded = encoded.split('.', 1)
+    alphabet = '.ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+'
+    raw, accumulator, bits = bytearray(), 0, 0
+    for char in encoded:
+        accumulator |= alphabet.index(char) << bits
+        bits += 6
+        while bits >= 8:
+            raw.append(accumulator & 255)
+            accumulator >>= 8
+            bits -= 8
+    raw = raw[:int(length)]
+    if raw[:4] != b'BSLX':
+        raise RuntimeError('Saved standalone state has no BSLX envelope')
+    return json.loads(zlib.decompress(raw[8:]))
+
+def close_app(app, main):
+    xdo('windowactivate', '--sync', main)
+    xdo('key', 'alt+F4')
+    if app.wait(timeout=10) != 0:
+        raise RuntimeError('Standalone did not exit cleanly')
+
 with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
     scratch = Path(scratch)
     alsa = scratch / 'asound.conf'
     alsa.write_text('pcm.!default { type null }\npcm.offline { type null hint { show on description "Offline Null" } }\n')
     env = {**os.environ, 'XDG_CONFIG_HOME': str(scratch / 'config'), 'HOME': str(scratch),
+           'XDG_DATA_HOME': str(scratch / 'data'), 'XDG_CACHE_HOME': str(scratch / 'cache'),
            'ALSA_CONFIG_PATH': str(alsa), 'JACK_NO_START_SERVER': '1',
            'JACK_DEFAULT_SERVER': f'bsl-offline-{os.getpid()}'}
     with (output / 'application.log').open('w') as log:
-        manager = subprocess.Popen(['openbox'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        manager = subprocess.Popen(['openbox'], stdout=log, stderr=subprocess.STDOUT)
         app = None
         try:
             ready = time.monotonic() + 10
@@ -80,10 +115,34 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
                 time.sleep(0.1)
             if windows('Audio/MIDI Settings', app.pid):
                 raise RuntimeError('Settings dialog did not close with Escape')
+
+            # Enter a non-default tempo through the actual editor, then verify
+            # the app's own close/reopen persistence (no synthetic state file).
+            xdo('windowactivate', '--sync', main)
+            tempo_x = round(625 * width / 1280)
+            tempo_y = round(height - 720 * width / 1280 + 30 * width / 1280)
+            xdo('mousemove', '--window', main, tempo_x, tempo_y,
+                'click', '--repeat', '2', '--delay', '100', '1')
+            xdo('key', 'ctrl+a')
+            xdo('type', '--clearmodifiers', '137')
+            xdo('key', 'Return')
+            close_app(app, main)
+            saved = saved_project(scratch)
+            if saved['global']['beatsPerMinute'] != 137:
+                raise RuntimeError('Standalone did not save the edited tempo of 137 BPM')
+            app = subprocess.Popen([str(executable)], env=env, stdout=log, stderr=subprocess.STDOUT)
+            main = wait_window('Beat Scholar Linux', app.pid)
+            time.sleep(0.3)
+            ImageGrab.grab(xdisplay=os.environ['DISPLAY']).save(output / 'standalone-restored.png')
+            close_app(app, main)
+            recalled = saved_project(scratch)
+            if recalled != saved:
+                raise RuntimeError('Standalone project changed across close/reopen')
             (output / 'result.json').write_text(json.dumps({'settings_opened_from_cog': True,
                 'settings_closed_with_escape': True, 'device_selection_changed': False,
+                'clean_exit': True, 'saved_tempo_bpm': 137, 'project_recalled': True,
                 'main_geometry': geometry, 'click': [x, y]}, indent=2) + '\n')
-            print('Standalone cog opened Audio/MIDI Settings; Escape closed it; no device selection changed.')
+            print('Standalone settings opened/closed; clean restart recalled the project and 137 BPM tempo.')
         except Exception:
             diagnostic = {'app_exit': None if app is None else app.poll(),
                           'window_search': xdo('search', '--name', '.*').stdout}

@@ -272,7 +272,9 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     if (requestedAudioPattern != patternScheduler_.activePattern())
         patternScheduler_.reset(requestedAudioPattern);
 
-    const auto routing = parameters_.getRawParameterValue("routing")->load() >= 0.5f
+    const bool standalone = wrapperType == juce::AudioProcessor::wrapperType_Standalone;
+    // The standalone wrapper enables only the main stereo bus.
+    const auto routing = !standalone && parameters_.getRawParameterValue("routing")->load() >= 0.5f
                              ? bsl::RoutingMode::multi : bsl::RoutingMode::stereo;
     audioEngine_.setRoutingMode(routing);
 
@@ -311,16 +313,19 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     frame.blockSize = samplesInBlock;
     frame.playing = standalonePlaying_.load();
     frame.swingPercent = parameters_.getRawParameterValue("swing")->load();
-    if (const auto position = getPlayHead() != nullptr ? getPlayHead()->getPosition() : std::nullopt)
-    {
-        frame.playing = position->getIsPlaying();
-        if (const auto bpm = position->getBpm())
-            frame.bpm = *bpm;
-        if (const auto sample = position->getTimeInSamples())
-            frame.absoluteSampleStart = *sample;
-        if (const auto ppq = position->getPpqPosition())
-            frame.quarterNotePosition = *ppq;
-    }
+    // AudioProcessorPlayer supplies device time, not musical transport.
+    // Its clock keeps advancing while paused and its isPlaying stays false.
+    if (!standalone)
+        if (const auto position = getPlayHead() != nullptr ? getPlayHead()->getPosition() : std::nullopt)
+        {
+            frame.playing = position->getIsPlaying();
+            if (const auto bpm = position->getBpm())
+                frame.bpm = *bpm;
+            if (const auto sample = position->getTimeInSamples())
+                frame.absoluteSampleStart = *sample;
+            if (const auto ppq = position->getPpqPosition())
+                frame.quarterNotePosition = *ppq;
+        }
     transportPlaying_.store(frame.playing, std::memory_order_release);
     const bool midiPlaying = frame.playing && state.global.sequencerEnabled;
     const bool midiDiscontinuity = midiWasPlaying_
@@ -525,7 +530,8 @@ void BeatScholarLinuxProcessor::copyParameterValuesToState(bsl::ProjectState& st
 {
     state.global.swingPercent = parameters_.getRawParameterValue("swing")->load();
     state.global.beatsPerMinute = parameters_.getRawParameterValue("bpm")->load();
-    state.global.multiOutput = parameters_.getRawParameterValue("routing")->load() >= 0.5f;
+    state.global.multiOutput = wrapperType != juce::AudioProcessor::wrapperType_Standalone
+        && parameters_.getRawParameterValue("routing")->load() >= 0.5f;
     state.master.gain = parameters_.getRawParameterValue("masterGain")->load();
     for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
     {
@@ -540,7 +546,9 @@ void BeatScholarLinuxProcessor::copyParameterValuesToState(bsl::ProjectState& st
 
 void BeatScholarLinuxProcessor::syncParametersFromProject()
 {
-    const auto& state = projectEditor_.state();
+    auto& state = projectEditor_.state();
+    if (wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+        state.global.multiOutput = false;
     if (auto* swing = parameters_.getParameter("swing"))
         swing->setValueNotifyingHost(swing->convertTo0to1(static_cast<float>(state.global.swingPercent)));
     if (auto* bpm = parameters_.getParameter("bpm"))

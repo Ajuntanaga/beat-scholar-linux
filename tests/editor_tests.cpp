@@ -1663,6 +1663,109 @@ void testMasterUndoPreservesHostAutomation()
 }
 
 
+std::unique_ptr<BeatScholarLinuxProcessor> makeProcessorForWrapper(juce::AudioProcessor::WrapperType wrapper)
+{
+    juce::AudioProcessor::setTypeOfNextNewPlugin(wrapper);
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    juce::AudioProcessor::setTypeOfNextNewPlugin(juce::AudioProcessor::wrapperType_Undefined);
+    return processor;
+}
+
+void testStandaloneTransportIgnoresDeviceClock()
+{
+    struct DeviceClock final : juce::AudioPlayHead
+    {
+        PositionInfo info;
+        juce::Optional<PositionInfo> getPosition() const override { return info; }
+    } clock;
+    // AudioProcessorPlayer reports device time, but supplies no musical
+    // transport or tempo. Its default isPlaying is false, even after Play.
+    clock.info.setTimeInSamples(96000);
+    auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_Standalone);
+    auto state = makeBypassTestProject(0);
+    state.global.sequencerEnabled = true;
+    state.global.beatsPerMinute = 120.0;
+    state.patterns[0].lanes = { bsl::LaneState::make(4) };
+    for (auto& beat : state.patterns[0].lanes[0].beats)
+        beat.slices[0].enabled = true;
+    const auto bytes = bsl::statecodec::encode(state);
+    processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
+    processor->disableNonMainBuses();
+    processor->setRateAndBufferSizeDetails(48000, 480);
+    processor->prepareToPlay(48000, 480);
+    processor->setPlayHead(&clock);
+    juce::AudioBuffer<float> audio(2, 480);
+    juce::MidiBuffer midi;
+    const auto render = [&] {
+        midi.clear();
+        processor->processBlock(audio, midi);
+        int notes = 0;
+        for (const auto event : midi) notes += event.getMessage().isNoteOn();
+        clock.info.setTimeInSamples(*clock.info.getTimeInSamples() + 480);
+        return notes;
+    };
+    processor->playStandalone();
+    check(render() == 1 && processor->isTransportPlaying(),
+          "standalone Play starts the sequencer despite a stopped device playhead");
+    check(audio.getMagnitude(0, audio.getNumSamples()) > 0.01f,
+          "standalone sequencer reaches the main audio output");
+    processor->pauseStandalone();
+    for (int block = 0; block < 60; ++block)
+        check(render() == 0 && !processor->isTransportPlaying(),
+              "standalone Pause stops sequencing while the device clock advances");
+    processor->playStandalone();
+    for (int block = 0; block < 49; ++block)
+        check(render() == 0, "standalone Resume preserves the paused musical position");
+    check(render() == 1, "standalone tempo uses the local 120 BPM quarter-note interval");
+    processor->stopStandalone();
+    check(render() == 0 && !processor->isTransportPlaying(), "standalone Stop halts transport");
+    processor->playStandalone();
+    check(render() == 1, "standalone Play after Stop restarts at beat one");
+    processor->setPlayHead(nullptr);
+    processor->releaseResources();
+}
+
+void testStandaloneRestoresMultiOutputAsStereo()
+{
+    for (const auto wrapper : { juce::AudioProcessor::wrapperType_Standalone,
+                                juce::AudioProcessor::wrapperType_VST3 })
+    {
+        const bool standalone = wrapper == juce::AudioProcessor::wrapperType_Standalone;
+        auto processor = makeProcessorForWrapper(wrapper);
+        auto state = makeBypassTestProject(3);
+        state.global.multiOutput = true;
+        const auto bytes = bsl::statecodec::encode(state);
+        processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
+        check(processor->projectState().global.multiOutput == !standalone
+                  && (processor->parameters().getRawParameterValue("routing")->load() >= 0.5f) == !standalone,
+              "standalone restores stereo routing; VST3 retains saved multi-output routing");
+        processor->disableNonMainBuses();
+        processor->setRateAndBufferSizeDetails(48000, 480);
+        processor->prepareToPlay(48000, 480);
+        juce::AudioBuffer<float> audio(2, 480);
+        juce::MidiBuffer midi;
+        processor->triggerPad(3, 1.0f);
+        processor->processBlock(audio, midi);
+        check((audio.getMagnitude(0, audio.getNumSamples()) > 0.01f) == standalone,
+              "restored standalone preset remains audible on stereo; VST3 keeps its separate pad outputs");
+        // The standalone has no routing selector. Even an external parameter
+        // write must not strand audio on output buses that its wrapper disables.
+        processor->parameters().getParameter("routing")->setValueNotifyingHost(1.0f);
+        processor->triggerPad(3, 1.0f);
+        midi.clear();
+        processor->processBlock(audio, midi);
+        check((audio.getMagnitude(0, audio.getNumSamples()) > 0.01f) == standalone,
+              "effective standalone routing stays stereo after a multi-output parameter write");
+        juce::MemoryBlock saved;
+        processor->getStateInformation(saved);
+        auto restored = bsl::ProjectState::makeDefault();
+        check(bsl::statecodec::decode(saved.getData(), saved.getSize(), restored)
+                  && restored.global.multiOutput == !standalone,
+              "saved routing reflects standalone stereo or VST3 multi-output");
+        processor->releaseResources();
+    }
+}
+
 void testOutgoingMidiReleasesOnTransportChanges()
 {
     struct PlayHead final : juce::AudioPlayHead
@@ -2050,6 +2153,8 @@ int main(int argc, char** argv)
     testDocumentedNumericEntry(output);
     testLaneContextMenuDoesNotEdit();
     testSequencerMidiNotesHaveFiniteLifetimes();
+    testStandaloneTransportIgnoresDeviceClock();
+    testStandaloneRestoresMultiOutputAsStereo();
     testOutgoingMidiReleasesOnTransportChanges();
     testDocumentedPadBypassAutomation(output);
     testSparseMultiOutputBusMapping();

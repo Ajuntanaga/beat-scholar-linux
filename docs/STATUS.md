@@ -10,26 +10,39 @@ and pluginval strictness 10. Those suites include state and editor checks and a
 smoke test that loads the built VST3 through a separate host. The ninth suite
 needs private factory content and was skipped remotely.
 
-The matching local checker passed four-second initial-pattern playback for all
-129 private factory presets at 48 kHz. It also passed three presets at 44.1, 48,
-and 96 kHz. The checks cover loading, finite audio, expected non-silent playback,
-and MIDI activity. They do not compare the output with the original plug-in.
-Of the 129 presets, 87 produced samples at or above full scale; the largest
-absolute peak was 3.261248. Those measurements need reference comparison before
-calling the presets sonically correct or changing their gain.
+The matching local checker passed four-second initial-pattern playback for
+three private factory presets at 44.1, 48, and 96 kHz. The checks cover loading,
+finite audio, expected non-silent playback, and MIDI activity. They do not
+compare the output with the original plug-in.
 
-The matching standalone passed a local isolated Xvfb settings-open and
-Escape-close check using null audio. Its cloud main-window check still failed.
-Arrangement views were inspected at widths of 960, 1280, and 1920 pixels,
-alongside zoomed/scrolled, classic seven-slice, dark, custom-sample, and local
-settings views. These checks cover specific states; whole-interface pixel
-identity has not been established.
+The previous candidate passed all 129 private factory presets at 48 kHz. Of
+those, 87 produced samples at or above full scale; the largest absolute peak was
+3.261248. The current three-preset check also reaches full scale. These
+measurements need reference comparison before calling the presets sonically
+correct or changing their gain. The 129-preset sweep was not repeated for the
+standalone-only behavior changes.
+
+The matching standalone passed a local isolated Xvfb check using null audio:
+settings opened from the cog and closed with Escape, the app saved an edited
+137 BPM tempo, and the saved project matched after a clean close and reopen.
+The settings and restored-editor screenshots were inspected. Physical audio and
+MIDI devices were not tested. The cloud main-window check still timed out.
+
+The previous audit inspected arrangement views at widths of 960, 1280, and
+1920 pixels, alongside zoomed/scrolled, classic seven-slice, dark, custom-sample,
+and local settings views. These checks cover specific states; whole-interface
+pixel identity has not been established.
 
 The latest candidate is staged separately from the installed plug-in. It has
 not been loaded into the user's active REAPER session.
 
 ## Repairs already in the source
 
+- Standalone Play/Pause/Stop and tempo follow the app's own clock. The audio
+  device's continuously advancing clock no longer overrides those controls.
+- Standalone projects saved with multiple outputs play through the main stereo
+  output. Restored and subsequently saved routing agrees with that behavior;
+  the VST3 keeps multiple outputs and host timing.
 - Corrected factory sample resource assignments and the pie-sector geometry.
 - Fixed event loss in dense patterns and block-size-dependent playback.
 - Repaired host-start and seek alignment, pattern triggers, and MIDI boundaries.
@@ -61,6 +74,11 @@ the lane-control clipping defect; its pixel regression passes in the final
 candidate. The arrangement and sampler checks use manual pages 14 and 16, and
 the keyboard mapping follows page 5.
 
+The standalone regressions also failed on the earlier processor and passed
+with the fixes. They exercise a continuously advancing device clock, pause and
+resume timing, Stop followed by Play, and main-output audio after restoring or
+changing multi-output routing. A separate VST3 case retains multiple outputs.
+
 Private sample verification established exact decoded PCM for the recovered
 resources. That does not establish original preset or effect-output identity.
 Effect controls, routing, and behavior have regression coverage, but the
@@ -69,9 +87,10 @@ proprietary wet signal path has not been matched exhaustively.
 ## Still open
 
 Exact sound matching, the full-scale preset measurements, whole-interface visual
-matching, and a controlled live-host test of the latest candidate remain open.
-The cloud standalone window failure also needs resolution. Reports should name
-the specific reference, behavior, and tested build.
+matching, a controlled live-host test, and real audio/MIDI-device use of the
+latest candidate remain open. The cloud standalone window failure also needs
+resolution. Reports should name the specific reference, behavior, and tested
+build.
 
 Licensing, trial, update, and deactivation services are outside this project's
 implementation. Original commercial content and private validation captures
