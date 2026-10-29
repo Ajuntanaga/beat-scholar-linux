@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import os
+from unittest import mock
 from pathlib import Path
 import tempfile
 import unittest
@@ -12,6 +14,21 @@ SPEC.loader.exec_module(MODULE)
 
 
 class MigrationTests(unittest.TestCase):
+    def test_inventory_skips_symlinks_and_non_regular_files(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            source = root / "source"
+            (source / "Presets").mkdir(parents=True)
+            outside = root / "private.json"
+            outside.write_text("private data must not migrate")
+            (source / "Presets/link.json").symlink_to(outside)
+            (source / "Kits").symlink_to(root, target_is_directory=True)
+            os.mkfifo(source / "Presets/pipe.json")
+            # A mock prevents the unfixed implementation from blocking on the FIFO.
+            with mock.patch.object(MODULE, "sha256", return_value="0" * 64) as digest:
+                self.assertEqual(MODULE.inventory(source), [])
+                digest.assert_not_called()
+
     def test_copies_only_content_groups_and_writes_hash_manifest(self):
         with tempfile.TemporaryDirectory() as root:
             root_path = Path(root)

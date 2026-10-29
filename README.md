@@ -44,18 +44,21 @@ directory; they do not install or replace a plug-in in your host.
 
 ## Where it stands
 
-The latest validated candidate passed the available source-only CTest suites,
-an actual VST3 host smoke test, and pluginval at strictness 10. Local checks with
-private content also exercised three presets at 44.1, 48, and 96 kHz. These are
-regression checks, not proof that every preset sounds identical to the original.
+The latest candidate passed eight available CTest suites on Modal, including an
+actual VST3 host smoke test, and pluginval at strictness 10. Its matching local
+checker also passed initial-pattern playback for all 129 private factory presets
+at 48 kHz and three presets at 44.1, 48, and 96 kHz.
 
-Recent fixes cover incorrect sample assignments, pie-slice geometry, dropped
-events in dense patterns, transport alignment, and state handling. The latest
-pass also fixes beat-drag updates and Undo, overlapping MIDI note releases,
-muted effect tails, and sampler dividers. Full wet-effect waveform matching and
-exhaustive visual matching remain open. The standalone settings check passes locally on an isolated display;
-the cloud window check still fails. See [current status](docs/STATUS.md) for the
-scope and limits of those results.
+Recent repairs cover sample assignments, pie-slice geometry, dense-pattern
+timing, MIDI note releases, Undo, and muted effect tails. This pass fixes keyboard
+pad mapping, arrangement scrolling and context actions, zoom controls, clipped
+labels and lane controls, and malformed state or sample imports.
+
+Sound matching is still open. Some presets produce samples at or above full
+scale; passing the playback checks does not establish original sound or effect
+identity. Whole-interface visual matching also remains open. Standalone settings
+pass locally on an isolated display, while the cloud window check still fails.
+See [current status](docs/STATUS.md) for the measurements and limits.
 
 Start with [the reference notes](docs/REFERENCES.md), the tests,
 and the source folders:

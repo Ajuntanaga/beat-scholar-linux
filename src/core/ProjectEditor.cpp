@@ -98,7 +98,9 @@ bool ProjectEditor::randomizeLane(std::size_t patternIndex, std::size_t laneInde
 
 bool ProjectEditor::addBar(std::size_t patternIndex, BarState bar)
 {
-    if (patternIndex >= state_.patterns.size() || bar.numerator < 1)
+    if (patternIndex >= state_.patterns.size() || bar.numerator < 1 || bar.numerator > 64
+        || (bar.denominator != 2 && bar.denominator != 4
+            && bar.denominator != 8 && bar.denominator != 16))
         return false;
     auto& pattern = state_.patterns[patternIndex];
     beginEdit();

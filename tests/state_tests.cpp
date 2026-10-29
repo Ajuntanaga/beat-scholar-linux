@@ -613,6 +613,50 @@ void testNativeKitAndRandomizerJsonRoundTrip()
           "native randomizer preserves pad and subdivision selections");
 }
 
+
+void testRandomizerIndicesRejectNarrowingAndNonIntegers()
+{
+    for (const juce::var value : { juce::var(-1), juce::var(256), juce::var(juce::int64(1) << 40),
+                                  juce::var(1.5), juce::var("2") })
+    {
+        bsl::RandomizerSettings original;
+        original.selectedPads = { 7 };
+        auto candidate = original;
+        auto native = juce::JSON::parse(bsl::statecodec::encodeRandomizerJson(original));
+        native.getDynamicObject()->getProperty("randomizer").getDynamicObject()
+            ->setProperty("selectedPads", juce::Array<juce::var> { value });
+        check(!bsl::statecodec::decodeRandomizerJson(juce::JSON::toString(native), candidate),
+              "native randomizer rejects invalid pad index before narrowing");
+        check(candidate.selectedPads == original.selectedPads, "native index rejection preserves destination");
+        auto legacy = juce::JSON::parse(R"({"Randomize":{"possibleNotes":[{"value":1}]}})");
+        legacy.getDynamicObject()->getProperty("Randomize").getDynamicObject()
+            ->getProperty("possibleNotes").getArray()->getReference(0).getDynamicObject()->setProperty("value", value);
+        check(!bsl::statecodec::importLegacyRandomizerJson(juce::JSON::toString(legacy), candidate),
+              "legacy randomizer rejects invalid pad index before narrowing");
+        check(candidate.selectedPads == original.selectedPads, "legacy index rejection preserves destination");
+    }
+}
+
+void testCompressedStateExpansionIsBounded()
+{
+    auto state = bsl::ProjectState::makeDefault();
+    state.patterns[0].name = "Preserve on oversized import";
+    const auto small = bsl::statecodec::encode(state);
+    const auto json = bsl::statecodec::encodePresetJson(state);
+    juce::MemoryOutputStream envelope;
+    envelope.write(small.getData(), 8);
+    {
+        juce::GZIPCompressorOutputStream gzip(envelope, 1);
+        gzip.write(json.toRawUTF8(), json.getNumBytesAsUTF8());
+        const std::string padding(64 * 1024, ' ');
+        for (int block = 0; block < 192 * 16; ++block) gzip.write(padding.data(), padding.size());
+    }
+    auto destination = state;
+    check(!bsl::statecodec::decode(envelope.getData(), envelope.getDataSize(), destination),
+          "compressed JSON exceeding 192 MiB is rejected before unlimited expansion");
+    check(destination.patterns[0].name == state.patterns[0].name, "oversized state rejection is atomic");
+}
+
 } // namespace
 
 int main()
@@ -631,6 +675,8 @@ int main()
     testLegacyPresetAdapterPublishesOnlyValidatedProject();
     testLegacyAuxSettingsDoNotProcessUnsentMasterAudio();
     testLegacyKitAdapterImportsLayersAndProcessing();
+    testRandomizerIndicesRejectNarrowingAndNonIntegers();
+    testCompressedStateExpansionIsBounded();
     testNativeKitAndRandomizerJsonRoundTrip();
     if (failures != 0)
         return EXIT_FAILURE;

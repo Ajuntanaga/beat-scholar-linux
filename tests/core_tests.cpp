@@ -210,6 +210,20 @@ void testNegativeSwingAdvancesOffGridEvents()
     check(pushed < straight, "negative swing advances off-grid events");
 }
 
+
+void testAddBarRejectsInvalidMeterWithoutHistory()
+{
+    for (const bsl::BarState meter : { bsl::BarState {65, 4}, bsl::BarState {4, 3}, bsl::BarState {0, 4} })
+    {
+        bsl::ProjectEditor editor(bsl::ProjectState::makeDefault());
+        const auto bars = editor.state().patterns[0].bars.size();
+        check(!editor.addBar(0, meter), "invalid raw bar meter rejected");
+        check(editor.state().isValid() && editor.state().patterns[0].bars.size() == bars,
+              "invalid meter leaves state valid and unchanged");
+        check(!editor.undo(), "invalid meter creates no undo entry");
+    }
+}
+
 void testBarEditingKeepsEveryLaneAligned()
 {
     bsl::ProjectEditor editor(bsl::ProjectState::makeDefault());
@@ -553,6 +567,7 @@ int main()
     testSequencerProducesSampleAccurateTripletEvents();
     testRealtimeSequencerRenderUsesCallerOwnedBoundedStorage();
     testNegativeSwingAdvancesOffGridEvents();
+    testAddBarRejectsInvalidMeterWithoutHistory();
     testBarEditingKeepsEveryLaneAligned();
     testSameMeterBarPasteRetainsUndoCheckpoint();
     testUndoRedoRestoresCanonicalProjectState();

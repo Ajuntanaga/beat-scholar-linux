@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import tempfile
 
 DEFAULT_SOURCE = (
@@ -33,10 +34,19 @@ def sha256(path: Path) -> str:
 def inventory(source: Path) -> list[dict[str, object]]:
     allowed_roots = {"Presets", "Kits", "Step Randomizer"}
     entries: list[dict[str, object]] = []
-    for path in sorted(source.rglob("*.json")):
-        relative = path.relative_to(source)
-        if not relative.parts or relative.parts[0] not in allowed_roots:
+    candidates: list[Path] = []
+    for name in sorted(allowed_roots):
+        root = source / name
+        if root.is_symlink() or not root.is_dir():
             continue
+        for directory, folders, files in os.walk(root, followlinks=False):
+            folders[:] = [folder for folder in folders if not (Path(directory) / folder).is_symlink()]
+            candidates.extend(Path(directory) / name for name in files if name.endswith(".json"))
+    for path in sorted(candidates):
+        # lstat excludes both linked private files and FIFOs/devices that could block a migration.
+        if not stat.S_ISREG(path.lstat().st_mode):
+            continue
+        relative = path.relative_to(source)
         entries.append(
             {
                 "path": relative.as_posix(),

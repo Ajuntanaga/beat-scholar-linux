@@ -6,6 +6,9 @@
 
 namespace bsl::statecodec {
 
+// Accommodates the full embedded-audio budget after Base64 encoding, plus metadata.
+inline constexpr std::size_t maximumJsonBytes = 192u * 1024u * 1024u;
+inline constexpr std::size_t maximumSerializedBytes = maximumJsonBytes + 1024u * 1024u;
 inline constexpr std::size_t maximumEmbeddedSampleBytes = 128u * 1024u * 1024u;
 [[nodiscard]] constexpr bool fitsEmbeddedSampleBudget(std::size_t retained, std::size_t incoming) noexcept
 {

@@ -1383,6 +1383,152 @@ void testSampleUndoRestoresAudibleData(const juce::File& output)
 }
 
 
+
+void testDocumentedKeyboardRows()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    BeatScholarLinuxEditor editor(*processor);
+    const std::string rows = "asdfghjkqwertyui";
+    for (std::size_t pad = 0; pad < rows.size(); ++pad)
+    {
+        check(editor.keyPressed(juce::KeyPress(rows[pad], {}, rows[pad])), "pad shortcut handled");
+        check(processor->projectState().ui.selectedPad == pad,
+              "manual keyboard row selects matching visible pad: " + juce::String(rows[pad]));
+    }
+}
+
+void testArrangementOverflowAndContextActions(const juce::File& output)
+{
+    for (const bool patterns : { false, true })
+        for (const int width : { 960, 1280, 1920 })
+        {
+            auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+            auto& state = processor->projectState();
+            state.ui.patternMode = patterns;
+            if (patterns)
+            {
+                while (state.patterns.size() < 12) processor->projectEditor().addPattern();
+                state.activePattern = 0;
+            }
+            else
+                while (state.patterns[0].bars.size() < 12)
+                    processor->projectEditor().addBar(0, bsl::BarState::make(4, 4));
+            BeatScholarLinuxEditor editor(*processor);
+            editor.setSize(width, width * 720 / 1280);
+            const float scale = float(width) / 1280.0f;
+            const auto count = [&] { return patterns ? state.patterns.size() : state.patterns[0].bars.size(); };
+            editor.mouseDown(visualEvent(editor, juce::Point<float>(1255, 120) * scale,
+                                        juce::ModifierKeys::rightButtonModifier));
+            check(count() == 12, "right click over arrangement delete opens menu without deletion");
+            juce::PopupMenu::dismissAllActiveMenus();
+            if (count() != 12) continue; // Keep the remaining checks independent of destructive RED behavior.
+            juce::MouseWheelDetails wheel;
+            wheel.deltaY = -100.0f;
+            editor.mouseWheelMove(visualEvent(editor, juce::Point<float>(1205, 300) * scale), wheel);
+            editor.mouseDown(visualEvent(editor, juce::Point<float>(1205, 423) * scale));
+            check((patterns ? state.activePattern : state.ui.selectedBar) == 11,
+                  "last arrangement item remains reachable at every editor size");
+            const auto name = std::string(patterns ? "patterns-" : "bars-") + std::to_string(width) + ".png";
+            saveVisual(editor, output, name.c_str());
+            editor.mouseDown(visualEvent(editor, juce::Point<float>(1155, 436) * scale));
+            check(count() == 13, "scrolled duplicate glyph edits the visible final item");
+        }
+}
+
+void testZoomButtonsAndScrollRails(const juce::File& output)
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    auto& state = processor->projectState();
+    state.patterns[0].lanes = { bsl::LaneState::make(4), bsl::LaneState::make(4) };
+    state.ui.selectedPad = 15;
+    BeatScholarLinuxEditor editor(*processor);
+    const auto beforeScroll = editor.createComponentSnapshot(editor.getLocalBounds());
+    const auto click = [&](float x, float y) {
+        auto event = visualEvent(editor, { x, y });
+        editor.mouseDown(event); editor.mouseUp(event);
+    };
+    click(1121, 511); // Horizontal + doubles the visible beat width.
+    click(800, 200);
+    check(state.patterns[0].lanes[0].beats[1].slices[0].padIndex == 15,
+          "horizontal plus zooms beat hit targets");
+    state.ui.selectedPad = 14;
+    click(1091, 511);
+    click(800, 200);
+    check(state.patterns[0].lanes[0].beats[2].slices[0].padIndex == 14,
+          "horizontal minus restores beat hit targets");
+    click(1121, 511);
+    click(1065, 514); // Right end of the scroll rail, before the zoom buttons.
+    state.ui.selectedPad = 13;
+    click(300, 200);
+    check(state.patterns[0].lanes[0].beats[2].slices[0].padIndex == 13,
+          "horizontal rail scrolls to the final visible beats");
+    click(1141, 474); // Vertical +.
+    state.ui.selectedPad = 12;
+    click(300, 400);
+    check(state.patterns[0].lanes[0].beats[2].slices[0].padIndex == 12,
+          "vertical plus zooms lane hit targets");
+    click(1141, 454);
+    state.ui.selectedPad = 11;
+    click(300, 400);
+    check(state.patterns[0].lanes[1].beats[2].slices[0].padIndex == 11,
+          "vertical minus restores lane hit targets");
+    click(1141, 474);
+    click(1141, 440);
+    state.ui.selectedPad = 10;
+    click(300, 200);
+    check(state.patterns[0].lanes[1].beats[2].slices[0].padIndex == 10,
+          "vertical rail scrolls to the final lane");
+    const auto afterScroll = editor.createComponentSnapshot(editor.getLocalBounds());
+    int changedHeaderPixels = 0;
+    for (int y = 0; y < 102; ++y)
+        for (int x = 8; x < 58; ++x)
+            changedHeaderPixels += beforeScroll.getPixelAt(x, y) != afterScroll.getPixelAt(x, y);
+    check(changedHeaderPixels == 0, "scrolled lane controls stay below the toolbar and add-lane header");
+    saveVisual(editor, output, "zoomed-and-scrolled.png");
+}
+
+void testInvalidEmbeddedAudioDoesNotReplaceStateOrSound(const juce::File& output)
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    auto source = makeBypassTestProject(0);
+    source.patterns[0].name = "Keep this project";
+    auto encoded = bsl::statecodec::encode(source);
+    processor->setStateInformation(encoded.getData(), int(encoded.getSize()));
+    const auto sample = juce::File(__FILE__).getParentDirectory().getChildFile("fixtures/synthetic-tone.mp3");
+    check(processor->loadCustomSample(0, sample).wasOk(), "valid audio loads before malformed restore");
+    const auto render = [&] {
+        processor->setRateAndBufferSizeDetails(48000, 257);
+        processor->prepareToPlay(48000, 257);
+        processor->triggerPad(0);
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> audio(2, 257);
+        processor->processBlock(audio, midi);
+        auto result = std::vector<float>(audio.getReadPointer(0), audio.getReadPointer(0) + 257);
+        processor->releaseResources();
+        return result;
+    };
+    const auto before = render();
+    auto invalid = processor->projectState();
+    invalid.patterns[0].name = "Invalid media";
+    invalid.kit.pads[0].customSampleName = "invalid.flac";
+    invalid.kit.pads[0].customSampleBase64 = juce::Base64::toBase64("FLAC", 4).toStdString();
+    invalid.kit.pads[0].customSampleSha256 = juce::SHA256("FLAC", 4).toHexString().toStdString();
+    encoded = bsl::statecodec::encode(invalid);
+    check(!encoded.isEmpty(), "malformed audio fixture passes structural codec checks");
+    processor->setStateInformation(encoded.getData(), int(encoded.getSize()));
+    check(processor->projectState().patterns[0].name == "Keep this project",
+          "host recall rejects undecodable embedded audio atomically");
+    check(render() == before, "rejected host recall preserves exact audible sample");
+    const auto preset = output.getChildFile("invalid-audio.bslpreset");
+    check(preset.replaceWithText(bsl::statecodec::encodePresetJson(invalid)), "write malformed audio preset");
+    check(!processor->loadPresetFile(preset), "preset import rejects undecodable embedded audio");
+    check(render() == before, "rejected preset preserves exact audible sample");
+    const auto kit = output.getChildFile("invalid-audio.bslkit");
+    check(kit.replaceWithText(bsl::statecodec::encodeKitJson(invalid.kit, invalid.master)), "write malformed audio kit");
+    check(!processor->loadKitFile(kit), "kit import rejects undecodable embedded audio");
+    check(render() == before, "rejected kit preserves exact audible sample");
+}
+
 void testDecodedSampleLimitsBeforeAllocation()
 {
     using Processor = BeatScholarLinuxProcessor;
@@ -1895,6 +2041,10 @@ int main(int argc, char** argv)
     testMasterUndoPreservesHostAutomation();
     testKitHistoryRestoresBypassesWithoutResettingGlobalAutomation(output);
     testSampleUndoRestoresAudibleData(output);
+    testDocumentedKeyboardRows();
+    testArrangementOverflowAndContextActions(output);
+    testZoomButtonsAndScrollRails(output);
+    testInvalidEmbeddedAudioDoesNotReplaceStateOrSound(output);
     testDecodedSampleLimitsBeforeAllocation();
     testDocumentedMp3CustomSampleSupport();
     testDocumentedNumericEntry(output);

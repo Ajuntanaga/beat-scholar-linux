@@ -194,7 +194,6 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     };
 
     title_.setText("BEAT SCHOLAR", juce::dontSendNotification);
-    title_.setFont(juce::Font(juce::FontOptions("Nimbus Sans Narrow", "Bold", 24.0f)));
     title_.setColour(juce::Label::textColourId, juce::Colour(lookAndFeel_.palette().text));
     addAndMakeVisible(title_);
 
@@ -341,6 +340,8 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     configureButton(barsPatterns_, "BARS", [this] {
         auto& mode = processor_.projectState().ui.patternMode;
         mode = !mode;
+        arrangementScroll_ = 0.0f;
+        repaint();
         barsPatterns_.setButtonText(mode ? "Patterns" : "Bars");
     });
     barsPatterns_.setComponentID("arrangement.toggle");
@@ -803,6 +804,79 @@ juce::Rectangle<int> BeatScholarLinuxEditor::arrangementBounds() const
     return designRect(getWidth(), getHeight(), 1138.0f, 60.0f, 134.0f, 448.0f);
 }
 
+juce::Rectangle<int> BeatScholarLinuxEditor::arrangementPadBounds() const
+{
+    return designRect(getWidth(), getHeight(), 1146.0f, 112.0f, 118.0f, 338.0f);
+}
+
+int BeatScholarLinuxEditor::arrangementItemHeight() const
+{
+    const auto& state = processor_.projectState();
+    const auto count = state.ui.patternMode ? state.patterns.size()
+                                            : state.patterns[state.activePattern].bars.size();
+    const auto scale = designScale(getWidth(), getHeight());
+    return std::max(1, std::max(static_cast<int>(54.0f * scale),
+        std::min(static_cast<int>(72.0f * scale),
+                 arrangementPadBounds().getHeight() / static_cast<int>(std::max(std::size_t{1}, count)))));
+}
+
+juce::Rectangle<int> BeatScholarLinuxEditor::arrangementItemBounds(std::size_t index) const
+{
+    const auto area = arrangementPadBounds();
+    const int height = arrangementItemHeight();
+    return { area.getX(), area.getY() + juce::roundToInt((static_cast<float>(index)
+                - arrangementScroll_) * height), area.getWidth(), height - 4 };
+}
+
+float BeatScholarLinuxEditor::maximumArrangementScroll() const
+{
+    const auto& state = processor_.projectState();
+    const auto count = state.ui.patternMode ? state.patterns.size()
+                                            : state.patterns[state.activePattern].bars.size();
+    return std::max(0.0f, static_cast<float>(count)
+        - static_cast<float>(arrangementPadBounds().getHeight()) / arrangementItemHeight());
+}
+
+int BeatScholarLinuxEditor::arrangementActionAt(juce::Point<int> point, std::size_t index) const
+{
+    const auto bounds = arrangementItemBounds(index).toFloat();
+    const float size = 18.0f * designScale(getWidth(), getHeight());
+    if (bounds.withSize(size, size).contains(point.toFloat())) return 1;
+    if (bounds.withSize(size, size).withX(bounds.getRight() - size).contains(point.toFloat())) return 2;
+    if (bounds.withSize(size, size).withY(bounds.getBottom() - size).contains(point.toFloat())) return 0;
+    return -1;
+}
+
+void BeatScholarLinuxEditor::clampView()
+{
+    const auto& pattern = processor_.projectState().patterns[processor_.projectState().activePattern];
+    const float quarters = static_cast<float>(pattern.durationInQuarterNotes());
+    const float lanes = static_cast<float>(pattern.lanes.size());
+    horizontalScroll_ = std::clamp(horizontalScroll_, 0.0f, quarters - quarters / horizontalZoom_);
+    verticalScroll_ = std::clamp(verticalScroll_, 0.0f, lanes - lanes / verticalZoom_);
+    arrangementScroll_ = std::clamp(arrangementScroll_, 0.0f, maximumArrangementScroll());
+}
+
+void BeatScholarLinuxEditor::moveScrollRail(juce::Point<int> point)
+{
+    const auto& pattern = processor_.projectState().patterns[processor_.projectState().activePattern];
+    if (draggingScrollRail_ == 1)
+    {
+        const auto rail = designRect(getWidth(), getHeight(), 62.0f, 511.0f, 1008.0f, 7.0f);
+        const float fraction = std::clamp(static_cast<float>(point.x - rail.getX()) / rail.getWidth(), 0.0f, 1.0f);
+        const float quarters = static_cast<float>(pattern.durationInQuarterNotes());
+        horizontalScroll_ = fraction * (quarters - quarters / horizontalZoom_);
+    }
+    else if (draggingScrollRail_ == 2)
+    {
+        const auto rail = designRect(getWidth(), getHeight(), 1139.0f, 66.0f, 5.0f, 378.0f);
+        const float fraction = std::clamp(static_cast<float>(point.y - rail.getY()) / rail.getHeight(), 0.0f, 1.0f);
+        const float lanes = static_cast<float>(pattern.lanes.size());
+        verticalScroll_ = fraction * (lanes - lanes / verticalZoom_);
+    }
+    repaint();
+}
+
 juce::Rectangle<int> BeatScholarLinuxEditor::lowerBounds() const
 {
     return designRect(getWidth(), getHeight(), 8.0f, 522.0f, 1264.0f, 190.0f);
@@ -820,6 +894,7 @@ juce::Rectangle<int> BeatScholarLinuxEditor::masterBounds() const
 
 void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
 {
+    clampView();
     const float scale = designScale(getWidth(), getHeight());
     const auto drawActionGlyph = [this, &graphics, scale](juce::Rectangle<float> area, int glyph) {
         const float stroke = std::max(1.0f, scale);
@@ -964,6 +1039,8 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
     const float laneHeight = static_cast<float>(pattern.getHeight())
                              / static_cast<float>(std::max<std::size_t>(1, current.lanes.size()));
     graphics.setFont(bsl::ui::font(9.0f * scale, true));
+    graphics.saveState();
+    graphics.reduceClipRegion(laneRail.withY(pattern.getY()).withHeight(pattern.getHeight()));
     for (std::size_t lane = 0; lane < current.lanes.size(); ++lane)
     {
         const float y = static_cast<float>(pattern.getY())
@@ -1011,12 +1088,16 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
         }
     }
 
+    graphics.restoreState();
+
     // Manual-style zoom/scroll rails.
-    const auto horizontalRail = designRect(getWidth(), getHeight(), 62.0f, 511.0f, 1070.0f, 7.0f).toFloat();
+    const auto horizontalRail = designRect(getWidth(), getHeight(), 62.0f, 511.0f, 1008.0f, 7.0f).toFloat();
     graphics.setColour(juce::Colour(lookAndFeel_.palette().border));
     graphics.fillRoundedRectangle(horizontalRail, horizontalRail.getHeight() * 0.5f);
     graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
-    graphics.fillEllipse(horizontalRail.getRight() - 122.0f * scale,
+    const float horizontalMaximum = static_cast<float>(current.durationInQuarterNotes()) * (1.0f - 1.0f / horizontalZoom_);
+    const float horizontalFraction = horizontalMaximum > 0.0f ? horizontalScroll_ / horizontalMaximum : 0.0f;
+    graphics.fillEllipse(horizontalRail.getX() + horizontalFraction * (horizontalRail.getWidth() - 11.0f * scale),
                          horizontalRail.getY() - 2.0f * scale,
                          11.0f * scale, 11.0f * scale);
     graphics.setFont(bsl::ui::font(13.0f * scale, true));
@@ -1035,8 +1116,10 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
     graphics.setColour(juce::Colour(lookAndFeel_.palette().border));
     graphics.fillRoundedRectangle(verticalRail, verticalRail.getWidth() * 0.5f);
     graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
+    const float verticalMaximum = static_cast<float>(current.lanes.size()) * (1.0f - 1.0f / verticalZoom_);
+    const float verticalFraction = verticalMaximum > 0.0f ? verticalScroll_ / verticalMaximum : 0.0f;
     graphics.fillEllipse(verticalRail.getX() - 2.0f * scale,
-                         verticalRail.getBottom() - 48.0f * scale,
+                         verticalRail.getY() + verticalFraction * (verticalRail.getHeight() - 9.0f * scale),
                          9.0f * scale, 9.0f * scale);
     graphics.setFont(bsl::ui::font(13.0f * scale, true));
     graphics.drawText("-", designRect(getWidth(), getHeight(), 1132.0f, 446.0f, 18.0f, 16.0f),
@@ -1049,72 +1132,70 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                                            : juce::String(current.name),
                       designRect(getWidth(), getHeight(), 1144.0f, 88.0f, 122.0f, 18.0f),
                       juce::Justification::centred);
-    const auto padArea = designRect(getWidth(), getHeight(), 1146.0f, 112.0f, 118.0f, 338.0f);
-    const int count = state.ui.patternMode ? static_cast<int>(state.patterns.size())
-                                           : static_cast<int>(current.bars.size());
-    const int padHeight = std::max(static_cast<int>(54.0f * scale),
-                                   std::min(static_cast<int>(72.0f * scale),
-                                            padArea.getHeight() / std::max(1, count)));
-    if (state.ui.patternMode)
     {
-        for (std::size_t index = 0; index < state.patterns.size(); ++index)
+        const auto padArea = arrangementPadBounds();
+        const juce::Graphics::ScopedSaveState savedGraphics(graphics);
+        graphics.reduceClipRegion(padArea);
+        if (state.ui.patternMode)
         {
-            auto bounds = juce::Rectangle<int>(padArea.getX(),
-                                               padArea.getY() + static_cast<int>(index) * padHeight,
-                                               padArea.getWidth(), padHeight - 4);
-            if (bounds.getY() >= padArea.getBottom())
-                break;
-            graphics.setColour(index == state.activePattern
-                                   ? juce::Colour(lookAndFeel_.palette().panelRaised)
-                                   : juce::Colour(lookAndFeel_.palette().panel));
-            graphics.fillRect(bounds);
-            graphics.setColour(index == state.activePattern
-                                   ? juce::Colour(lookAndFeel_.palette().borderBright)
-                                   : juce::Colour(lookAndFeel_.palette().border));
-            graphics.drawRect(bounds, index == state.activePattern ? 2 : 1);
-            graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
-            graphics.setFont(bsl::ui::font(11.0f * scale, true));
-            graphics.drawFittedText(juce::String(state.patterns[index].name), bounds.reduced(5, 3),
-                                    juce::Justification::centred, 1);
-            drawActionGlyph(bounds.toFloat().removeFromTop(18.0f * scale)
-                                .removeFromLeft(18.0f * scale), 1);
-            drawActionGlyph(bounds.toFloat().removeFromTop(18.0f * scale)
-                                .removeFromRight(18.0f * scale), 2);
-            graphics.drawText(midiNoteLabel(state.patterns[index].triggerNote, state.ui),
-                              bounds.withY(bounds.getBottom() - 14).withHeight(14),
-                              juce::Justification::centredRight);
+            for (std::size_t index = 0; index < state.patterns.size(); ++index)
+            {
+                const auto bounds = arrangementItemBounds(index);
+                if (bounds.getY() >= padArea.getBottom()) break;
+                if (bounds.getBottom() <= padArea.getY()) continue;
+                graphics.setColour(index == state.activePattern
+                                       ? juce::Colour(lookAndFeel_.palette().panelRaised)
+                                       : juce::Colour(lookAndFeel_.palette().panel));
+                graphics.fillRect(bounds);
+                graphics.setColour(index == state.activePattern
+                                       ? juce::Colour(lookAndFeel_.palette().borderBright)
+                                       : juce::Colour(lookAndFeel_.palette().border));
+                graphics.drawRect(bounds, index == state.activePattern ? 2 : 1);
+                graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
+                graphics.setFont(bsl::ui::font(11.0f * scale, true));
+                graphics.drawFittedText(juce::String(state.patterns[index].name), bounds.reduced(5, 3),
+                                        juce::Justification::centred, 1);
+                drawActionGlyph(bounds.toFloat().removeFromTop(18.0f * scale)
+                                    .removeFromLeft(18.0f * scale), 1);
+                drawActionGlyph(bounds.toFloat().removeFromTop(18.0f * scale)
+                                    .removeFromRight(18.0f * scale), 2);
+                drawActionGlyph(bounds.toFloat().withSize(18.0f * scale, 18.0f * scale)
+                                    .withY(bounds.getBottom() - 18.0f * scale), 0);
+                graphics.drawText(midiNoteLabel(state.patterns[index].triggerNote, state.ui),
+                                  bounds.withY(bounds.getBottom() - 14).withHeight(14),
+                                  juce::Justification::centredRight);
+            }
         }
-    }
-    else
-    {
-        for (std::size_t index = 0; index < current.bars.size(); ++index)
+        else
         {
-            auto bounds = juce::Rectangle<int>(padArea.getX(),
-                                               padArea.getY() + static_cast<int>(index) * padHeight,
-                                               padArea.getWidth(), padHeight - 4);
-            if (bounds.getY() >= padArea.getBottom())
-                break;
-            graphics.setColour(index == state.ui.selectedBar
-                                   ? juce::Colour(lookAndFeel_.palette().panelRaised)
-                                   : juce::Colour(lookAndFeel_.palette().panel));
-            graphics.fillRect(bounds);
-            graphics.setColour(index == state.ui.selectedBar
-                                   ? juce::Colour(lookAndFeel_.palette().borderBright)
-                                   : juce::Colour(lookAndFeel_.palette().border));
-            graphics.drawRect(bounds, index == state.ui.selectedBar ? 2 : 1);
-            graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
-            graphics.setFont(bsl::ui::font(11.0f * scale, true));
-            graphics.drawText(juce::String(current.bars[index].numerator) + "  |  "
-                                  + juce::String(current.bars[index].denominator),
-                              bounds, juce::Justification::centred);
-            const auto padBounds = bounds.toFloat();
-            drawActionGlyph(padBounds.withSizeKeepingCentre(18.0f * scale, 18.0f * scale)
-                                 .withPosition(padBounds.getX(), padBounds.getY()), 1);
-            drawActionGlyph(padBounds.withSizeKeepingCentre(18.0f * scale, 18.0f * scale)
-                                 .withPosition(padBounds.getRight() - 18.0f * scale, padBounds.getY()), 2);
-            drawActionGlyph(padBounds.withSizeKeepingCentre(18.0f * scale, 18.0f * scale)
-                                 .withPosition(padBounds.getX(), padBounds.getBottom() - 18.0f * scale), 0);
+            for (std::size_t index = 0; index < current.bars.size(); ++index)
+            {
+                const auto bounds = arrangementItemBounds(index);
+                if (bounds.getY() >= padArea.getBottom()) break;
+                if (bounds.getBottom() <= padArea.getY()) continue;
+                graphics.setColour(index == state.ui.selectedBar
+                                       ? juce::Colour(lookAndFeel_.palette().panelRaised)
+                                       : juce::Colour(lookAndFeel_.palette().panel));
+                graphics.fillRect(bounds);
+                graphics.setColour(index == state.ui.selectedBar
+                                       ? juce::Colour(lookAndFeel_.palette().borderBright)
+                                       : juce::Colour(lookAndFeel_.palette().border));
+                graphics.drawRect(bounds, index == state.ui.selectedBar ? 2 : 1);
+                graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
+                graphics.setFont(bsl::ui::font(11.0f * scale, true));
+                graphics.drawText(juce::String(current.bars[index].numerator) + "  |  "
+                                      + juce::String(current.bars[index].denominator),
+                                  bounds, juce::Justification::centred);
+                const auto padBounds = bounds.toFloat();
+                drawActionGlyph(padBounds.withSizeKeepingCentre(18.0f * scale, 18.0f * scale)
+                                     .withPosition(padBounds.getX(), padBounds.getY()), 1);
+                drawActionGlyph(padBounds.withSizeKeepingCentre(18.0f * scale, 18.0f * scale)
+                                     .withPosition(padBounds.getRight() - 18.0f * scale, padBounds.getY()), 2);
+                drawActionGlyph(padBounds.withSizeKeepingCentre(18.0f * scale, 18.0f * scale)
+                                     .withPosition(padBounds.getX(), padBounds.getBottom() - 18.0f * scale), 0);
+            }
         }
+
     }
 
     // Persistent lower kit, sound/randomizer, and master modules.
@@ -1333,6 +1414,8 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
 
 void BeatScholarLinuxEditor::resized()
 {
+    title_.setFont(juce::Font(juce::FontOptions("Nimbus Sans Narrow", "Bold",
++                                                24.0f * designScale(getWidth(), getHeight()))));
     title_.setBounds(designRect(getWidth(), getHeight(), 16.0f, 13.0f, 132.0f, 34.0f));
     presetPrevious_.setBounds(designRect(getWidth(), getHeight(), 150.0f, 16.0f, 24.0f, 28.0f));
     preset_.setBounds(designRect(getWidth(), getHeight(), 176.0f, 14.0f, 116.0f, 32.0f));
@@ -1397,7 +1480,7 @@ void BeatScholarLinuxEditor::resized()
     layerTwo_.setBounds(designRect(getWidth(), getHeight(), 408.0f, 674.0f, 131.0f, 28.0f));
     padMute_.setBounds(designRect(getWidth(), getHeight(), 404.0f, 526.0f, 30.0f, 26.0f));
     padSolo_.setBounds(designRect(getWidth(), getHeight(), 436.0f, 526.0f, 30.0f, 26.0f));
-    oneShot_.setBounds(designRect(getWidth(), getHeight(), 448.0f, custom ? 672.0f : 640.0f, 58.0f, 24.0f));
+    oneShot_.setBounds(designRect(getWidth(), getHeight(), 440.0f, custom ? 672.0f : 640.0f, 80.0f, 24.0f));
 
     if (module_ == Module::randomizer)
     {
@@ -1585,13 +1668,11 @@ std::optional<std::size_t> BeatScholarLinuxEditor::barAt(juce::Point<int> point,
     const auto& pattern = state.patterns[state.activePattern];
     if (arrangement)
     {
-        const auto area = designRect(getWidth(), getHeight(), 1146.0f, 112.0f, 118.0f, 338.0f);
+        const auto area = arrangementPadBounds();
         if (!area.contains(point) || state.ui.patternMode || pattern.bars.empty())
             return std::nullopt;
-        const int itemHeight = std::max(static_cast<int>(54.0f * designScale(getWidth(), getHeight())),
-                                        std::min(static_cast<int>(72.0f * designScale(getWidth(), getHeight())),
-                                                 area.getHeight() / static_cast<int>(pattern.bars.size())));
-        const auto index = static_cast<std::size_t>((point.y - area.getY()) / itemHeight);
+        const auto index = static_cast<std::size_t>(arrangementScroll_
+            + static_cast<float>(point.y - area.getY()) / arrangementItemHeight());
         return index < pattern.bars.size() ? std::optional<std::size_t>(index) : std::nullopt;
     }
     const auto area = barHeaderBounds();
@@ -1615,14 +1696,12 @@ std::optional<std::size_t> BeatScholarLinuxEditor::barAt(juce::Point<int> point,
 
 std::optional<std::size_t> BeatScholarLinuxEditor::patternAt(juce::Point<int> point) const
 {
-    const auto area = designRect(getWidth(), getHeight(), 1146.0f, 112.0f, 118.0f, 338.0f);
+    const auto area = arrangementPadBounds();
     const auto& state = processor_.projectState();
     if (!state.ui.patternMode || !area.contains(point) || state.patterns.empty())
         return std::nullopt;
-    const int itemHeight = std::max(static_cast<int>(54.0f * designScale(getWidth(), getHeight())),
-                                    std::min(static_cast<int>(72.0f * designScale(getWidth(), getHeight())),
-                                             area.getHeight() / static_cast<int>(state.patterns.size())));
-    const auto index = static_cast<std::size_t>((point.y - area.getY()) / itemHeight);
+    const auto index = static_cast<std::size_t>(arrangementScroll_
+        + static_cast<float>(point.y - area.getY()) / arrangementItemHeight());
     return index < state.patterns.size() ? std::optional<std::size_t>(index) : std::nullopt;
 }
 
@@ -1709,6 +1788,33 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
     refreshRestoredState();
     cancelPatternInteraction();
     const auto position = event.getEventRelativeTo(this).getPosition();
+    clampView();
+    if (!event.mods.isPopupMenu())
+    {
+        const bool horizontalMinus = designRect(getWidth(), getHeight(), 1082.0f, 502.0f, 18.0f, 18.0f).contains(position);
+        const bool horizontalPlus = designRect(getWidth(), getHeight(), 1112.0f, 502.0f, 18.0f, 18.0f).contains(position);
+        const bool verticalMinus = designRect(getWidth(), getHeight(), 1132.0f, 446.0f, 18.0f, 16.0f).contains(position);
+        const bool verticalPlus = designRect(getWidth(), getHeight(), 1132.0f, 466.0f, 18.0f, 16.0f).contains(position);
+        if (horizontalMinus || horizontalPlus || verticalMinus || verticalPlus)
+        {
+            if (horizontalMinus || horizontalPlus)
+                horizontalZoom_ = std::clamp(horizontalZoom_ * (horizontalPlus ? 2.0f : 0.5f), 1.0f, 8.0f);
+            else
+                verticalZoom_ = std::clamp(verticalZoom_ * (verticalPlus ? 2.0f : 0.5f), 1.0f, 8.0f);
+            clampView();
+            repaint();
+            return;
+        }
+        if (designRect(getWidth(), getHeight(), 62.0f, 502.0f, 1008.0f, 18.0f).contains(position))
+            draggingScrollRail_ = 1;
+        else if (designRect(getWidth(), getHeight(), 1132.0f, 66.0f, 14.0f, 378.0f).contains(position))
+            draggingScrollRail_ = 2;
+        if (draggingScrollRail_ != 0)
+        {
+            moveScrollRail(position);
+            return;
+        }
+    }
     if (designRect(getWidth(), getHeight(), 775.0f, 14.0f, 31.0f, 34.0f).contains(position))
     {
         showSubdivisionMenu();
@@ -1848,30 +1954,15 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
         auto& state = processor_.projectState();
         auto& pattern = state.patterns[state.activePattern];
         state.ui.selectedBar = *bar;
-        if (arrangementBounds().contains(position) && !barHeaderBounds().contains(position))
+        if (arrangementPadBounds().contains(position) && !event.mods.isPopupMenu() && !event.mods.isShiftDown()
+            && !juce::KeyPress::isKeyCurrentlyDown('c') && !juce::KeyPress::isKeyCurrentlyDown('v'))
         {
-            const auto padArea = designRect(getWidth(), getHeight(), 1146.0f, 112.0f, 118.0f, 338.0f);
-            const int itemHeight = std::max(static_cast<int>(54.0f * designScale(getWidth(), getHeight())),
-                                            std::min(static_cast<int>(72.0f * designScale(getWidth(), getHeight())),
-                                                     padArea.getHeight() / static_cast<int>(pattern.bars.size())));
-            const auto localX = position.x - padArea.getX();
-            const auto localY = (position.y - padArea.getY()) % itemHeight;
-            const int actionBand = std::max(14, itemHeight / 4);
-            if (localY < actionBand && localX < padArea.getWidth() / 3)
+            const int action = arrangementActionAt(position, *bar);
+            if (action >= 0)
             {
-                processor_.projectEditor().addBar(state.activePattern, bsl::BarState::make(4, 4));
-                updateControlsFromState();
-                return;
-            }
-            if (localY < actionBand && localX > padArea.getWidth() * 2 / 3)
-            {
-                processor_.projectEditor().removeBar(state.activePattern, *bar);
-                updateControlsFromState();
-                return;
-            }
-            if (localY > itemHeight - actionBand && localX < padArea.getWidth() / 3)
-            {
-                processor_.projectEditor().duplicateBar(state.activePattern, *bar);
+                if (action == 1) processor_.projectEditor().addBar(state.activePattern, bsl::BarState::make(4, 4));
+                else if (action == 2) processor_.projectEditor().removeBar(state.activePattern, *bar);
+                else processor_.projectEditor().duplicateBar(state.activePattern, *bar);
                 updateControlsFromState();
                 return;
             }
@@ -1953,30 +2044,18 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
     if (const auto pattern = patternAt(position))
     {
         auto& state = processor_.projectState();
-        const auto padArea = designRect(getWidth(), getHeight(), 1146.0f, 112.0f, 118.0f, 338.0f);
-        const int itemHeight = std::max(static_cast<int>(54.0f * designScale(getWidth(), getHeight())),
-                                        std::min(static_cast<int>(72.0f * designScale(getWidth(), getHeight())),
-                                                 padArea.getHeight() / static_cast<int>(state.patterns.size())));
-        const auto localX = position.x - padArea.getX();
-        const auto localY = (position.y - padArea.getY()) % itemHeight;
-        const int actionBand = std::max(14, itemHeight / 4);
-        if (localY < actionBand && localX < padArea.getWidth() / 3)
+        if (!event.mods.isPopupMenu() && !event.mods.isShiftDown()
+            && !juce::KeyPress::isKeyCurrentlyDown('c') && !juce::KeyPress::isKeyCurrentlyDown('v'))
         {
-            processor_.projectEditor().addPattern();
-            updateControlsFromState();
-            return;
-        }
-        if (localY < actionBand && localX > padArea.getWidth() * 2 / 3)
-        {
-            processor_.projectEditor().removePattern(*pattern);
-            updateControlsFromState();
-            return;
-        }
-        if (localY > itemHeight - actionBand && localX < padArea.getWidth() / 3)
-        {
-            processor_.projectEditor().duplicatePattern(*pattern);
-            updateControlsFromState();
-            return;
+            const int action = arrangementActionAt(position, *pattern);
+            if (action >= 0)
+            {
+                if (action == 1) processor_.projectEditor().addPattern();
+                else if (action == 2) processor_.projectEditor().removePattern(*pattern);
+                else processor_.projectEditor().duplicatePattern(*pattern);
+                updateControlsFromState();
+                return;
+            }
         }
         if (juce::KeyPress::isKeyCurrentlyDown('c'))
             patternClipboard_ = state.patterns[*pattern];
@@ -2051,6 +2130,11 @@ void BeatScholarLinuxEditor::mouseDrag(const juce::MouseEvent& event)
 {
     refreshRestoredState();
     const auto position = event.getEventRelativeTo(this).getPosition();
+    if (draggingScrollRail_ != 0)
+    {
+        moveScrollRail(position);
+        return;
+    }
     if (draggingBarMeter_)
     {
         auto& state = processor_.projectState();
@@ -2150,6 +2234,7 @@ void BeatScholarLinuxEditor::mouseDrag(const juce::MouseEvent& event)
 
 void BeatScholarLinuxEditor::mouseUp(const juce::MouseEvent&)
 {
+    draggingScrollRail_ = 0;
     draggingVelocity_ = false;
     draggingSubdivision_ = false;
     beatDragCheckpointed_ = false;
@@ -2161,6 +2246,14 @@ void BeatScholarLinuxEditor::mouseWheelMove(const juce::MouseEvent& event,
                                              const juce::MouseWheelDetails& wheel)
 {
     const auto position = event.getEventRelativeTo(this).getPosition();
+    clampView();
+    if (arrangementPadBounds().contains(position))
+    {
+        arrangementScroll_ = std::clamp(arrangementScroll_ - wheel.deltaY * 3.0f,
+                                         0.0f, maximumArrangementScroll());
+        repaint();
+        return;
+    }
     if (!patternBounds().contains(position))
         return AudioProcessorEditor::mouseWheelMove(event, wheel);
 
@@ -2338,11 +2431,13 @@ void BeatScholarLinuxEditor::selectPad(std::size_t pad, bool audition)
 void BeatScholarLinuxEditor::updateControlsFromState()
 {
     cancelPatternInteraction();
+    clampView();
     configureModuleControls();
 }
 
 void BeatScholarLinuxEditor::cancelPatternInteraction()
 {
+    draggingScrollRail_ = 0;
     lastHit_.reset();
     draggingVelocity_ = false;
     draggingSubdivision_ = false;
@@ -3401,14 +3496,14 @@ bool BeatScholarLinuxEditor::keyPressed(const juce::KeyPress& key)
         return true;
     }
     const auto character = static_cast<char>(std::tolower(static_cast<unsigned char>(key.getTextCharacter())));
-    const juce::String upperRow("qwertyui");
     const juce::String lowerRow("asdfghjk");
-    if (const int index = upperRow.indexOfChar(character); index >= 0)
+    const juce::String upperRow("qwertyui");
+    if (const int index = lowerRow.indexOfChar(character); index >= 0)
     {
         selectPad(static_cast<std::size_t>(index), false);
         return true;
     }
-    if (const int index = lowerRow.indexOfChar(character); index >= 0)
+    if (const int index = upperRow.indexOfChar(character); index >= 0)
     {
         selectPad(static_cast<std::size_t>(index + 8), false);
         return true;

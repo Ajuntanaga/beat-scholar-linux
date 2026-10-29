@@ -78,6 +78,13 @@ private:
     [[nodiscard]] juce::Rectangle<int> kitBounds() const;
     [[nodiscard]] juce::Rectangle<int> barHeaderBounds() const;
     [[nodiscard]] juce::Rectangle<int> arrangementBounds() const;
+    [[nodiscard]] juce::Rectangle<int> arrangementPadBounds() const;
+    [[nodiscard]] int arrangementItemHeight() const;
+    [[nodiscard]] juce::Rectangle<int> arrangementItemBounds(std::size_t) const;
+    [[nodiscard]] float maximumArrangementScroll() const;
+    [[nodiscard]] int arrangementActionAt(juce::Point<int>, std::size_t) const;
+    void clampView();
+    void moveScrollRail(juce::Point<int>);
     [[nodiscard]] juce::Rectangle<int> lowerBounds() const;
     [[nodiscard]] juce::Rectangle<int> soundBounds() const;
     [[nodiscard]] juce::Rectangle<int> masterBounds() const;
@@ -181,6 +188,8 @@ private:
     float verticalZoom_ = 1.0f;
     float horizontalScroll_ = 0.0f;
     float verticalScroll_ = 0.0f;
+    float arrangementScroll_ = 0.0f;
+    int draggingScrollRail_ = 0;
     bool midiDragPending_ = false;
     std::size_t midiDragPattern_ = 0;
     bool momentaryBrushActive_ = false;

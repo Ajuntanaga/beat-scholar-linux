@@ -434,6 +434,14 @@ bool readPad(const juce::var& encoded, PadState& pad, int version)
     return true;
 }
 
+bool readIndex(const juce::var& value, juce::int64 minimum, juce::int64 maximum,
+               juce::int64& result)
+{
+    if (!value.isInt() && !value.isInt64()) return false;
+    result = static_cast<juce::int64>(value);
+    return result >= minimum && result <= maximum;
+}
+
 bool readRandomizer(const juce::var& encoded, RandomizerSettings& settings)
 {
     if (!encoded.isObject())
@@ -441,11 +449,19 @@ bool readRandomizer(const juce::var& encoded, RandomizerSettings& settings)
     settings.selectedPads.clear();
     if (const auto* pads = get(encoded, "selectedPads").getArray())
         for (const auto& value : *pads)
-            settings.selectedPads.push_back(static_cast<std::uint8_t>(static_cast<int>(value)));
+        {
+            juce::int64 index;
+            if (!readIndex(value, 0, padCount - 1, index)) return false;
+            settings.selectedPads.push_back(static_cast<std::uint8_t>(index));
+        }
     settings.selectedSubdivisions.clear();
     if (const auto* values = get(encoded, "selectedSubdivisions").getArray())
         for (const auto& value : *values)
-            settings.selectedSubdivisions.push_back(static_cast<std::size_t>(static_cast<juce::int64>(value)));
+        {
+            juce::int64 index;
+            if (!readIndex(value, 1, maximumSubdivision, index)) return false;
+            settings.selectedSubdivisions.push_back(static_cast<std::size_t>(index));
+        }
     settings.noteSelectionEnabled = readBool(encoded, "noteSelectionEnabled", settings.noteSelectionEnabled);
     settings.slicingEnabled = readBool(encoded, "slicingEnabled", settings.slicingEnabled);
     settings.triggeringEnabled = readBool(encoded, "triggeringEnabled", settings.triggeringEnabled);
@@ -743,6 +759,7 @@ void readLegacyMaster(const juce::var& params, MasterState& master)
 
 juce::var parseJson(const juce::String& json)
 {
+    if (json.getNumBytesAsUTF8() > maximumJsonBytes) return {};
     return juce::JSON::parse(json);
 }
 
@@ -902,6 +919,7 @@ juce::MemoryBlock encode(const ProjectState& state)
     if (!validateContent(state))
         return {};
     const auto json = encodePresetJson(state);
+    if (json.isEmpty()) return {};
     juce::MemoryOutputStream output;
     output.write("BSLX", 4);
     output.writeInt(stateVersion);
@@ -914,8 +932,9 @@ juce::MemoryBlock encode(const ProjectState& state)
 
 juce::String encodePresetJson(const ProjectState& state)
 {
-    return validateContent(state) ? juce::JSON::toString(projectToVar(state), true)
-                                  : juce::String {};
+    if (!validateContent(state)) return {};
+    auto json = juce::JSON::toString(projectToVar(state), true);
+    return json.getNumBytesAsUTF8() <= maximumJsonBytes ? json : juce::String {};
 }
 
 bool decodePresetJson(const juce::String& json, ProjectState& destination)
@@ -999,7 +1018,7 @@ bool decodeRandomizerJson(const juce::String& json, RandomizerSettings& destinat
 
 bool decode(const void* data, std::size_t size, ProjectState& destination)
 {
-    if (data == nullptr || size < 12)
+    if (data == nullptr || size < 12 || size > maximumSerializedBytes)
         return false;
     juce::MemoryInputStream input(data, size, false);
     char magic[4] {};
@@ -1009,7 +1028,18 @@ bool decode(const void* data, std::size_t size, ProjectState& destination)
     if (envelopeVersion < oldestSupportedStateVersion || envelopeVersion > stateVersion)
         return false;
     juce::GZIPDecompressorInputStream gzip(&input, false);
-    const auto json = gzip.readEntireStreamAsString();
+    juce::MemoryOutputStream expanded;
+    std::array<char, 65536> chunk;
+    for (;;)
+    {
+        const int count = gzip.read(chunk.data(), static_cast<int>(chunk.size()));
+        if (count <= 0) break;
+        if (static_cast<std::size_t>(count) > maximumJsonBytes - expanded.getDataSize())
+            return false;
+        expanded.write(chunk.data(), static_cast<std::size_t>(count));
+    }
+    const auto json = juce::String::fromUTF8(static_cast<const char*>(expanded.getData()),
+                                          static_cast<int>(expanded.getDataSize()));
     if (json.isEmpty())
         return false;
     const auto parsed = parseJson(json);
@@ -1035,10 +1065,18 @@ bool importLegacyRandomizerJson(const juce::String& json, RandomizerSettings& de
     candidate.triggerChance = readFloat(source, "triggerChance", 0.5f);
     if (const auto* values = get(source, "possibleNotes").getArray())
         for (const auto& value : *values)
-            candidate.selectedPads.push_back(static_cast<std::uint8_t>(readInt(value, "value", 0)));
+        {
+            juce::int64 index;
+            if (!readIndex(get(value, "value"), 0, padCount - 1, index)) return false;
+            candidate.selectedPads.push_back(static_cast<std::uint8_t>(index));
+        }
     if (const auto* values = get(source, "possibleSlices").getArray())
         for (const auto& value : *values)
-            candidate.selectedSubdivisions.push_back(static_cast<std::size_t>(readInt(value, "value", 1)));
+        {
+            juce::int64 index;
+            if (!readIndex(get(value, "value"), 1, maximumSubdivision, index)) return false;
+            candidate.selectedSubdivisions.push_back(static_cast<std::size_t>(index));
+        }
     const auto range = get(source, "velocityRange");
     candidate.minimumVelocity = readFloat(range, "start", 0.4f);
     candidate.maximumVelocity = readFloat(range, "end", 1.0f);

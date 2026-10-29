@@ -22,6 +22,52 @@ juce::String padBypassId(std::size_t pad, std::size_t effect)
     return "pad" + juce::String(static_cast<int>(pad + 1)) + padBypassNames[effect] + "Bypass";
 }
 
+std::optional<bsl::SampleData> decodeSampleBytes(const void* data, std::size_t size)
+{
+    if (data == nullptr || size == 0) return std::nullopt;
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    auto input = std::make_unique<juce::MemoryInputStream>(data, size, false);
+    std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(std::move(input)));
+    if (reader == nullptr || !BeatScholarLinuxProcessor::supportsDecodedSample(reader->lengthInSamples, reader->numChannels)
+        || !std::isfinite(reader->sampleRate) || reader->sampleRate <= 0.0)
+        return std::nullopt;
+    const auto length = static_cast<std::size_t>(reader->lengthInSamples);
+    bsl::SampleData sample;
+    sample.sampleRate = reader->sampleRate;
+    sample.channels.resize(std::min<unsigned int>(2, reader->numChannels));
+    juce::AudioBuffer<float> decoded(static_cast<int>(sample.channels.size()),
+                                     static_cast<int>(length));
+    if (!reader->read(&decoded, 0, static_cast<int>(length), 0, true, true))
+        return std::nullopt;
+    for (int channel = 0; channel < decoded.getNumChannels(); ++channel)
+        for (int frame = 0; frame < decoded.getNumSamples(); ++frame)
+            if (!std::isfinite(decoded.getSample(channel, frame))) return std::nullopt;
+    for (std::size_t channel = 0; channel < sample.channels.size(); ++channel)
+        sample.channels[channel].assign(decoded.getReadPointer(static_cast<int>(channel)),
+                                        decoded.getReadPointer(static_cast<int>(channel)) + length);
+    return sample;
+}
+
+bool validEmbeddedAudio(const bsl::KitState& kit)
+{
+    for (const auto& pad : kit.pads)
+    {
+        const auto& encoded = pad.customSampleBase64.value();
+        if (encoded.empty()) continue;
+        juce::MemoryOutputStream bytes;
+        if (!juce::Base64::convertFromBase64(bytes, juce::String(encoded))
+            || !decodeSampleBytes(bytes.getData(), bytes.getDataSize())) return false;
+    }
+    return true;
+}
+
+bool readableStateFile(const juce::File& file)
+{
+    return file.existsAsFile() && file.getSize() > 0
+        && file.getSize() <= static_cast<juce::int64>(bsl::statecodec::maximumSerializedBytes);
+}
+
 } // namespace
 
 juce::AudioProcessor::BusesProperties BeatScholarLinuxProcessor::makeBuses()
@@ -461,7 +507,8 @@ void BeatScholarLinuxProcessor::setStateInformation(const void* data, int size)
     if (data == nullptr || size <= 0)
         return;
     auto restored = projectEditor_.state();
-    if (!bsl::statecodec::decode(data, static_cast<std::size_t>(size), restored))
+    if (!bsl::statecodec::decode(data, static_cast<std::size_t>(size), restored)
+        || !validEmbeddedAudio(restored.kit))
         return;
     projectEditor_ = bsl::ProjectEditor(std::move(restored));
     syncParametersFromProject();
@@ -534,27 +581,10 @@ bool BeatScholarLinuxProcessor::supportsDecodedSample(std::int64_t frames, unsig
 
 bool BeatScholarLinuxProcessor::installSampleBytes(std::size_t pad, const void* data, std::size_t size)
 {
-    if (pad >= bsl::padCount || data == nullptr || size == 0)
-        return false;
-    juce::AudioFormatManager formats;
-    formats.registerBasicFormats();
-    auto input = std::make_unique<juce::MemoryInputStream>(data, size, false);
-    std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(std::move(input)));
-    if (reader == nullptr || !supportsDecodedSample(reader->lengthInSamples, reader->numChannels)
-        || !std::isfinite(reader->sampleRate) || reader->sampleRate <= 0.0)
-        return false;
-    const auto length = static_cast<std::size_t>(reader->lengthInSamples);
-    bsl::SampleData sample;
-    sample.sampleRate = reader->sampleRate;
-    sample.channels.resize(std::min<unsigned int>(2, reader->numChannels));
-    juce::AudioBuffer<float> decoded(static_cast<int>(sample.channels.size()),
-                                     static_cast<int>(length));
-    if (!reader->read(&decoded, 0, static_cast<int>(length), 0, true, true))
-        return false;
-    for (std::size_t channel = 0; channel < sample.channels.size(); ++channel)
-        sample.channels[channel].assign(decoded.getReadPointer(static_cast<int>(channel)),
-                                        decoded.getReadPointer(static_cast<int>(channel)) + length);
-    audioEngine_.setPadSample(pad, std::move(sample));
+    if (pad >= bsl::padCount) return false;
+    auto sample = decodeSampleBytes(data, size);
+    if (!sample) return false;
+    audioEngine_.setPadSample(pad, std::move(*sample));
     return true;
 }
 
@@ -630,7 +660,7 @@ void BeatScholarLinuxProcessor::clearCustomSample(std::size_t pad)
 
 bool BeatScholarLinuxProcessor::loadPresetFile(const juce::File& file)
 {
-    if (!file.existsAsFile())
+    if (!readableStateFile(file))
         return false;
     auto restored = projectEditor_.state();
     juce::MemoryBlock bytes;
@@ -638,7 +668,8 @@ bool BeatScholarLinuxProcessor::loadPresetFile(const juce::File& file)
         return false;
     const bool hostEnvelope = bytes.getSize() >= 4
                               && std::memcmp(bytes.getData(), "BSLX", 4) == 0;
-    const auto json = file.loadFileAsString();
+    const auto json = hostEnvelope ? juce::String {}
+        : juce::String::fromUTF8(static_cast<const char*>(bytes.getData()), static_cast<int>(bytes.getSize()));
     const bool loaded = hostEnvelope
         ? bsl::statecodec::decode(bytes.getData(), bytes.getSize(), restored)
         : (file.hasFileExtension("bslpreset")
@@ -656,6 +687,7 @@ bool BeatScholarLinuxProcessor::loadPresetFile(const juce::File& file)
         restored.ui.kitFile = current.ui.kitFile;
         restored.global.kitLocked = true;
     }
+    if (!validEmbeddedAudio(restored.kit)) return false;
     restored.ui.presetFile = file.getFullPathName().toStdString();
     projectEditor_ = bsl::ProjectEditor(std::move(restored));
     syncParametersFromProject();
@@ -684,7 +716,7 @@ bool BeatScholarLinuxProcessor::savePresetFile(const juce::File& file)
 
 bool BeatScholarLinuxProcessor::loadKitFile(const juce::File& file)
 {
-    if (!file.existsAsFile())
+    if (!readableStateFile(file))
         return false;
     auto kit = projectEditor_.state().kit;
     auto master = projectEditor_.state().master;
@@ -692,7 +724,7 @@ bool BeatScholarLinuxProcessor::loadKitFile(const juce::File& file)
     const bool loaded = file.hasFileExtension("bslkit")
                             ? bsl::statecodec::decodeKitJson(json, kit, master)
                             : bsl::statecodec::importLegacyKitJson(json, kit, master);
-    if (!loaded)
+    if (!loaded || !validEmbeddedAudio(kit))
         return false;
     // Capture the audible host-automated values before replacing the kit.
     // This also prevents a kit load from resetting unrelated global automation.
@@ -726,7 +758,7 @@ bool BeatScholarLinuxProcessor::saveKitFile(const juce::File& file)
 
 bool BeatScholarLinuxProcessor::loadRandomizerFile(const juce::File& file)
 {
-    if (!file.existsAsFile())
+    if (!readableStateFile(file))
         return false;
     auto settings = projectEditor_.state().randomizer;
     const auto json = file.loadFileAsString();
@@ -760,11 +792,12 @@ void BeatScholarLinuxProcessor::loadFactoryKitIfAvailable()
     if (!firstPad.factorySampleIds.front().empty() || !firstPad.customSampleBase64.empty())
         return;
     const auto kitFile = bsl::dataRoot().getChildFile("Factory/Kits/Acoustic Power/Acoustic Power.json");
-    if (!kitFile.existsAsFile())
+    if (!readableStateFile(kitFile))
         return;
     auto kit = projectEditor_.state().kit;
     auto master = projectEditor_.state().master;
-    if (bsl::statecodec::importLegacyKitJson(kitFile.loadFileAsString(), kit, master))
+    if (bsl::statecodec::importLegacyKitJson(kitFile.loadFileAsString(), kit, master)
+        && validEmbeddedAudio(kit))
     {
         projectEditor_.state().kit = std::move(kit);
         projectEditor_.state().master = master;
@@ -787,27 +820,11 @@ void BeatScholarLinuxProcessor::loadFactorySamples(std::optional<std::size_t> on
                 continue;
             juce::MemoryBlock bytes;
             const auto file = samples.getChildFile(juce::String(id));
-            if (!file.loadFileAsData(bytes))
+            if (file.getSize() > static_cast<juce::int64>(bsl::statecodec::maximumEmbeddedSampleBytes)
+                || !file.loadFileAsData(bytes))
                 continue;
-            juce::AudioFormatManager formats;
-            formats.registerBasicFormats();
-            auto input = std::make_unique<juce::MemoryInputStream>(bytes.getData(), bytes.getSize(), false);
-            std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(std::move(input)));
-            if (reader == nullptr || !supportsDecodedSample(reader->lengthInSamples, reader->numChannels)
-                || !std::isfinite(reader->sampleRate) || reader->sampleRate <= 0.0)
-                continue;
-            const auto length = static_cast<std::size_t>(reader->lengthInSamples);
-            bsl::SampleData sample;
-            sample.sampleRate = reader->sampleRate;
-            sample.channels.resize(std::min<unsigned int>(2, reader->numChannels));
-            juce::AudioBuffer<float> decoded(static_cast<int>(sample.channels.size()),
-                                             static_cast<int>(length));
-            if (!reader->read(&decoded, 0, static_cast<int>(length), 0, true, true))
-                continue;
-            for (std::size_t channel = 0; channel < sample.channels.size(); ++channel)
-                sample.channels[channel].assign(decoded.getReadPointer(static_cast<int>(channel)),
-                                                decoded.getReadPointer(static_cast<int>(channel)) + length);
-            audioEngine_.setPadLayerSample(pad, layer, std::move(sample));
+            auto sample = decodeSampleBytes(bytes.getData(), bytes.getSize());
+            if (sample) audioEngine_.setPadLayerSample(pad, layer, std::move(*sample));
         }
     }
 }
