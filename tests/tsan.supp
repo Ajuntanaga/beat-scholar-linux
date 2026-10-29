@@ -1,0 +1,4 @@
+# JUCE 8.0.16 TimerThread teardown uses WaitableEvent destruction after its
+# worker has exited. GCC TSAN reports the condition-variable storage handoff;
+# it is outside Beat Scholar's stop/reset path.
+race:juce::WaitableEvent::wait
