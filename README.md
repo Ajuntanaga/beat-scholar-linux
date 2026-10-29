@@ -50,9 +50,10 @@ private content also exercised three presets at 44.1, 48, and 96 kHz. These are
 regression checks, not proof that every preset sounds identical to the original.
 
 Recent fixes cover incorrect sample assignments, pie-slice geometry, dropped
-events in dense patterns, transport alignment, state handling, and MIDI note
-labels. Full wet-effect waveform matching and exhaustive visual matching remain
-open. The standalone settings check passes locally on an isolated display;
+events in dense patterns, transport alignment, and state handling. The latest
+pass also fixes beat-drag updates and Undo, overlapping MIDI note releases,
+muted effect tails, and sampler dividers. Full wet-effect waveform matching and
+exhaustive visual matching remain open. The standalone settings check passes locally on an isolated display;
 the cloud window check still fails. See [current status](docs/STATUS.md) for the
 scope and limits of those results.
 

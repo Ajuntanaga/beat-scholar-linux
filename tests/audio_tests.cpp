@@ -229,6 +229,111 @@ void testSequencedGatesArePerVoiceAcrossCallbacks()
           "each voice stops on its own gate across prepared scratch chunks");
 }
 
+
+void testHostNoteOffReleasesOneMatchingVoice()
+{
+    bsl::AudioEngine engine;
+    engine.prepare(48000.0, 4);
+    engine.setPadSample(0, { 48000.0, { std::vector<float>(32, 0.5f) } });
+    bsl::PadPlaybackSettings settings;
+    settings.oneShot = false;
+    engine.setPadSettings(0, settings);
+    engine.noteOn(36, 0.25f);
+    engine.noteOn(36, 0.75f);
+    engine.noteOn(36, 0.5f, 8); // Sequenced voice owns its gate.
+    engine.noteOff(36);
+    auto output = makeBlock(34, 1);
+    engine.process(output, 1);
+    constexpr float unit = 0.5f * 0.70710678118f;
+    check(std::abs(output[0][0] - unit * 1.25f) < 1e-6f,
+          "one host note-off releases only the oldest host voice, retaining overlap and sequenced gate");
+    engine.noteOff(36);
+    engine.process(output, 1);
+    check(std::abs(output[0][0] - unit * 0.5f) < 1e-6f,
+          "second host note-off releases the second host voice without touching sequenced audio");
+    engine.noteOff(36);
+    engine.process(output, 1);
+    check(std::abs(output[0][0] - unit * 0.5f) < 1e-6f,
+          "unmatched host note-off leaves a sequenced voice running");
+
+    engine.reset();
+    for (int hit = 0; hit < 5; ++hit) engine.noteOn(36, 0.25f);
+    engine.noteOff(36); // The first voice was stolen; its off must still be consumed.
+    engine.process(output, 1);
+    check(std::abs(output[0][0] - unit) < 1e-6f,
+          "a stolen note's release does not cut one of its four replacements");
+    engine.noteOff(36);
+    engine.process(output, 1);
+    check(std::abs(output[0][0] - unit * 0.75f) < 1e-6f,
+          "release after a stolen note still pairs with the next held voice");
+
+    engine.reset();
+    engine.noteOn(36, 0.25f);
+    auto finished = makeBlock(34, 40);
+    engine.process(finished, 40);
+    engine.noteOn(36, 0.75f);
+    engine.noteOff(36);
+    engine.process(output, 1);
+    check(std::abs(output[0][0] - unit * 0.75f) < 1e-6f,
+          "an already finished note's release leaves the newer held note running");
+
+    engine.reset();
+    engine.noteOn(36, 0.25f, 0, false); // Pad preview has no matching MIDI release.
+    engine.noteOn(36, 0.75f);
+    engine.noteOff(36);
+    engine.process(output, 1);
+    check(std::abs(output[0][0] - unit * 0.25f) < 1e-6f,
+          "a pad preview does not consume a held MIDI note release");
+
+    engine.reset();
+    settings.oneShot = true;
+    engine.setPadSettings(0, settings);
+    engine.noteOn(36, 0.5f);
+    engine.noteOff(36);
+    engine.process(output, 1);
+    check(std::abs(output[0][0] - unit * 0.5f) < 1e-6f,
+          "One Shot still ignores host note-off");
+}
+
+void testMuteAndSoloSuppressPadEffectReturns()
+{
+    for (const auto routing : { bsl::RoutingMode::stereo, bsl::RoutingMode::multi })
+    for (const bool soloAnotherPad : { false, true })
+    {
+        bsl::AudioEngine engine;
+        engine.prepare(1000.0, 64);
+        engine.setRoutingMode(routing);
+        engine.setPadSample(0, { 1000.0, { { 0.5f } } });
+        bsl::PadPlaybackSettings pad;
+        pad.room = pad.reverb = 1.0f;
+        engine.setPadSettings(0, pad);
+        engine.noteOn(36, 1.0f);
+        auto impulse = makeBlock(34, 1);
+        engine.process(impulse, 1);
+        const auto channel = routing == bsl::RoutingMode::stereo ? 0 : 2;
+        check(impulse[channel][0] > 0.3f, "pad impulse reaches its selected routing output");
+        bsl::PadPlaybackSettings other;
+        other.solo = soloAnotherPad;
+        pad.muted = !soloAnotherPad;
+        engine.setPadSettings(0, pad);
+        engine.setPadSettings(1, other);
+        auto hidden = makeBlock(34, 400); // Includes the 80 ms and 330 ms returns.
+        engine.process(hidden, 400);
+        check(std::all_of(hidden.begin(), hidden.end(), [](const auto& samples) {
+                  return std::all_of(samples.begin(), samples.end(), [](float sample) { return sample == 0.0f; });
+              }), "Mute and Solo suppress existing pad Room/Reverb tails in stereo and multi routing");
+        check(engine.padPeaks()[0] == 0.0f, "inaudible pad tails do not illuminate the pad meter");
+        pad.muted = false;
+        other.solo = false;
+        engine.setPadSettings(0, pad);
+        engine.setPadSettings(1, other);
+        auto remaining = makeBlock(34, 100);
+        engine.process(remaining, 100);
+        check(remaining[channel][0] == 0.0f && remaining[channel][9] > 0.0f,
+              "hidden tails keep advancing and only their natural remainder returns after unmute");
+    }
+}
+
 void testPitchAndDampAlterPlaybackWithoutAllocationContractChanges()
 {
     bsl::AudioEngine engine;
@@ -698,6 +803,8 @@ int main()
     testScheduledTriggerStartsAtExactSampleOffset();
     testGatedPadStopsOnScheduledNoteOff();
     testSequencedGatesArePerVoiceAcrossCallbacks();
+    testHostNoteOffReleasesOneMatchingVoice();
+    testMuteAndSoloSuppressPadEffectReturns();
     testPitchAndDampAlterPlaybackWithoutAllocationContractChanges();
     testPadLowPassAndCompressionChangeDrySignal();
     testRoomAndReverbProduceTailAfterSampleEnds();

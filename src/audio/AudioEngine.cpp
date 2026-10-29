@@ -140,6 +140,8 @@ void AudioEngine::prepare(double newSampleRate, std::size_t maximumBlockSize)
 void AudioEngine::reset()
 {
     padPeaks_.fill(0.0f);
+    hostNotesStarted_.fill(0);
+    hostNotesReleased_.fill(0);
     for (auto& padVoices : voices_)
         padVoices.fill({});
     for (auto& delay : delayLeft_)
@@ -237,11 +239,13 @@ void AudioEngine::setMasterSettings(MasterPlaybackSettings settings) noexcept
     master_ = settings;
 }
 
-void AudioEngine::noteOn(std::uint8_t midiNote, float velocity, std::size_t gateFrames) noexcept
+void AudioEngine::noteOn(std::uint8_t midiNote, float velocity, std::size_t gateFrames,
+                         bool followsNoteOff) noexcept
 {
     if (midiNote < 36 || midiNote >= 36 + padCount)
         return;
     const auto pad = static_cast<std::size_t>(midiNote - 36);
+    const auto hostNoteId = gateFrames == 0 && followsNoteOff ? ++hostNotesStarted_[pad] : 0;
     if (!samples_[pad][0].isValid() && !samples_[pad][1].isValid())
         return;
     auto& padVoices = voices_[pad];
@@ -255,6 +259,7 @@ void AudioEngine::noteOn(std::uint8_t midiNote, float velocity, std::size_t gate
     padVoices[voiceIndex] = {};
     padVoices[voiceIndex].velocity = std::clamp(velocity, 0.0f, 1.0f);
     padVoices[voiceIndex].gateFrames = gateFrames;
+    padVoices[voiceIndex].hostNoteId = hostNoteId;
     padVoices[voiceIndex].active = true;
     nextVoice_[pad] = (voiceIndex + 1) % padVoices.size();
 }
@@ -264,9 +269,15 @@ void AudioEngine::noteOff(std::uint8_t midiNote) noexcept
     if (midiNote < 36 || midiNote >= 36 + padCount)
         return;
     const auto pad = static_cast<std::size_t>(midiNote - 36);
+    if (hostNotesReleased_[pad] == hostNotesStarted_[pad])
+        return;
+    // Consume releases in note-on order even when an old voice has ended
+    // or been stolen, so its release cannot cut a newer note.
+    const auto releasedId = ++hostNotesReleased_[pad];
     if (!settings_[pad].oneShot)
         for (auto& voice : voices_[pad])
-            voice.active = false;
+            if (voice.hostNoteId == releasedId)
+                voice.active = false;
 }
 
 void AudioEngine::process(AudioBlock& output, std::size_t sampleCount) noexcept
@@ -520,10 +531,14 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
             delayRight[position] = dryRight + shortRight * settings.room * 0.24f
                                    + longRight * settings.reverb * 0.46f;
             delayPosition_[pad] = (position + 1) % delayLeft.size();
-            padPeaks_[pad] = std::max(padPeaks_[pad],
-                std::max(std::abs(dryLeft + wetLeft), std::abs(dryRight + wetRight)));
-            output[target][frame] += dryLeft + wetLeft;
-            output[target + 1][frame] += dryRight + wetRight;
+            // Keep the delay history advancing while the pad is inaudible.
+            if (audible)
+            {
+                padPeaks_[pad] = std::max(padPeaks_[pad],
+                    std::max(std::abs(dryLeft + wetLeft), std::abs(dryRight + wetRight)));
+                output[target][frame] += dryLeft + wetLeft;
+                output[target + 1][frame] += dryRight + wetRight;
+            }
             if (routingMode_ == RoutingMode::stereo)
             {
                 padDelaySendLeft_[frame - start] += dryLeft * settings.delay;

@@ -173,6 +173,7 @@ private:
     std::uint64_t observedStateRevision_ = 0;
     bool draggingVelocity_ = false;
     bool draggingSubdivision_ = false;
+    bool beatDragCheckpointed_ = false;
     int dragStartY_ = 0;
     float dragStartVelocity_ = 0.8f;
     std::size_t dragStartSubdivision_ = 1;

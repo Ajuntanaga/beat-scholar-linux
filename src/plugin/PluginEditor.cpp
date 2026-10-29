@@ -1218,7 +1218,7 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                                  6.0f * scale, 4.0f * scale, std::max(1.0f, scale));
         }
         // Vertical separators reproduce the manual's sound design groupings.
-        for (const float x : { 548.0f, 624.0f, 764.0f, 900.0f, 976.0f })
+        for (const float x : { 548.0f, 608.0f, 668.0f, 850.0f, 976.0f })
         {
             graphics.setColour(juce::Colour(lookAndFeel_.palette().border));
             const auto line = designRect(getWidth(), getHeight(), x, 558.0f, 1.0f, 152.0f);
@@ -2027,7 +2027,7 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
             }
             else if (event.mods.isCommandDown())
             {
-                processor_.projectEditor().checkpoint();
+                beatDragCheckpointed_ = false;
                 draggingSubdivision_ = true;
                 dragStartY_ = position.y;
                 dragStartSubdivision_ = beat.slices.size();
@@ -2035,7 +2035,7 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
             else if (brush_ == Brush::velocity || event.mods.isAltDown())
             {
                 auto& slice = beat.slices[hit->slice];
-                processor_.projectEditor().checkpoint();
+                beatDragCheckpointed_ = false;
                 draggingVelocity_ = true;
                 dragStartY_ = position.y;
                 dragStartVelocity_ = slice.velocity;
@@ -2116,7 +2116,15 @@ void BeatScholarLinuxEditor::mouseDrag(const juce::MouseEvent& event)
             static_cast<int>(dragStartSubdivision_) + delta,
             1, static_cast<int>(bsl::maximumSubdivision)));
         if (beat.slices.size() != subdivision)
+        {
+            if (!beatDragCheckpointed_)
+            {
+                processor_.projectEditor().checkpoint();
+                beatDragCheckpointed_ = true;
+            }
             beat.setSubdivision(subdivision);
+            processor_.markProjectDirty();
+        }
         repaint();
         return;
     }
@@ -2125,8 +2133,18 @@ void BeatScholarLinuxEditor::mouseDrag(const juce::MouseEvent& event)
     auto& state = processor_.projectState();
     auto& slice = state.patterns[state.activePattern].lanes[lastHit_->lane]
                       .beats[lastHit_->beat].slices[lastHit_->slice];
-    slice.velocity = std::clamp(dragStartVelocity_ + static_cast<float>(dragStartY_ - position.y) / 140.0f,
-                                0.0f, 1.0f);
+    const auto velocity = std::clamp(
+        dragStartVelocity_ + static_cast<float>(dragStartY_ - position.y) / 140.0f, 0.0f, 1.0f);
+    if (slice.velocity != velocity)
+    {
+        if (!beatDragCheckpointed_)
+        {
+            processor_.projectEditor().checkpoint();
+            beatDragCheckpointed_ = true;
+        }
+        slice.velocity = velocity;
+        processor_.markProjectDirty();
+    }
     repaint();
 }
 
@@ -2134,6 +2152,7 @@ void BeatScholarLinuxEditor::mouseUp(const juce::MouseEvent&)
 {
     draggingVelocity_ = false;
     draggingSubdivision_ = false;
+    beatDragCheckpointed_ = false;
     draggingBarMeter_ = false;
     midiDragPending_ = false;
 }
@@ -2327,6 +2346,7 @@ void BeatScholarLinuxEditor::cancelPatternInteraction()
     lastHit_.reset();
     draggingVelocity_ = false;
     draggingSubdivision_ = false;
+    beatDragCheckpointed_ = false;
     draggingBarMeter_ = false;
     midiDragPending_ = false;
 }

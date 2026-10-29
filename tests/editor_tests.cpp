@@ -992,6 +992,85 @@ void testDocumentedPadBypassAutomation(const juce::File& output)
 }
 
 
+
+void testBeatDragPublishesEachChangeAndOwnsOneUndo()
+{
+    struct PlayHead final : juce::AudioPlayHead
+    {
+        PositionInfo info;
+        juce::Optional<PositionInfo> getPosition() const override { return info; }
+    };
+    for (const bool velocityDrag : { false, true })
+    for (const bool move : { false, true })
+    {
+        auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+        auto state = makeBypassTestProject(0);
+        state.global.sequencerEnabled = true;
+        state.global.samplerEnabled = false;
+        state.patterns[0].lanes = { bsl::LaneState::make(4) };
+        for (auto& beat : state.patterns[0].lanes[0].beats)
+            beat.slices[0].enabled = false;
+        state.patterns[0].lanes[0].beats[0] = bsl::BeatState::withSubdivision(1, 0, 0.5f);
+        const auto bytes = bsl::statecodec::encode(state);
+        processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
+        processor->setRateAndBufferSizeDetails(48000.0, 24000);
+        processor->prepareToPlay(48000.0, 24000);
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        editor->setSize(1280, 720);
+        const juce::ModifierKeys modifiers(juce::ModifierKeys::leftButtonModifier
+            | (velocityDrag ? juce::ModifierKeys::altModifier : juce::ModifierKeys::commandModifier));
+        const juce::Point<float> start { 196.0f, 306.0f };
+        editor->mouseDown(visualEvent(*editor, start, modifiers));
+        processor->publishProjectStateIfNeeded(); // A timer tick may precede the first movement.
+        if (move)
+            for (int step = 1; step <= 2; ++step)
+            {
+                editor->mouseDrag(visualEvent(*editor,
+                    { start.x, start.y - float(step * (velocityDrag ? 14 : 12)) }, modifiers));
+                processor->publishProjectStateIfNeeded(); // Each movement must reach the audio thread.
+            }
+        editor->mouseUp(visualEvent(*editor, start, modifiers));
+        if (!move)
+            check(!processor->projectEditor().canUndo(),
+                  "modifier click without a changed beat creates no empty Undo step");
+        else
+        {
+            PlayHead playHead;
+            playHead.info.setIsPlaying(true);
+            playHead.info.setTimeInSamples(0);
+            playHead.info.setPpqPosition(0.0);
+            playHead.info.setBpm(120.0);
+            processor->setPlayHead(&playHead);
+            juce::AudioBuffer<float> audio(2, 24000);
+            juce::MidiBuffer midi;
+            processor->processBlock(audio, midi);
+            int noteCount = 0;
+            for (const auto event : midi)
+                if (event.getMessage().isNoteOn())
+                {
+                    ++noteCount;
+                    if (velocityDrag)
+                        check(event.getMessage().getVelocity() == 89,
+                              "playback uses the final velocity after multiple published drag updates");
+                }
+            check(noteCount == (velocityDrag ? 1 : 3),
+                  "playback uses the final subdivision after multiple published drag updates");
+            processor->setPlayHead(nullptr);
+            check(processor->projectEditor().undo(), "beat drag is undoable");
+            const auto& original = processor->projectState().patterns[0].lanes[0].beats[0];
+            check(original.slices.size() == 1 && original.slices[0].velocity == 0.5f
+                      && !processor->projectEditor().canUndo(),
+                  "one Undo restores the complete beat drag gesture");
+            check(processor->projectEditor().redo(), "beat drag is redoable");
+            const auto& changed = processor->projectState().patterns[0].lanes[0].beats[0];
+            check(velocityDrag ? std::abs(changed.slices[0].velocity - 0.7f) < 1e-6f
+                               : changed.slices.size() == 3,
+                  "one Redo restores the final dragged value");
+        }
+        processor->releaseResources();
+    }
+}
+
 void testHostRecallCancelsStalePatternInteractions()
 {
     for (const bool velocityDrag : { false, true })
@@ -1807,6 +1886,7 @@ int main(int argc, char** argv)
     testAutonomousManualRegressions();
     testDefaultVelocityDragUndo();
     testHostRecallCancelsStalePatternInteractions();
+    testBeatDragPublishesEachChangeAndOwnsOneUndo();
     testRandomizerPanelRecall();
     testLegacyAttackFallbackRemainsAudibleAfterEditing();
     testMasterGainReportsHostGestures();

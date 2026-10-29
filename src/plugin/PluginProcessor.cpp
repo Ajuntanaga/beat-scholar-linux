@@ -361,7 +361,7 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     {
         const float velocity = pendingTriggers_[pad].exchange(0.0f);
         if (state.global.samplerEnabled && velocity > 0.0f)
-            audioEngine_.noteOn(static_cast<std::uint8_t>(36 + pad), velocity);
+            audioEngine_.noteOn(static_cast<std::uint8_t>(36 + pad), velocity, 0, false);
     }
 
     for (std::size_t segmentIndex = 0; segmentIndex < segmentCount; ++segmentIndex)

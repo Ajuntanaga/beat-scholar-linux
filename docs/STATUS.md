@@ -5,7 +5,7 @@ There is no public release or claim of complete compatibility.
 
 ## What has been checked
 
-The reference-followup candidate passed a clean Modal build, eight available
+The latest private candidate passed a clean Modal build, eight available
 CTest suites, and pluginval strictness 10. Those suites include state and editor
 checks and a smoke test that loads the built VST3 through a separate host.
 The ninth suite needs private factory content and was skipped remotely.
@@ -13,7 +13,7 @@ The ninth suite needs private factory content and was skipped remotely.
 The matching local factory checker passed three presets at 44.1, 48, and 96 kHz,
 checking finite, non-silent playback and MIDI activity. A prior candidate passed
 initial-pattern playback for 129 factory presets; that wider sweep has not been
-repeated on the latest sequencer changes.
+repeated on the latest source.
 
 The matching standalone passed a local isolated Xvfb settings-open and
 Escape-close check using null audio. Its cloud main-window check failed.
@@ -31,6 +31,19 @@ not been loaded into the user's active REAPER session.
 - Repaired host-start and seek alignment, pattern triggers, and MIDI boundaries.
 - Corrected several undo, automation, routing, sample-history, and state paths.
 - Added host drum-note names and the documented dark and MIDI-display options.
+- Subdivision and velocity drags now publish each change to playback, with one
+  Undo step per changed drag and none for an unchanged click.
+- MIDI Note Off now releases its matching held voice without cutting overlapping
+  notes, sequenced hits, or pad previews. Stolen and finished voices keep their
+  release pairing.
+- Muted pads and pads excluded by Solo no longer leak their Room/Reverb returns
+  or light the pad meter. Their delay buffers keep advancing while inaudible.
+- Sampler section dividers now follow the manual's control groups without
+  crossing knobs.
+
+The new audio and editing regressions failed on the previous source and passed
+after these repairs in clean Modal builds. Sampler grouping was checked against
+manual page 16 in the rendered classic and dark views.
 
 Private sample verification established exact decoded PCM for the recovered
 resources. That does not establish original preset or effect-output identity.

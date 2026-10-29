@@ -94,7 +94,9 @@ public:
     void setPadGainPan(std::size_t padIndex, float gain, float pan) noexcept;
     void setPadSettings(std::size_t padIndex, PadPlaybackSettings settings) noexcept;
     void setMasterSettings(MasterPlaybackSettings settings) noexcept;
-    void noteOn(std::uint8_t midiNote, float velocity, std::size_t gateFrames = 0) noexcept;
+    // Only ungated host notes pair with noteOff; previews opt out.
+    void noteOn(std::uint8_t midiNote, float velocity, std::size_t gateFrames = 0,
+                bool followsNoteOff = true) noexcept;
     void noteOff(std::uint8_t midiNote) noexcept;
     // Streaming callers clear once, then render monotonically between note events.
     void beginBlock(AudioBlock& output, std::size_t sampleCount) noexcept;
@@ -112,6 +114,7 @@ private:
         std::array<double, 2> positions {};
         std::size_t elapsedFrames = 0;
         std::size_t gateFrames = 0;
+        std::uint64_t hostNoteId = 0;
         float velocity = 0.0f;
         std::array<float, 5> lowPassLeft {};
         std::array<float, 5> lowPassRight {};
@@ -129,6 +132,8 @@ private:
     std::array<std::array<SampleData, 2>, padCount> samples_;
     std::array<std::array<Voice, 4>, padCount> voices_;
     std::array<std::size_t, padCount> nextVoice_ {};
+    std::array<std::uint64_t, padCount> hostNotesStarted_ {};
+    std::array<std::uint64_t, padCount> hostNotesReleased_ {};
     std::array<PadPlaybackSettings, padCount> settings_;
     MasterPlaybackSettings master_;
     std::array<std::vector<float>, padCount> delayLeft_;
