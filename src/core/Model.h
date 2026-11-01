@@ -52,6 +52,8 @@ struct SliceState
     std::uint8_t padIndex = 0;
     float velocity = 0.8f;
     bool enabled = false;
+    // Empty cells use the current default; previously placed/edited notes retain theirs.
+    bool velocityAssigned = false;
 
     auto operator<=>(const SliceState&) const = default;
 };
@@ -77,6 +79,7 @@ struct BarState
     int denominator = 4;
 
     static BarState make(int numerator, int denominator, std::size_t unusedBeatCount = 0);
+    [[nodiscard]] bool isValid() const noexcept;
     [[nodiscard]] double durationInQuarterNotes() const;
 };
 

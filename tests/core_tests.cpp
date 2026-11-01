@@ -224,6 +224,30 @@ void testAddBarRejectsInvalidMeterWithoutHistory()
     }
 }
 
+void testSetBarMeterRejectsInvalidInputWithoutChangingHistory()
+{
+    for (const bool createUndoStep : { false, true })
+        for (const bsl::BarState meter : { bsl::BarState {0, 3}, bsl::BarState {65, 4}, bsl::BarState {4, 3} })
+        {
+            auto state = bsl::ProjectState::makeDefault();
+            for (auto& lane : state.patterns[0].lanes)
+                for (auto& beat : lane.beats)
+                    beat = bsl::BeatState::withSubdivision(3, 7, 0.3f);
+            bsl::ProjectEditor editor(state);
+            const auto revision = editor.revision();
+            check(!editor.setBarMeter(0, 0, meter.numerator, meter.denominator, createUndoStep),
+                  "invalid meter edit is rejected before normalization");
+            const auto& pattern = editor.state().patterns[0];
+            check(pattern.bars[0].numerator == 4 && pattern.bars[0].denominator == 4,
+                  "invalid meter edit preserves the bar signature");
+            for (std::size_t lane = 0; lane < pattern.lanes.size(); ++lane)
+                check(pattern.lanes[lane].beats == state.patterns[0].lanes[lane].beats,
+                      "invalid meter edit preserves every beat and slice");
+            check(editor.revision() == revision && !editor.canUndo() && !editor.canRedo(),
+                  "invalid meter edit leaves revision and history untouched");
+        }
+}
+
 void testBarEditingKeepsEveryLaneAligned()
 {
     bsl::ProjectEditor editor(bsl::ProjectState::makeDefault());
@@ -568,6 +592,7 @@ int main()
     testRealtimeSequencerRenderUsesCallerOwnedBoundedStorage();
     testNegativeSwingAdvancesOffGridEvents();
     testAddBarRejectsInvalidMeterWithoutHistory();
+    testSetBarMeterRejectsInvalidInputWithoutChangingHistory();
     testBarEditingKeepsEveryLaneAligned();
     testSameMeterBarPasteRetainsUndoCheckpoint();
     testUndoRedoRestoresCanonicalProjectState();

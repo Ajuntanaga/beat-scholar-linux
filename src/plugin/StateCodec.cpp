@@ -63,6 +63,7 @@ juce::var sliceToVar(const SliceState& slice)
     set(result, "padIndex", static_cast<int>(slice.padIndex));
     set(result, "velocity", slice.velocity);
     set(result, "enabled", slice.enabled);
+    set(result, "velocityAssigned", slice.velocityAssigned);
     return result;
 }
 
@@ -289,6 +290,8 @@ bool readSlice(const juce::var& encoded, SliceState& slice, int version,
                                   : static_cast<std::uint8_t>(identity);
     slice.velocity = readFloat(encoded, "velocity", 0.8f);
     slice.enabled = readBool(encoded, "enabled", false);
+    // Older projects already stored a velocity for every note, including disabled ones.
+    slice.velocityAssigned = readBool(encoded, "velocityAssigned", true);
     return true;
 }
 
@@ -308,6 +311,14 @@ bool readBeat(const juce::var& encoded, BeatState& beat, int version,
         beat.slices.push_back(slice);
     }
     return true;
+}
+
+bool readIndex(const juce::var& value, juce::int64 minimum, juce::int64 maximum,
+               juce::int64& result)
+{
+    if (!value.isInt() && !value.isInt64()) return false;
+    result = static_cast<juce::int64>(value);
+    return result >= minimum && result <= maximum;
 }
 
 bool readPattern(const juce::var& encoded, PatternState& pattern, int version,
@@ -350,8 +361,18 @@ bool readPattern(const juce::var& encoded, PatternState& pattern, int version,
         return false;
     pattern.bars.clear();
     for (const auto& value : *bars)
-        pattern.bars.push_back(BarState::make(readInt(value, "numerator", 4),
-                                              readInt(value, "denominator", 4)));
+    {
+        if (!value.isObject()) return false;
+        const auto numerator = get(value, "numerator");
+        const auto denominator = get(value, "denominator");
+        juce::int64 n = 4, d = 4;
+        if ((!numerator.isVoid() && !readIndex(numerator, 1, 64, n))
+            || (!denominator.isVoid() && !readIndex(denominator, 2, 16, d)))
+            return false;
+        const BarState bar { static_cast<int>(n), static_cast<int>(d) };
+        if (!bar.isValid()) return false;
+        pattern.bars.push_back(bar);
+    }
     pattern.lanes.clear();
     for (const auto& value : *lanes)
     {
@@ -432,14 +453,6 @@ bool readPad(const juce::var& encoded, PadState& pad, int version)
     pad.driveBypass = readBool(encoded, "driveBypass", false);
     pad.crushBypass = readBool(encoded, "crushBypass", false);
     return true;
-}
-
-bool readIndex(const juce::var& value, juce::int64 minimum, juce::int64 maximum,
-               juce::int64& result)
-{
-    if (!value.isInt() && !value.isInt64()) return false;
-    result = static_cast<juce::int64>(value);
-    return result >= minimum && result <= maximum;
 }
 
 bool readRandomizer(const juce::var& encoded, RandomizerSettings& settings)
@@ -1145,6 +1158,7 @@ bool importLegacyPresetJson(const juce::String& json, ProjectState& destination)
                         std::clamp(readInt(event, "noteNum", 36), 0, 127));
                     slice.velocity = readFloat(event, "velocity", 0.8f);
                     slice.enabled = readBool(step, "enabled", false);
+                    slice.velocityAssigned = true;
                     beat.slices.push_back(slice);
                 }
                 lane.beats.push_back(std::move(beat));

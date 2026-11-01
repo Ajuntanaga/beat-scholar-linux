@@ -60,6 +60,7 @@ void applyWithEngine(BeatState& beat, const RandomizerSettings& settings,
             slice.velocity = velocity(engine);
         else
             slice.velocity = std::clamp(defaultVelocity, 0.0f, 1.0f);
+        slice.velocityAssigned = true;
     }
 }
 

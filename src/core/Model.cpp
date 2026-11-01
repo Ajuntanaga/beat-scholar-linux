@@ -40,6 +40,7 @@ BeatState BeatState::withSubdivision(std::size_t subdivision,
         slice.padIndex = padIndex;
         slice.velocity = std::clamp(velocity, 0.0f, 1.0f);
         slice.enabled = true;
+        slice.velocityAssigned = true;
     }
     return beat;
 }
@@ -81,6 +82,11 @@ BarState BarState::make(int newNumerator, int newDenominator, std::size_t)
     return bar;
 }
 
+bool BarState::isValid() const noexcept
+{
+    return numerator >= 1 && numerator <= 64 && isSupportedDenominator(denominator);
+}
+
 double BarState::durationInQuarterNotes() const
 {
     return static_cast<double>(numerator) * 4.0 / static_cast<double>(denominator);
@@ -91,7 +97,10 @@ LaneState LaneState::make(std::size_t beatCount)
     LaneState lane;
     lane.beats.resize(beatCount, BeatState::withSubdivision(1, 0, 0.8f));
     for (auto& beat : lane.beats)
+    {
         beat.slices.front().enabled = false;
+        beat.slices.front().velocityAssigned = false;
+    }
     return lane;
 }
 
@@ -224,7 +233,7 @@ bool ProjectState::isValid() const
             });
 
         for (const auto& bar : pattern.bars)
-            if (bar.numerator < 1 || bar.numerator > 64 || !isSupportedDenominator(bar.denominator))
+            if (!bar.isValid())
                 return false;
 
         for (const auto& lane : pattern.lanes)

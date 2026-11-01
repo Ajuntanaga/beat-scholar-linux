@@ -637,6 +637,60 @@ void testRandomizerIndicesRejectNarrowingAndNonIntegers()
     }
 }
 
+void testNativeBarMetersRejectInvalidRawValuesAtomically()
+{
+    struct Case { const char* field; juce::var value; int beatCount; };
+    const std::array cases {
+        Case { "numerator", 0, 1 }, Case { "numerator", 65, 64 },
+        Case { "denominator", 3, 4 }, Case { "denominator", 0, 4 },
+        Case { "numerator", juce::var((juce::int64(1) << 32) + 4), 4 },
+        Case { "denominator", juce::var((juce::int64(1) << 32) + 4), 4 },
+        Case { "numerator", 4.5, 4 }, Case { "denominator", "4", 4 }
+    };
+    auto destination = bsl::ProjectState::makeDefault();
+    destination.patterns[0].name = "Preserve on invalid meter";
+    const auto before = bsl::statecodec::encodePresetJson(destination);
+    for (const auto& item : cases)
+    {
+        auto source = bsl::ProjectState::makeDefault();
+        source.patterns[0].bars = {{item.beatCount, 4}};
+        source.patterns[0].lanes = {bsl::LaneState::make(static_cast<std::size_t>(item.beatCount))};
+        auto json = juce::JSON::parse(bsl::statecodec::encodePresetJson(source));
+        auto& bar = json.getDynamicObject()->getProperty("patterns").getArray()->getReference(0)
+            .getDynamicObject()->getProperty("bars").getArray()->getReference(0);
+        bar.getDynamicObject()->setProperty(item.field, item.value);
+        check(!bsl::statecodec::decodePresetJson(juce::JSON::toString(json), destination),
+              "native preset rejects raw invalid meter before coercion or normalization");
+        check(bsl::statecodec::encodePresetJson(destination) == before,
+              "invalid bar meter rejection preserves the complete destination");
+        destination = bsl::ProjectState::makeDefault();
+        destination.patterns[0].name = "Preserve on invalid meter";
+    }
+}
+
+void testSliceVelocityAssignmentRoundTripAndMigration()
+{
+    auto source = bsl::ProjectState::makeDefault();
+    source.patterns[0].lanes[0].beats[0] = bsl::BeatState::withSubdivision(1, 0, 0.3f);
+    source.patterns[0].lanes[0].beats[0].slices[0].enabled = false;
+    auto restored = bsl::ProjectState::makeDefault();
+    check(bsl::statecodec::decodePresetJson(bsl::statecodec::encodePresetJson(source), restored),
+          "note velocity assignment state decodes");
+    check(restored.patterns[0].lanes[0].beats == source.patterns[0].lanes[0].beats,
+          "round trip distinguishes a disabled remembered note from untouched cells");
+    auto json = juce::JSON::parse(bsl::statecodec::encodePresetJson(source));
+    auto& oldSlice = json.getDynamicObject()->getProperty("patterns").getArray()->getReference(0)
+        .getDynamicObject()->getProperty("lanes").getArray()->getReference(0)
+        .getDynamicObject()->getProperty("beats").getArray()->getReference(0)
+        .getArray()->getReference(0);
+    oldSlice.getDynamicObject()->removeProperty("velocityAssigned");
+    check(bsl::statecodec::decodePresetJson(juce::JSON::toString(json), restored),
+          "older native projects without velocity assignment metadata still decode");
+    const auto& note = restored.patterns[0].lanes[0].beats[0].slices[0];
+    check(note.velocityAssigned && !note.enabled && note.velocity == 0.3f,
+          "older disabled notes retain their stored velocity");
+}
+
 void testCompressedStateExpansionIsBounded()
 {
     auto state = bsl::ProjectState::makeDefault();
@@ -676,6 +730,8 @@ int main()
     testLegacyAuxSettingsDoNotProcessUnsentMasterAudio();
     testLegacyKitAdapterImportsLayersAndProcessing();
     testRandomizerIndicesRejectNarrowingAndNonIntegers();
+    testNativeBarMetersRejectInvalidRawValuesAtomically();
+    testSliceVelocityAssignmentRoundTripAndMigration();
     testCompressedStateExpansionIsBounded();
     testNativeKitAndRandomizerJsonRoundTrip();
     if (failures != 0)

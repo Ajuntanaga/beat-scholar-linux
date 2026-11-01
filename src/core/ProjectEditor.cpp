@@ -37,6 +37,7 @@ BeatState ProjectEditor::emptyBeat(std::uint8_t padIndex)
 {
     auto beat = BeatState::withSubdivision(1, padIndex, 0.8f);
     beat.slices.front().enabled = false;
+    beat.slices.front().velocityAssigned = false;
     return beat;
 }
 
@@ -98,9 +99,7 @@ bool ProjectEditor::randomizeLane(std::size_t patternIndex, std::size_t laneInde
 
 bool ProjectEditor::addBar(std::size_t patternIndex, BarState bar)
 {
-    if (patternIndex >= state_.patterns.size() || bar.numerator < 1 || bar.numerator > 64
-        || (bar.denominator != 2 && bar.denominator != 4
-            && bar.denominator != 8 && bar.denominator != 16))
+    if (patternIndex >= state_.patterns.size() || !bar.isValid())
         return false;
     auto& pattern = state_.patterns[patternIndex];
     beginEdit();
@@ -161,7 +160,9 @@ bool ProjectEditor::setBarMeter(std::size_t patternIndex, std::size_t barIndex,
     auto& pattern = state_.patterns[patternIndex];
     if (barIndex >= pattern.bars.size())
         return false;
-    const auto replacement = BarState::make(numerator, denominator);
+    const BarState replacement { numerator, denominator };
+    if (!replacement.isValid())
+        return false;
     const auto oldCount = static_cast<std::size_t>(pattern.bars[barIndex].numerator);
     const auto newCount = static_cast<std::size_t>(replacement.numerator);
     const auto start = firstBeatOfBar(pattern, barIndex);

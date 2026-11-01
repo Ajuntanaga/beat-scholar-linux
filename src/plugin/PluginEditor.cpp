@@ -18,6 +18,15 @@ constexpr std::array<const char*, bsl::padCount> padNames {
     "CRASH 2", "TOM HI", "TOM MID", "TOM LOW", "SHAKER", "TRIANGLE", "FX 1", "FX 2"
 };
 
+void enableSlice(bsl::SliceState& slice, std::uint8_t pad, float defaultVelocity)
+{
+    if (!slice.velocityAssigned || slice.padIndex != pad)
+        slice.velocity = defaultVelocity;
+    slice.padIndex = pad;
+    slice.velocityAssigned = true;
+    slice.enabled = true;
+}
+
 bool isAudioFile(const juce::File& file)
 {
     const auto extension = file.getFileExtension().toLowerCase();
@@ -1414,6 +1423,8 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
 
 void BeatScholarLinuxEditor::resized()
 {
+    for (auto& label : soundLabels_)
+        label.setFont(juce::FontOptions(10.0f * designScale(getWidth(), getHeight()), juce::Font::bold));
     title_.setFont(juce::Font(juce::FontOptions("Nimbus Sans Narrow", "Bold",
 +                                                24.0f * designScale(getWidth(), getHeight()))));
     title_.setBounds(designRect(getWidth(), getHeight(), 16.0f, 13.0f, 132.0f, 34.0f));
@@ -2111,6 +2122,8 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
                 dragStartY_ = position.y;
                 dragStartSubdivision_ = beat.slices.size();
             }
+            else if (event.mods.isShiftDown())
+                applyBrush(*hit, event.mods);
             else if (brush_ == Brush::velocity || event.mods.isAltDown())
             {
                 auto& slice = beat.slices[hit->slice];
@@ -2227,6 +2240,7 @@ void BeatScholarLinuxEditor::mouseDrag(const juce::MouseEvent& event)
             beatDragCheckpointed_ = true;
         }
         slice.velocity = velocity;
+        slice.velocityAssigned = true;
         processor_.markProjectDirty();
     }
     repaint();
@@ -2341,15 +2355,6 @@ void BeatScholarLinuxEditor::applyBrush(const BeatHit& hit, const juce::Modifier
         return;
     }
     processor_.projectEditor().checkpoint();
-    if (brush_ == Brush::randomizer || juce::KeyPress::isKeyCurrentlyDown('/'))
-    {
-        bsl::Randomizer::apply(beat, state.randomizer,
-                               static_cast<std::uint32_t>(juce::Time::getMillisecondCounter()),
-                               state.global.defaultVelocity);
-        return;
-    }
-    if (brush_ == Brush::slicer)
-        beat.setSubdivision(requestedSubdivision_);
     if (modifiers.isShiftDown())
     {
         const bool enable = std::any_of(beat.slices.begin(), beat.slices.end(), [](const auto& slice) {
@@ -2359,24 +2364,27 @@ void BeatScholarLinuxEditor::applyBrush(const BeatHit& hit, const juce::Modifier
         {
             slice.enabled = enable;
             if (enable)
-            {
-                slice.padIndex = static_cast<std::uint8_t>(state.ui.selectedPad);
-                slice.velocity = state.global.defaultVelocity;
-            }
+                enableSlice(slice, static_cast<std::uint8_t>(state.ui.selectedPad),
+                            state.global.defaultVelocity);
         }
         return;
     }
+    if (brush_ == Brush::randomizer || juce::KeyPress::isKeyCurrentlyDown('/'))
+    {
+        bsl::Randomizer::apply(beat, state.randomizer,
+                               static_cast<std::uint32_t>(juce::Time::getMillisecondCounter()),
+                               state.global.defaultVelocity);
+        return;
+    }
+    if (brush_ == Brush::slicer)
+        beat.setSubdivision(requestedSubdivision_);
     const auto selectedSlice = std::min(hit.slice, beat.slices.size() - 1);
     auto& slice = beat.slices[selectedSlice];
     const auto padIndex = static_cast<std::uint8_t>(state.ui.selectedPad);
     if (slice.enabled && slice.padIndex == padIndex)
         slice.enabled = false;
     else
-    {
-        slice.padIndex = padIndex;
-        slice.velocity = state.global.defaultVelocity;
-        slice.enabled = true;
-    }
+        enableSlice(slice, padIndex, state.global.defaultVelocity);
 }
 
 void BeatScholarLinuxEditor::showBeatMenu(const BeatHit& hit)
@@ -2407,8 +2415,17 @@ void BeatScholarLinuxEditor::showBeatMenu(const BeatHit& hit)
         }
         safe->processor_.projectEditor().checkpoint();
         if (result == 1)
+        {
+            const bool enable = std::any_of(beat.slices.begin(), beat.slices.end(),
+                                           [](const auto& slice) { return !slice.enabled; });
             for (auto& slice : beat.slices)
-                slice.enabled = !slice.enabled;
+            {
+                if (enable)
+                    enableSlice(slice, slice.padIndex, state.global.defaultVelocity);
+                else
+                    slice.enabled = false;
+            }
+        }
         else if (result == 3 && safe->beatClipboard_)
             beat = *safe->beatClipboard_;
         else if (result >= 101 && result <= 109)

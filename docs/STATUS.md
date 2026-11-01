@@ -1,6 +1,6 @@
 # Current status
 
-Updated 2026-10-28. This project is staged privately for continued development.
+Updated 2026-10-31. This project is staged privately for continued development.
 There is no public release or claim of complete compatibility.
 
 ## What has been checked
@@ -20,13 +20,18 @@ those, 87 produced samples at or above full scale; the largest absolute peak was
 3.261248. The current three-preset check also reaches full scale. These
 measurements need reference comparison before calling the presets sonically
 correct or changing their gain. The 129-preset sweep was not repeated for the
-standalone-only behavior changes.
+editing and state-import changes.
 
 The matching standalone passed a local isolated Xvfb check using null audio:
 settings opened from the cog and closed with Escape, the app saved an edited
 137 BPM tempo, and the saved project matched after a clean close and reopen.
 The settings and restored-editor screenshots were inspected. Physical audio and
 MIDI devices were not tested. The cloud main-window check still timed out.
+
+The current candidate also passed seven local standalone interaction captures:
+default, randomizer, seven-slice editing, beat and lane context menus, and compact
+randomizer and sampler views. The saved state confirms the held-key gesture made
+seven slices. The inspected compact view now shows the full Trigger Chance label.
 
 The previous audit inspected arrangement views at widths of 960, 1280, and
 1920 pixels, alongside zoomed/scrolled, classic seven-slice, dark, custom-sample,
@@ -38,6 +43,15 @@ not been loaded into the user's active REAPER session.
 
 ## Repairs already in the source
 
+- Turning a note off and back on remembers its velocity. Fresh notes use the
+  current default, as does assigning a different pad.
+  Saved states retain this distinction; older states keep their stored levels.
+- Shift-click fills a partly empty beat or empties a full one in all four brush
+  modes, without subdividing or randomizing it. The Fill / empty menu also
+  changes the whole beat uniformly and preserves its pad assignments.
+- Invalid bar-meter edits and native imports fail before changing the project
+  or its undo history. Fractional, string, and overflowing inputs are rejected.
+- The Trigger Chance label scales with the compact editor and stays readable.
 - Standalone Play/Pause/Stop and tempo follow the app's own clock. The audio
   device's continuously advancing clock no longer overrides those controls.
 - Standalone projects saved with multiple outputs play through the main stereo
@@ -68,11 +82,13 @@ not been loaded into the user's active REAPER session.
 - Undecodable embedded samples are rejected before replacing state or sound.
   Factory migration skips symbolic links and non-regular files.
 
-New regression tests reproduced the editing and import defects on the earlier
-source and passed after the repairs on Modal. Screenshot inspection then found
-the lane-control clipping defect; its pixel regression passes in the final
-candidate. The arrangement and sampler checks use manual pages 14 and 16, and
-the keyboard mapping follows page 5.
+The current core, state, and editor regressions reproduced the meter, velocity,
+and fill/empty defects on the earlier source and passed after repair on Modal.
+The separate VST3 host's synthetic state fixture was updated for the additive
+velocity-memory field; its exact state-restore comparison still passes.
+
+Earlier regressions covered arrangement and sampler behavior from manual pages
+14 and 16, keyboard mapping from page 5, and scrolled lane-control clipping.
 
 The standalone regressions also failed on the earlier processor and passed
 with the fixes. They exercise a continuously advancing device clock, pause and

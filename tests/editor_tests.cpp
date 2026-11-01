@@ -627,6 +627,102 @@ void testDrumBrushDoesNotInheritSubdivision()
           "Drum brush still applies the selected pad");
 }
 
+void testTogglingNoteRemembersVelocity()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    auto& state = processor->projectState();
+    state.patterns[0].lanes = { bsl::LaneState::make(4) };
+    state.patterns[0].lanes[0].beats[0] = bsl::BeatState::withSubdivision(3, 7, 0.3f);
+    state.ui.selectedPad = 7;
+    state.global.defaultVelocity = 0.8f;
+    auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    const auto original = state.patterns[0].lanes[0].beats;
+    const auto click = visualEvent(*editor, { 236.0f, 266.0f });
+    editor->mouseDown(click);
+    editor->mouseUp(click);
+    check(!state.patterns[0].lanes[0].beats[0].slices[0].enabled,
+          "Drum click disables the targeted note");
+    editor->mouseDown(click);
+    editor->mouseUp(click);
+    check(state.patterns[0].lanes[0].beats == original,
+          "off/on restores the note with its remembered velocity and untouched neighbours");
+    state.ui.selectedPad = 15;
+    editor->mouseDown(click);
+    editor->mouseUp(click);
+    const auto& replacement = state.patterns[0].lanes[0].beats[0].slices[0];
+    check(replacement.enabled && replacement.padIndex == 15 && replacement.velocity == 0.8f,
+          "placing a different pad still uses the default velocity");
+}
+
+void testFreshNoteUsesDefaultAndKeepsItAfterRecall()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    auto& state = processor->projectState();
+    state.patterns[0].lanes = { bsl::LaneState::make(4) };
+    state.ui.selectedPad = 0;
+    state.global.defaultVelocity = 0.45f;
+    auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    const auto click = visualEvent(*editor, { 236.0f, 266.0f });
+    editor->mouseDown(click);
+    editor->mouseUp(click);
+    check(state.patterns[0].lanes[0].beats[0].slices[0].velocity == 0.45f,
+          "a fresh cell with the same pad identity uses the current toolbar default");
+    editor->mouseDown(click);
+    editor->mouseUp(click);
+    juce::MemoryBlock saved;
+    processor->getStateInformation(saved);
+    processor->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    editor.reset();
+    state.global.defaultVelocity = 0.9f;
+    editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    const auto recalledClick = visualEvent(*editor, { 236.0f, 266.0f });
+    editor->mouseDown(recalledClick);
+    editor->mouseUp(recalledClick);
+    const auto& restored = state.patterns[0].lanes[0].beats[0].slices[0];
+    check(restored.enabled && restored.velocity == 0.45f,
+          "off/on after host recall remembers the note instead of the changed default");
+}
+
+void testShiftBeatFillOverridesBrushAndRemembersVelocities()
+{
+    for (const char* brush : { "brush.drum", "brush.slicer", "brush.dice", "brush.velocity" })
+    {
+        auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+        auto& state = processor->projectState();
+        state.patterns[0].lanes = { bsl::LaneState::make(4) };
+        state.patterns[0].lanes[0].beats[0] = bsl::BeatState::withSubdivision(3, 7, 0.3f);
+        state.patterns[0].lanes[0].beats[0].slices[1].enabled = false;
+        state.ui.selectedPad = 7;
+        state.randomizer.selectedSubdivisions = {5};
+        state.randomizer.triggerChance = 1.0f;
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        editor->keyPressed(juce::KeyPress('5', {}, '5'));
+        auto* button = childWithId<juce::TextButton>(*editor, brush);
+        check(button != nullptr, "Shift-beat test locates active brush");
+        if (button == nullptr) continue;
+        button->onClick();
+        const auto original = state.patterns[0].lanes[0].beats;
+        auto filled = original;
+        for (auto& slice : filled[0].slices) slice.enabled = true;
+        auto empty = original;
+        for (auto& slice : empty[0].slices) slice.enabled = false;
+        const auto click = visualEvent(*editor, { 236.0f, 266.0f },
+            juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::shiftModifier));
+        editor->mouseDown(click);
+        editor->mouseUp(click);
+        check(state.patterns[0].lanes[0].beats == filled,
+              juce::String(brush) + ": Shift fills a mixed beat without reslicing or changing remembered velocities");
+        editor->mouseDown(click);
+        editor->mouseUp(click);
+        check(state.patterns[0].lanes[0].beats == empty,
+              juce::String(brush) + ": Shift empties a filled beat uniformly");
+        check(processor->projectEditor().undo() && state.patterns[0].lanes[0].beats == filled,
+              "one undo restores the filled beat");
+        check(processor->projectEditor().undo() && state.patterns[0].lanes[0].beats == original,
+              "second undo restores the original mixed beat");
+    }
+}
+
 void testShiftLaneResetOverridesActiveBrush()
 {
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
@@ -746,6 +842,43 @@ void testKeyboardFocus()
         check(started && command.waitForProcessToFinish(2000) && command.getExitCode() == 0,
               "send key only to isolated Xvfb display");
     };
+    std::function<void(int)> testFillMenu;
+    testFillMenu = [&](int index) {
+        auto& state = laneProcessor->projectState();
+        if (index == 0)
+        {
+            state.patterns[0].lanes[0].beats[0] = bsl::BeatState::withSubdivision(3, 7, 0.3f);
+            state.patterns[0].lanes[0].beats[0].slices[1].enabled = false;
+        }
+        laneEditor->mouseDown(visualEvent(*laneEditor, {597.0f, 306.0f}, juce::ModifierKeys::rightButtonModifier));
+        juce::Timer::callAfterDelay(75, [&, index] {
+            auto* menu = juce::Component::getCurrentlyModalComponent();
+            check(menu != nullptr, "mixed-beat context menu opens");
+            if (menu != nullptr)
+            {
+                menu->keyPressed(juce::KeyPress(juce::KeyPress::downKey));
+                menu->keyPressed(juce::KeyPress(juce::KeyPress::returnKey));
+            }
+            juce::Timer::callAfterDelay(75, [&, index] {
+                const auto& beat = laneProcessor->projectState().patterns[0].lanes[0].beats[0];
+                check(beat.slices.size() == 3, "Fill / empty menu preserves subdivision");
+                for (const auto& slice : beat.slices)
+                    check(slice.enabled == (index == 0) && slice.padIndex == 7 && slice.velocity == 0.3f,
+                          "Fill / empty menu changes all enabled states uniformly and preserves notes");
+                juce::PopupMenu::dismissAllActiveMenus();
+                if (index == 0) testFillMenu(1);
+                else
+                {
+                    check(laneProcessor->projectEditor().undo() && laneProcessor->projectEditor().undo(),
+                          "both fill/empty menu actions are undoable");
+                    const auto& restored = laneProcessor->projectState().patterns[0].lanes[0].beats[0];
+                    check(restored.slices[0].enabled && !restored.slices[1].enabled && restored.slices[2].enabled,
+                          "menu undo restores the original mixed beat");
+                    juce::MessageManager::getInstance()->stopDispatchLoop();
+                }
+            });
+        });
+    };
     std::function<void(int)> testArrow;
     testArrow = [&](int index) {
         if (index >= 3)
@@ -774,7 +907,7 @@ void testKeyboardFocus()
                           "stale menu preserves recalled pattern dimensions");
                     juce::PopupMenu::dismissAllActiveMenus();
                     if (index == 3) testArrow(4);
-                    else juce::MessageManager::getInstance()->stopDispatchLoop();
+                    else testFillMenu(0);
                 });
             });
             return;
@@ -2171,6 +2304,9 @@ int main(int argc, char** argv)
     testRandomizerPadSelectionIsUndoable();
     testPatternMidiExportPreservesNameAndMeterDuration(output);
     testDrumBrushDoesNotInheritSubdivision();
+    testTogglingNoteRemembersVelocity();
+    testFreshNoteUsesDefaultAndKeepsItAfterRecall();
+    testShiftBeatFillOverridesBrushAndRemembersVelocities();
     testShiftLaneResetOverridesActiveBrush();
     testShiftLaneResetOverridesRandomizer();
     testBarMeterDragIsOneUndoStep();

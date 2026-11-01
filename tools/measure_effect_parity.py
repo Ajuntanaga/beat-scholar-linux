@@ -293,7 +293,8 @@ def native_state(input_wav: Path, *, pad: dict[str, Any] | None = None,
     }
     if master:
         master_state.update(master)
-    disabled_slice = {"padIndex": 0, "velocity": 0.8, "enabled": False}
+    disabled_slice = {"padIndex": 0, "velocity": 0.8, "enabled": False,
+                      "velocityAssigned": False}
     lane = {
         "name": "Host lane", "muted": False, "solo": False,
         "beats": [[dict(disabled_slice)] for _ in range(4)],
