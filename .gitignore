@@ -36,3 +36,10 @@
 !/tools/run_standalone_settings_test.py
 !/tools/modal_audit.py
 !/tools/modal_mp3_fixture.py
+
+# Only the authored manual CI workflow is exported.
+!/.github/
+/.github/*
+!/.github/workflows/
+/.github/workflows/*
+!/.github/workflows/linux-validation.yml

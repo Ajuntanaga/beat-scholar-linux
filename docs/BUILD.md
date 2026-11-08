@@ -116,18 +116,28 @@ python tools/migrate_factory_content.py --source /path/to/BeatScholarData --dry-
 It copies preset, kit, and step-randomizer JSON when run without `--dry-run`;
 it does not migrate license files or extract audio. Keep migrated content local.
 
-## Optional cloud validation
+## GitHub Actions validation
 
-`tools/modal_audit.py` runs a source-only build on Modal using 16 CPUs and
-49,152 MiB of memory. It requires a configured Modal account, the JUCE checkout,
-and a Linux pluginval executable at `tools/bin/pluginval`. It uploads the
-allowlisted tools, source, tests, JUCE, and pluginval; private factory content
-stays local. Running it incurs Modal usage charges.
+The **Linux validation** workflow replaces the CPU build-and-test portion of
+Modal. It runs only through Actions → Linux validation → Run workflow in this
+private repository. Before running, verify the account's remaining included
+Actions minutes and set an Actions spending limit of $0 in GitHub billing.
+The required confirmation is an operator acknowledgement, not an automated
+billing check. A timeout limits runtime; it does not guarantee a free run.
 
-```bash
-modal run tools/modal_audit.py --run-id my-unique-audit-id
-```
+The workflow uses a standard Ubuntu runner, two compile jobs, a 60-minute job
+limit, pinned JUCE and pluginval, and synthetic test content. It builds both
+VST3 and standalone, runs CTest (including editor screenshots and actual VST3
+MIDI checks), pluginval at strictness 10, and the standalone settings/recall
+check. The factory playback suite explicitly skips without private content.
+A standalone failure fails the workflow; it is not treated as a successful audit.
 
-Choose a new run ID each time. Results and candidate archives go to the Modal
-artifact volume. The standalone cloud window check has a known failure; read
-the returned exit codes rather than treating artifact creation as a pass.
+Reports can optionally be uploaded for one day. Uploads are off by default to
+avoid consuming artifact storage; run logs remain available in Actions.
+No candidate binaries, factory content, original binaries, licenses or native
+captures are uploaded by this workflow. There is no dependency cache or scheduled
+run. It never installs a plugin or connects to the workstation's REAPER session.
+Cloud checks do not establish reference-video identity or physical audio quality.
+
+The former `tools/modal_audit.py` remains for historical reproducibility.
+Modal access is currently unavailable; do not run it or other paid compute jobs.
