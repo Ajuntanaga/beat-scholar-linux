@@ -134,6 +134,7 @@ juce::var padToVar(const PadState& pad)
     set(result, "resonance", pad.resonance);
     set(result, "driveEnabled", pad.driveEnabled);
     set(result, "driveGainDb", pad.driveGainDb);
+    set(result, "nativeDriveInsert", pad.nativeDriveInsert);
     set(result, "distortionMix", pad.distortionMix);
     set(result, "independentDistortion", pad.independentDistortion);
     set(result, "distortionDrive", pad.distortionDrive);
@@ -142,7 +143,9 @@ juce::var padToVar(const PadState& pad)
     set(result, "reverb", pad.reverb);
     set(result, "room", pad.room);
     set(result, "delay", pad.delay);
+    set(result, "auxGain", pad.auxGain);
     set(result, "oneShot", pad.oneShot);
+    set(result, "mono", pad.mono);
     set(result, "muted", pad.muted);
     set(result, "solo", pad.solo);
     set(result, "lpfBypass", pad.lpfBypass);
@@ -188,6 +191,8 @@ juce::var projectToVar(const ProjectState& state)
     set(global, "defaultVelocity", state.global.defaultVelocity);
     set(global, "sequencerEnabled", state.global.sequencerEnabled);
     set(global, "samplerEnabled", state.global.samplerEnabled);
+    set(global, "auxEnabled", state.global.auxEnabled);
+    set(global, "masterEnabled", state.global.masterEnabled);
     set(global, "auditionDuringPlayback", state.global.auditionDuringPlayback);
     set(global, "kitLocked", state.global.kitLocked);
     set(global, "multiOutput", state.global.multiOutput);
@@ -198,6 +203,7 @@ juce::var projectToVar(const ProjectState& state)
     set(master, "cutoff", state.master.cutoff);
     set(master, "resonance", state.master.resonance);
     set(master, "delay", state.master.delay);
+    set(master, "distortionReturn", state.master.distortionReturn);
     set(master, "distortion", state.master.distortion);
     set(master, "reverb", state.master.reverb);
     set(master, "room", state.master.room);
@@ -440,12 +446,16 @@ bool readPad(const juce::var& encoded, PadState& pad, int version)
         pad.independentDistortion = readBool(encoded, "independentDistortion", false);
         pad.distortionDrive = readFloat(encoded, "distortionDrive", 0.5f);
     }
+    // Missing in older own-format states: preserve their previous Drive route.
+    pad.nativeDriveInsert = readBool(encoded, "nativeDriveInsert", false);
     pad.compression = readFloat(encoded, "compression", pad.compression);
     pad.crush = readFloat(encoded, "crush", pad.crush);
     pad.reverb = readFloat(encoded, "reverb", pad.reverb);
     pad.room = readFloat(encoded, "room", pad.room);
     pad.delay = readFloat(encoded, "delay", pad.delay);
+    pad.auxGain = readFloat(encoded, "auxGain", 0.0f);
     pad.oneShot = readBool(encoded, "oneShot", pad.oneShot);
+    pad.mono = readBool(encoded, "mono", false);
     pad.muted = readBool(encoded, "muted", pad.muted);
     pad.solo = readBool(encoded, "solo", pad.solo);
     pad.lpfBypass = readBool(encoded, "lpfBypass", false);
@@ -500,7 +510,8 @@ bool projectFromVar(const juce::var& root, ProjectState& state)
     candidate.activePattern = static_cast<std::size_t>(static_cast<juce::int64>(get(root, "activePattern")));
     const auto global = get(root, "global");
     candidate.global.swingPercent = readDouble(global, "swingPercent", 0.0);
-    const int swingReference = readInt(global, "swingReference", 0);
+    const int swingReference = readInt(global, "swingReference",
+        static_cast<int>(candidate.global.swingReference));
     if (swingReference < 0 || swingReference > 2)
         return false;
     candidate.global.swingReference = static_cast<SwingReference>(swingReference);
@@ -508,6 +519,8 @@ bool projectFromVar(const juce::var& root, ProjectState& state)
     candidate.global.defaultVelocity = readFloat(global, "defaultVelocity", 0.8f);
     candidate.global.sequencerEnabled = readBool(global, "sequencerEnabled", true);
     candidate.global.samplerEnabled = readBool(global, "samplerEnabled", true);
+    candidate.global.auxEnabled = readBool(global, "auxEnabled", true);
+    candidate.global.masterEnabled = readBool(global, "masterEnabled", true);
     candidate.global.auditionDuringPlayback = readBool(global, "auditionDuringPlayback", true);
     candidate.global.kitLocked = readBool(global, "kitLocked", false);
     candidate.global.multiOutput = readBool(global, "multiOutput", false);
@@ -599,9 +612,17 @@ float legacyCutoff(const juce::var& value, float fallback)
     float frequency = number;
     if (text.containsIgnoreCase("kHz"))
         frequency *= 1000.0f;
-    frequency = std::clamp(frequency, 20.0f, 20000.0f);
-    const float logarithmicPosition = std::log(frequency / 20.0f) / std::log(1000.0f);
-    return std::clamp(logarithmicPosition * logarithmicPosition, 0.0f, 1.0f);
+    return bsl::normalizedFilterCutoff(frequency);
+}
+
+float legacyResonance(const juce::var& value, float fallback)
+{
+    if (value.isVoid())
+        return fallback;
+    if (value.toString().containsChar('%'))
+        return percentOrUnit(value, fallback);
+    return std::clamp((legacyNumber(value, 0.1f + 2.4f * fallback) - 0.1f) / 2.4f,
+                      0.0f, 1.0f);
 }
 
 int legacyMidiNote(const juce::var& value, int fallback)
@@ -685,7 +706,16 @@ float legacyHighPass(const juce::var& params, float fallback)
             }
         }
     }
-    return value.isVoid() ? fallback : legacyCutoff(value, fallback);
+    if (value.isVoid())
+        return fallback;
+    const auto text = value.toString().trim();
+    const float number = legacyNumber(value, fallback);
+    if (text.containsChar('%'))
+        return std::clamp(number / 100.0f, 0.0f, 1.0f);
+    if (!text.containsIgnoreCase("Hz") && number >= 0.0f && number <= 1.0f)
+        return number;
+    const float frequency = text.containsIgnoreCase("kHz") ? number * 1000.0f : number;
+    return bsl::normalizedPadHighPassCutoff(frequency);
 }
 
 void readLegacyPad(const juce::var& sourcePad, PadState& pad)
@@ -699,6 +729,7 @@ void readLegacyPad(const juce::var& sourcePad, PadState& pad)
     const auto params = get(sourcePad, "Params");
     pad.layerMix = percentOrUnit(get(params, "LayerMix"), pad.layerMix);
     pad.oneShot = legacyEnabled(get(params, "OneShot"), pad.oneShot);
+    pad.mono = legacyEnabled(get(params, "Mono"), false);
     pad.pan = std::clamp(readFloat(params, "Pan", 0.5f) * 2.0f - 1.0f, -1.0f, 1.0f);
     pad.damp = percentOrUnit(get(params, "Length"), 0.0f);
     pad.attackNormalized = percentOrUnit(get(get(params, "ADSR"), "Attack"), 0.0f);
@@ -712,19 +743,23 @@ void readLegacyPad(const juce::var& sourcePad, PadState& pad)
     pad.pitchSemitones = legacyNumber(get(pitch, "Tune"), 0.0f);
     pad.fineCents = legacyNumber(get(pitch, "Fine"), 0.0f);
     pad.highPass = legacyHighPass(params, 0.0f);
+    pad.hpfBypass = !legacyEnabled(get(get(params, "Enable"), "HipassEnable"), true);
     const auto filter = get(params, "Filter");
     pad.filterEnabled = legacyEnabled(get(filter, "Enable"), true);
     pad.cutoff = legacyCutoff(get(filter, "Cutoff"), pad.cutoff);
-    pad.resonance = std::clamp(legacyNumber(get(filter, "Reso"), 0.0f) / 10.0f, 0.0f, 1.0f);
+    pad.resonance = legacyResonance(get(filter, "Reso"), pad.resonance);
     const auto drive = get(params, "Drive");
-    pad.driveEnabled = legacyEnabled(get(drive, "Enable"), false);
-    pad.driveGainDb = std::clamp(legacyNumber(get(drive, "Gain"), 0.0f), -60.0f, 60.0f);
+    const auto driveEnable = get(get(params, "Enable"), "DriveEnable");
+    pad.driveEnabled = legacyEnabled(driveEnable.isVoid() ? get(drive, "Enable") : driveEnable, true);
+    pad.driveGainDb = std::clamp(legacyNumber(get(drive, "Gain"), 0.0f), 0.0f, 24.0f);
+    pad.nativeDriveInsert = true;
     pad.compression = percentOrUnit(get(params, "Compressor"), 0.0f);
     pad.crush = percentOrUnit(get(params, "BitCrush"), 0.0f);
     const auto aux = get(params, "Aux");
-    pad.reverb = percentOrUnit(get(aux, "Aux1"), 0.0f);
-    pad.room = percentOrUnit(get(aux, "Aux2"), 0.0f);
-    pad.delay = percentOrUnit(get(aux, "Aux4"), 0.0f);
+    pad.room = percentOrUnit(get(aux, "Aux1"), 0.0f);
+    pad.reverb = percentOrUnit(get(aux, "Aux2"), 0.0f);
+    pad.auxGain = percentOrUnit(get(aux, "Aux4"), 0.0f);
+    pad.delay = 0.0f;
     const auto distortionSend = get(aux, "Aux3");
     pad.independentDistortion = true;
     pad.distortionMix = percentOrUnit(distortionSend, 0.0f);
@@ -748,9 +783,10 @@ void readLegacyMaster(const juce::var& params, MasterState& master)
     const auto masterParams = get(params, "Master");
     master.compression = percentOrUnit(get(params, "MasterComp"), 0.0f);
     master.crush = percentOrUnit(get(params, "MasterCrush"), 0.0f);
-    master.delay = legacyControlAmount(params, "Delay", 0.0f);
+    // The native parameter named Delay is the Aux3 distortion return.
+    master.distortionReturn = legacyControlAmount(params, "Delay", 0.0f);
+    master.delay = 0.0f;
     // These legacy values configure the pad auxiliaries, not master inserts.
-    // Delay already consumes the explicit pad-send bus in AudioEngine.
     master.distortion = master.reverb = master.room = 0.0f;
     if (masterParams.isObject())
     {
@@ -766,8 +802,7 @@ void readLegacyMaster(const juce::var& params, MasterState& master)
     const auto filter = get(params, "Filter");
     master.filterEnabled = legacyEnabled(get(filter, "Enable"), true);
     master.cutoff = legacyCutoff(get(filter, "Cutoff"), master.cutoff);
-    master.resonance = std::clamp(legacyNumber(get(filter, "Reso"), 0.0f) / 10.0f,
-                                  0.0f, 1.0f);
+    master.resonance = legacyResonance(get(filter, "Reso"), master.resonance);
 }
 
 juce::var parseJson(const juce::String& json)
@@ -877,6 +912,8 @@ void readMaster(const juce::var& encoded, MasterState& master, int version)
     master.cutoff = readFloat(encoded, "cutoff", master.cutoff);
     master.resonance = readFloat(encoded, "resonance", master.resonance);
     master.delay = readFloat(encoded, "delay", master.delay);
+    // Older own-format states used an unconditional distortion return.
+    master.distortionReturn = readFloat(encoded, "distortionReturn", 1.0f);
     master.distortion = readFloat(encoded, "distortion", master.distortion);
     master.reverb = readFloat(encoded, "reverb", master.reverb);
     master.room = readFloat(encoded, "room", master.room);
@@ -893,6 +930,7 @@ void writeMaster(juce::var& encoded, const MasterState& master)
     set(encoded, "cutoff", master.cutoff);
     set(encoded, "resonance", master.resonance);
     set(encoded, "delay", master.delay);
+    set(encoded, "distortionReturn", master.distortionReturn);
     set(encoded, "distortion", master.distortion);
     set(encoded, "reverb", master.reverb);
     set(encoded, "room", master.room);
@@ -1105,6 +1143,9 @@ bool importLegacyPresetJson(const juce::String& json, ProjectState& destination)
     if (!root.isObject())
         return false;
     ProjectState candidate = ProjectState::makeDefault();
+    if (root.hasProperty("Randomize")
+        && !importLegacyRandomizerJson(json, candidate.randomizer))
+        return false;
     candidate.global.swingPercent = legacyNumber(get(get(root, "Params"), "Swing"), 0.0f);
     const auto transport = get(get(get(root, "Seq"), "Seq"), "Transport");
     candidate.global.beatsPerMinute = legacyNumber(get(get(transport, "BPM"), "value"), 120.0f);
@@ -1169,6 +1210,10 @@ bool importLegacyPresetJson(const juce::String& json, ProjectState& destination)
     }
 
     const auto sampler = get(root, "Sampler");
+    const auto liveEnable = get(sampler, "LiveEnable");
+    candidate.global.samplerEnabled = readBool(liveEnable, "sampler", true);
+    candidate.global.auxEnabled = readBool(liveEnable, "aux", true);
+    candidate.global.masterEnabled = readBool(liveEnable, "master", true);
     if (const auto* pads = get(get(sampler, "Pads"), "Pads").getArray())
     {
         for (int index = 0; index < std::min(static_cast<int>(padCount), pads->size()); ++index)

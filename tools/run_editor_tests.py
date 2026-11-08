@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provide a window manager for real JUCE focus tests on an isolated DISPLAY."""
+"""Run real JUCE focus tests on an isolated DISPLAY without WM shortcut grabs."""
 import os
 from pathlib import Path
 import re
@@ -22,11 +22,16 @@ with subprocess.Popen(["openbox"], stdout=subprocess.DEVNULL,
         time.sleep(0.5)
         if window_manager.poll() is not None:
             raise RuntimeError("openbox failed to start on the test display")
+        # Seed JUCE's required EWMH atoms, then remove global Alt/arrow grabs.
+        # Xvfb -noreset retains the atoms when the window manager disconnects.
+        window_manager.terminate()
+        window_manager.wait(timeout=5)
         result = subprocess.run(sys.argv[1:], timeout=90,
                                 env={**os.environ, "BSL_ISOLATED_GUI_TESTS": "1"})
     finally:
-        window_manager.terminate()
-        window_manager.wait(timeout=5)
+        if window_manager.poll() is None:
+            window_manager.terminate()
+            window_manager.wait(timeout=5)
 if result.returncode < 0:
     print("Editor test terminated by " + signal.Signals(-result.returncode).name, file=sys.stderr)
 sys.exit(result.returncode)

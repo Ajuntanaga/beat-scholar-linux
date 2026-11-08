@@ -18,6 +18,27 @@ constexpr std::array<const char*, bsl::padCount> padNames {
     "CRASH 2", "TOM HI", "TOM MID", "TOM LOW", "SHAKER", "TRIANGLE", "FX 1", "FX 2"
 };
 
+void addShortcutMenuItem(juce::PopupMenu& menu, int id, const juce::String& text,
+                         const juce::String& shortcut, bool enabled = true)
+{
+    juce::PopupMenu::Item item(text);
+    item.itemID = id;
+    item.shortcutKeyDescription = shortcut;
+    item.isEnabled = enabled;
+    menu.addItem(std::move(item));
+}
+
+// Basic Beat Making & Editing: duplicate sits 70% along the bar, with
+// fixed spacing for add/remove. Share the rectangle between paint and input.
+juce::Rectangle<float> barHeaderActions(juce::Rectangle<float> bounds, float scale)
+{
+    if (bounds.getWidth() < 300.0f * scale)
+        return {};
+    constexpr float spacing = 33.0f;
+    return { bounds.getX() + bounds.getWidth() * 0.70f - spacing * scale * 0.5f,
+             bounds.getY(), 3.0f * spacing * scale, bounds.getHeight() };
+}
+
 void enableSlice(bsl::SliceState& slice, std::uint8_t pad, float defaultVelocity)
 {
     if (!slice.velocityAssigned || slice.padIndex != pad)
@@ -101,6 +122,28 @@ std::vector<juce::File> contentFiles(const juce::File& directory, MenuContent co
     return result;
 }
 
+template <typename Load>
+bool loadAdjacentContent(const std::vector<juce::File>& files, const juce::File& current,
+                         int delta, Load&& load)
+{
+    const int count = static_cast<int>(files.size());
+    if (count == 0 || delta == 0)
+        return false;
+    const int step = delta < 0 ? -1 : 1;
+    const auto found = std::find(files.begin(), files.end(), current);
+    int index = found == files.end() ? (step < 0 ? count : -1)
+                                    : static_cast<int>(std::distance(files.begin(), found));
+    for (int attempt = 0; attempt < count; ++attempt)
+    {
+        index = (index + step + count) % count;
+        const auto& file = files[static_cast<std::size_t>(index)];
+        // Do not reload the current document if every other candidate is broken.
+        if (file != current && load(file))
+            return true;
+    }
+    return false;
+}
+
 juce::String factorySampleToken(std::size_t pad)
 {
     static constexpr std::array<const char*, bsl::padCount> tokens {
@@ -134,6 +177,17 @@ juce::String quantizationLabel(bsl::PatternQuantization value)
         case bsl::PatternQuantization::thirtySecond: return "1/32";
     }
     return "4/4";
+}
+
+juce::PopupMenu quantizationMenu(bsl::PatternQuantization current)
+{
+    juce::PopupMenu menu;
+    for (const auto value : { bsl::PatternQuantization::whole, bsl::PatternQuantization::half,
+                             bsl::PatternQuantization::quarter, bsl::PatternQuantization::eighth,
+                             bsl::PatternQuantization::sixteenth, bsl::PatternQuantization::thirtySecond,
+                             bsl::PatternQuantization::off })
+        menu.addItem(10 + static_cast<int>(value), quantizationLabel(value), true, value == current);
+    return menu;
 }
 
 juce::Rectangle<int> designRect(int width, int height, float x, float y, float w, float h)
@@ -222,22 +276,30 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     bpm_.setSliderStyle(juce::Slider::LinearHorizontal);
     bpm_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
     bpm_.setComponentID("toolbar.bpm");
-    bpm_.setTooltip("Standalone tempo. A DAW host supplies tempo while its transport is active.");
+    bpm_.setTooltip("Tempo. In a plugin, this read-only value follows the host.");
     bpm_.setColour(juce::Slider::trackColourId, juce::Colour(lookAndFeel_.palette().accent));
     bpm_.addMouseListener(this, false);
     addAndMakeVisible(bpm_);
-    bpmAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor_.parameters(), "bpm", bpm_);
+    if (processor_.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+        bpmAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+            processor_.parameters(), "bpm", bpm_);
+    else
+    {
+        // Host tempo is a display, independent of the standalone parameter range.
+        bpm_.setRange(0.0, 1.0e9, 0.01);
+        bpm_.setValue(processor_.effectiveBpm(), juce::dontSendNotification);
+        bpm_.setEnabled(false);
+    }
 
     defaultVelocity_.setSliderStyle(juce::Slider::LinearHorizontal);
     defaultVelocity_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
     defaultVelocity_.setComponentID("toolbar.velocity");
-    defaultVelocity_.setRange(0.0, 100.0, 1.0);
-    defaultVelocity_.setTextValueSuffix("%");
+    defaultVelocity_.setRange(0.0, 127.0, 1.0);
+    defaultVelocity_.setTextValueSuffix("");
     defaultVelocity_.setTooltip("Default velocity used when a note slice is enabled.");
-    defaultVelocity_.setDoubleClickReturnValue(false, 80.0);
+    defaultVelocity_.setDoubleClickReturnValue(false, 102.0);
     defaultVelocity_.addMouseListener(this, false);
-    defaultVelocity_.setValue(processor_.projectState().global.defaultVelocity * 100.0,
+    defaultVelocity_.setValue(processor_.projectState().global.defaultVelocity * 127.0,
                               juce::dontSendNotification);
     defaultVelocity_.onDragStart = [this] {
         refreshRestoredState(&defaultVelocity_);
@@ -254,15 +316,19 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
         refreshRestoredState(&defaultVelocity_);
         checkpointModuleControl();
         processor_.projectState().global.defaultVelocity =
-            static_cast<float>(defaultVelocity_.getValue() / 100.0);
+            static_cast<float>(defaultVelocity_.getValue() / 127.0);
     };
     addAndMakeVisible(defaultVelocity_);
 
-    routing_.addItem("Stereo", 1);
-    routing_.addItem("Multi", 2);
+    routing_.setComponentID("routing.mode");
+    routing_.setButtonText("Stereo");
+    routing_.setClickingTogglesState(true);
+    routing_.onStateChange = [this] {
+        routing_.setButtonText(routing_.getToggleState() ? "Multi" : "Stereo");
+    };
     routing_.setTooltip("Stereo uses master processing; Multi routes pads to sixteen stereo outputs.");
     addAndMakeVisible(routing_);
-    routingAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+    routingAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         processor_.parameters(), "routing", routing_);
 
     configureButton(presetPrevious_, "", [this] { loadAdjacentPreset(-1); });
@@ -289,15 +355,31 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
         enabled = !enabled;
         processor_.markProjectDirty();
     });
-    configureButton(play_, "", [this] { processor_.playStandalone(); });
+    configureButton(play_, "", [this] {
+        if (processor_.wrapperType != juce::AudioProcessor::wrapperType_Standalone) return;
+        if (processor_.isStandalonePlaying()) processor_.pauseStandalone();
+        else processor_.playStandalone();
+    });
     play_.setComponentID("toolbar.play");
     play_.setTitle("Play");
-    configureButton(pause_, "", [this] { processor_.pauseStandalone(); });
+    configureButton(pause_, "", [this] {
+        if (processor_.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+            processor_.pauseStandalone();
+    });
     pause_.setComponentID("toolbar.pause");
     pause_.setTitle("Pause");
-    configureButton(stop_, "", [this] { processor_.stopStandalone(); });
+    configureButton(stop_, "", [this] {
+        if (processor_.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+            processor_.stopStandalone();
+    });
     stop_.setComponentID("toolbar.stop");
     stop_.setTitle("Stop");
+    const bool standaloneTransport = processor_.wrapperType == juce::AudioProcessor::wrapperType_Standalone;
+    play_.setEnabled(standaloneTransport);
+    pause_.setEnabled(standaloneTransport);
+    stop_.setEnabled(standaloneTransport);
+    pause_.setTooltip(standaloneTransport ? "Pause standalone playback" : "Playback follows the host timeline");
+    stop_.setTooltip(standaloneTransport ? "Stop standalone playback" : "Playback follows the host timeline");
     configureButton(drumBrush_, "", [this] {
         previousBrush_ = brush_;
         brush_ = Brush::drum;
@@ -346,12 +428,13 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     redo_.setTitle("Redo");
     configureButton(about_, "MODALICS", [this] { showAbout(); });
     about_.setComponentID("toolbar.about");
-    configureButton(barsPatterns_, "BARS", [this] {
+    configureButton(barsPatterns_, "Patterns", [this] {
         auto& mode = processor_.projectState().ui.patternMode;
         mode = !mode;
         arrangementScroll_ = 0.0f;
         repaint();
-        barsPatterns_.setButtonText(mode ? "Patterns" : "Bars");
+        barsPatterns_.setButtonText(mode ? "Bars" : "Patterns");
+        resized();
     });
     barsPatterns_.setComponentID("arrangement.toggle");
     configureButton(addItem_, "+", [this] {
@@ -362,6 +445,7 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
             processor_.projectEditor().addBar(state.activePattern, bsl::BarState::make(4, 4));
         updateControlsFromState();
     });
+    addItem_.setComponentID("arrangement.add");
     configureButton(duplicateItem_, "DUP", [this] {
         auto& state = processor_.projectState();
         if (state.ui.patternMode)
@@ -408,17 +492,13 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     masterTab_.setComponentID("master.settings");
     configureButton(auditionDuringPlayback_, "AUD", [this] {
         auto& enabled = processor_.projectState().global.auditionDuringPlayback;
-        processor_.projectEditor().checkpoint();
-        enabled = !enabled;
-        processor_.markProjectDirty();
+        resetOrToggle(enabled, true, juce::ModifierKeys::getCurrentModifiers());
     });
     auditionDuringPlayback_.setTooltip("Allow drum-pad audition while transport is playing");
     auditionDuringPlayback_.setComponentID("kit.audition");
     configureButton(kitLocked_, "LOCK", [this] {
         auto& locked = processor_.projectState().global.kitLocked;
-        processor_.projectEditor().checkpoint();
-        locked = !locked;
-        processor_.markProjectDirty();
+        resetOrToggle(locked, false, juce::ModifierKeys::getCurrentModifiers());
     });
     kitLocked_.setTooltip("Keep the current kit when a full preset is loaded");
     kitLocked_.setComponentID("kit.lock");
@@ -464,7 +544,7 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
                 processor_.markProjectDirty();
                 configureModuleControls();
             }
-            else if (juce::ModifierKeys::getCurrentModifiersRealtime().isPopupMenu())
+            else if (juce::ModifierKeys::getCurrentModifiers().isPopupMenu())
                 showPadMenu(index);
             else
                 selectPad(index, true);
@@ -476,11 +556,11 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     }
 
     configureButton(loadSample_, "", [this] {
-        showPadMenu(processor_.projectState().ui.selectedPad);
+        chooseCustomSample(processor_.projectState().ui.selectedPad);
     });
     loadSample_.setComponentID("sample.folder");
-    loadSample_.setTitle("Open sample menu");
-    loadSample_.setTooltip("Load or choose a sample for the selected pad");
+    loadSample_.setTitle("Load custom sample");
+    loadSample_.setTooltip("Load a custom sample for the selected pad");
     configureButton(clearSample_, "X", [this] {
         processor_.clearCustomSample(processor_.projectState().ui.selectedPad);
         configureModuleControls();
@@ -496,26 +576,28 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     layerTwo_.setComponentID("sample.layer");
     configureButton(padSolo_, "S", [this] {
         auto& pad = processor_.projectState().kit.pads[processor_.projectState().ui.selectedPad];
-        processor_.projectEditor().checkpoint();
-        pad.solo = !pad.solo;
-        processor_.markProjectDirty();
+        resetOrToggle(pad.solo, false, juce::ModifierKeys::getCurrentModifiers());
         configureModuleControls();
     });
     configureButton(padMute_, "M", [this] {
         auto& pad = processor_.projectState().kit.pads[processor_.projectState().ui.selectedPad];
-        processor_.projectEditor().checkpoint();
-        pad.muted = !pad.muted;
-        processor_.markProjectDirty();
+        resetOrToggle(pad.muted, false, juce::ModifierKeys::getCurrentModifiers());
         configureModuleControls();
     });
     configureButton(oneShot_, "One Shot", [this] {
         auto& pad = processor_.projectState().kit.pads[processor_.projectState().ui.selectedPad];
-        processor_.projectEditor().checkpoint();
-        pad.oneShot = !pad.oneShot;
-        processor_.markProjectDirty();
+        resetOrToggle(pad.oneShot, true, juce::ModifierKeys::getCurrentModifiers());
         configureModuleControls();
     });
     oneShot_.setComponentID("sample.oneshot");
+    configureButton(mono_, "Mono", [this] {
+        auto& pad = processor_.projectState().kit.pads[processor_.projectState().ui.selectedPad];
+        resetOrToggle(pad.mono, false, juce::ModifierKeys::getCurrentModifiers());
+        configureModuleControls();
+    });
+    mono_.setComponentID("sample.mono");
+    mono_.setTitle("Mono");
+    mono_.setTooltip("Mono: replace the previous sample voice when this pad is triggered again.");
 
     configureButton(randomClearPads_, "Clear", [this] {
         processor_.projectEditor().checkpoint();
@@ -581,12 +663,10 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     for (std::size_t index = 0; index < randomModuleToggles_.size(); ++index)
     {
         configureButton(randomModuleToggles_[index], "", [this, index] {
-            processor_.projectEditor().checkpoint();
             auto& random = processor_.projectState().randomizer;
             const std::array<bool*, 4> enabled { &random.noteSelectionEnabled,
                 &random.slicingEnabled, &random.triggeringEnabled, &random.velocityEnabled };
-            *enabled[index] = !*enabled[index];
-            processor_.markProjectDirty();
+            resetOrToggle(*enabled[index], true, juce::ModifierKeys::getCurrentModifiers());
             configureModuleControls();
         });
         randomModuleToggles_[index].setComponentID("random.module." + juce::String(static_cast<int>(index)));
@@ -594,9 +674,18 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
         randomModuleToggles_[index].setTooltip(juce::String("Enable ") + moduleNames[index]);
     }
 
+    configureButton(randomFillEmpty_, "", [this] {
+        resetOrToggle(processor_.projectState().randomizer.fillEmptyOnly, false,
+                      juce::ModifierKeys::getCurrentModifiers());
+        configureModuleControls();
+    });
+    randomFillEmpty_.setComponentID("random.fillEmpty");
+    randomFillEmpty_.setTitle("Fill Empty");
+    randomFillEmpty_.setTooltip("Randomize only empty slices");
+
     configureSlider(soundControls_[0], 0.0, 2.0, 0.001, " s");
     configureSlider(soundControls_[1], 0.0, 1.0, 0.001, "");
-    configureSlider(soundControls_[2], -12.0, 12.0, 0.01, " st");
+    configureSlider(soundControls_[2], -12.0, 12.0, 1.0, " st");
     configureSlider(soundControls_[3], -100.0, 100.0, 0.1, " ct");
     configureSlider(soundControls_[4], 0.0, 1.0, 0.001, "");
     configureSlider(soundControls_[5], 0.0, 1.0, 0.001, "");
@@ -632,18 +721,40 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
                 if (index == 3 && soundControls_[3].getValue() < soundControls_[2].getValue())
                     soundControls_[2].setValue(soundControls_[3].getValue(), juce::dontSendNotification);
             }
-            applyModuleControls();
+            applyModuleControls(soundControls_[index]);
         };
     }
 
+    effectDragValue_.setComponentID("effect.drag-value");
+    effectDragValue_.setJustificationType(juce::Justification::centred);
+    effectDragValue_.setColour(juce::Label::backgroundColourId, juce::Colour(0xff2c295d));
+    effectDragValue_.setColour(juce::Label::textColourId, juce::Colour(0xffe7e7f7));
+    effectDragValue_.setInterceptsMouseClicks(false, false);
+    addChildComponent(effectDragValue_);
     for (std::size_t index = 0; index < effectControls_.size(); ++index)
     {
         if (index == 3)
-            configureSlider(effectControls_[index], -60.0, 60.0, 0.01, " dB");
+        {
+            configureSlider(effectControls_[index], 0.0, 24.0, 0.01, " dB");
+            // Native Drive uses a skewed linear-gain range, displayed in dB.
+            juce::NormalisableRange<double> gainRange(1.0, juce::Decibels::decibelsToGain(24.0));
+            gainRange.setSkewForCentre(juce::Decibels::decibelsToGain(12.0));
+            juce::NormalisableRange<double> driveRange(0.0, 24.0,
+                [gainRange](double, double, double position) {
+                    return juce::Decibels::gainToDecibels(gainRange.convertFrom0to1(position));
+                },
+                [gainRange](double, double, double decibels) {
+                    return gainRange.convertTo0to1(juce::Decibels::decibelsToGain(decibels));
+                });
+            driveRange.interval = 0.01;
+            effectControls_[index].setNormalisableRange(driveRange);
+        }
         else
-            configureSlider(effectControls_[index], 0.0, 1.0, 0.001, "");
+            // Q = 0.1 + 2.4 * value: its native 0.8 default is 7/24,
+            // so keep resonance continuous instead of rounding it to 0.292.
+            configureSlider(effectControls_[index], 0.0, 1.0, index == 2 ? 0.0 : 0.001, "");
         effectLabels_[index].setJustificationType(juce::Justification::centred);
-        effectLabels_[index].setFont(bsl::ui::font(9.0f, true));
+        effectLabels_[index].setFont(bsl::ui::font(11.0f, true));
         effectLabels_[index].setColour(juce::Label::textColourId,
                                       juce::Colour(lookAndFeel_.palette().text));
         addAndMakeVisible(effectLabels_[index]);
@@ -652,8 +763,16 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
             refreshRestoredState(&effectControls_[index]);
             moduleControlGesture_ = true;
             moduleControlCheckpointed_ = false;
+            if ((index == 8 || index == 9) && effectControls_[index].mouseGesture)
+            {
+                effectDragIndex_ = static_cast<int>(index);
+                updateEffectDragValue();
+                effectDragValue_.toFront(false);
+            }
         };
         effectControls_[index].onDragEnd = [this] {
+            effectDragIndex_ = -1;
+            effectDragValue_.setVisible(false);
             moduleControlGesture_ = false;
             moduleControlCheckpointed_ = false;
         };
@@ -664,7 +783,10 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
             auto& state = processor_.projectState();
             auto& pad = state.kit.pads[state.ui.selectedPad];
             if (index == 3)
+            {
                 pad.driveEnabled = effectControls_[3].getValue() != 0.0;
+                pad.nativeDriveInsert = true;
+            }
             if (index == 3 || index == 8)
                 pad.independentDistortion = true;
             // The Gain fader controls the shared parallel distortion chain,
@@ -672,12 +794,14 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
             if (index == 9)
                 for (auto& sound : state.kit.pads)
                     sound.distortionDrive = static_cast<float>(effectControls_[9].getValue());
-            applyModuleControls();
+            applyModuleControls(effectControls_[index]);
+            updateEffectDragValue();
         };
     }
     for (std::size_t index = 0; index < masterControls_.size(); ++index)
     {
-        configureSlider(masterControls_[index], 0.0, index == 4 ? 1.5 : 1.0, 0.001, "");
+        configureSlider(masterControls_[index], 0.0, index == 4 ? 1.5 : 1.0,
+                        index == 1 ? 0.0 : 0.001, "");
         masterLabels_[index].setJustificationType(juce::Justification::centred);
         masterLabels_[index].setFont(bsl::ui::font(9.0f, true));
         masterLabels_[index].setColour(juce::Label::textColourId,
@@ -707,7 +831,7 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
             if (updatingControls_) return;
             refreshRestoredState(&masterControls_[index]);
             checkpointModuleControl(index == 4);
-            applyModuleControls(index == 4);
+            applyModuleControls(masterControls_[index]);
         };
     }
 
@@ -727,15 +851,46 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
             numericEntry_.selectAll();
             return;
         }
+        if (numericEntryBar_)
+        {
+            const auto target = *numericEntryBar_;
+            auto& state = processor_.projectState();
+            if (target.stateRevision != processor_.restoredStateRevision()
+                || target.pattern != state.activePattern || target.pattern >= state.patterns.size()
+                || target.bar >= state.patterns[target.pattern].bars.size())
+            {
+                cancelNumericEntry();
+                return;
+            }
+            const auto previous = state.patterns[target.pattern].bars[target.bar];
+            auto meter = previous;
+            if (value < 1.0 || value > 64.0 || value != std::floor(value))
+            {
+                numericEntry_.selectAll();
+                return;
+            }
+            (target.denominator ? meter.denominator : meter.numerator) = static_cast<int>(value);
+            if (!meter.isValid())
+            {
+                numericEntry_.selectAll();
+                return;
+            }
+            if (meter.numerator != previous.numerator || meter.denominator != previous.denominator)
+                processor_.projectEditor().setBarMeter(target.pattern, target.bar,
+                                                       meter.numerator, meter.denominator);
+            cancelNumericEntry();
+            updateControlsFromState();
+            return;
+        }
         if (numericEntryControl_ != nullptr)
-            numericEntryControl_->setValue(value, juce::sendNotificationSync);
-        numericEntry_.setVisible(false);
-        numericEntryControl_ = nullptr;
+        {
+            const auto sliderValue = numericEntryControl_->valueFromTextFunction
+                                         ? numericEntryControl_->valueFromTextFunction(text) : value;
+            numericEntryControl_->setValue(sliderValue, juce::sendNotificationSync);
+        }
+        cancelNumericEntry();
     };
-    const auto cancelEntry = [this] {
-        numericEntry_.setVisible(false);
-        numericEntryControl_ = nullptr;
-    };
+    const auto cancelEntry = [this] { cancelNumericEntry(); };
     numericEntry_.onEscapeKey = cancelEntry;
     numericEntry_.onFocusLost = cancelEntry;
     addChildComponent(numericEntry_);
@@ -759,6 +914,13 @@ BeatScholarLinuxEditor::~BeatScholarLinuxEditor()
     }
     masterControls_[4].onDragStart = nullptr;
     masterControls_[4].onDragEnd = nullptr;
+    // Sliders can end a live drag while their members are being destroyed.
+    // Detach callbacks before the drag readout and editor state are destroyed.
+    for (auto& control : effectControls_)
+    {
+        control.onDragStart = nullptr;
+        control.onDragEnd = nullptr;
+    }
     setLookAndFeel(nullptr);
 }
 
@@ -798,6 +960,34 @@ juce::Rectangle<int> BeatScholarLinuxEditor::patternBounds() const
     return designRect(getWidth(), getHeight(), 62.0f, 104.0f, 1070.0f, 404.0f);
 }
 
+juce::Rectangle<float> BeatScholarLinuxEditor::laneCellBounds(std::size_t lane) const
+{
+    const auto pattern = patternBounds();
+    const auto rail = designRect(getWidth(), getHeight(), 8.0f, 60.0f, 50.0f, 448.0f);
+    const auto& state = processor_.projectState();
+    const float height = static_cast<float>(pattern.getHeight())
+                         / static_cast<float>(state.patterns[state.activePattern].lanes.size())
+                         * verticalZoom_;
+    return { static_cast<float>(rail.getX()), static_cast<float>(pattern.getY())
+                + (static_cast<float>(lane) - verticalScroll_) * height,
+             static_cast<float>(rail.getWidth()), height - designScale(getWidth(), getHeight()) };
+}
+
+juce::Rectangle<float> BeatScholarLinuxEditor::laneControlBounds(std::size_t lane, int control) const
+{
+    const auto scale = designScale(getWidth(), getHeight());
+    const auto controls = laneCellBounds(lane).reduced(4.0f * scale, 5.0f * scale);
+    const auto compact = controls.withSizeKeepingCentre(
+        std::min(controls.getWidth(), 26.0f * scale), controls.getHeight());
+    if (controls.getHeight() >= 76.0f * scale)
+        return { compact.getX(), compact.getCentreY() - 38.0f * scale
+                                    + static_cast<float>(control) * 20.0f * scale,
+                 compact.getWidth(), 16.0f * scale };
+    const float height = controls.getHeight() / 4.0f;
+    return compact.withY(controls.getY() + static_cast<float>(control) * height)
+                  .withHeight(height).reduced(0.0f, scale);
+}
+
 juce::Rectangle<int> BeatScholarLinuxEditor::kitBounds() const
 {
     return designRect(getWidth(), getHeight(), 8.0f, 558.0f, 388.0f, 154.0f);
@@ -813,13 +1003,23 @@ juce::Rectangle<int> BeatScholarLinuxEditor::arrangementBounds() const
     return designRect(getWidth(), getHeight(), 1138.0f, 60.0f, 134.0f, 448.0f);
 }
 
+bool BeatScholarLinuxEditor::shortPatternList() const
+{
+    const auto& state = processor_.projectState();
+    return state.ui.patternMode && state.patterns.size() <= 3;
+}
+
 juce::Rectangle<int> BeatScholarLinuxEditor::arrangementPadBounds() const
 {
-    return designRect(getWidth(), getHeight(), 1146.0f, 112.0f, 118.0f, 338.0f);
+    return shortPatternList()
+        ? designRect(getWidth(), getHeight(), 1161.0f, 127.0f, 99.0f, 323.0f)
+        : designRect(getWidth(), getHeight(), 1161.0f, 112.0f, 99.0f, 338.0f);
 }
 
 int BeatScholarLinuxEditor::arrangementItemHeight() const
 {
+    if (shortPatternList())
+        return juce::roundToInt(82.0f * designScale(getWidth(), getHeight()));
     const auto& state = processor_.projectState();
     const auto count = state.ui.patternMode ? state.patterns.size()
                                             : state.patterns[state.activePattern].bars.size();
@@ -833,8 +1033,10 @@ juce::Rectangle<int> BeatScholarLinuxEditor::arrangementItemBounds(std::size_t i
 {
     const auto area = arrangementPadBounds();
     const int height = arrangementItemHeight();
+    const int gap = shortPatternList()
+        ? juce::roundToInt(8.0f * designScale(getWidth(), getHeight())) : 4;
     return { area.getX(), area.getY() + juce::roundToInt((static_cast<float>(index)
-                - arrangementScroll_) * height), area.getWidth(), height - 4 };
+                - arrangementScroll_) * height), area.getWidth(), height - gap };
 }
 
 float BeatScholarLinuxEditor::maximumArrangementScroll() const
@@ -866,39 +1068,81 @@ void BeatScholarLinuxEditor::clampView()
     arrangementScroll_ = std::clamp(arrangementScroll_, 0.0f, maximumArrangementScroll());
 }
 
+juce::Rectangle<float> BeatScholarLinuxEditor::scrollRailBounds(int axis) const
+{
+    return (axis == 1 ? designRect(getWidth(), getHeight(), 12.0f, 508.0f, 958.0f, 8.0f)
+                      : designRect(getWidth(), getHeight(), 1139.0f, 66.0f, 5.0f, 267.0f)).toFloat();
+}
+
+juce::Rectangle<float> BeatScholarLinuxEditor::scrollThumbBounds(int axis) const
+{
+    const auto rail = scrollRailBounds(axis);
+    const auto& state = processor_.projectState();
+    const auto& pattern = state.patterns[state.activePattern];
+    if (axis == 1)
+        return { rail.getX() + horizontalScroll_ / static_cast<float>(pattern.durationInQuarterNotes())
+                                  * rail.getWidth(),
+                 rail.getY(), rail.getWidth() / horizontalZoom_, rail.getHeight() };
+    return { rail.getX(), rail.getY() + verticalScroll_ / static_cast<float>(pattern.lanes.size())
+                                          * rail.getHeight(),
+             rail.getWidth(), rail.getHeight() / verticalZoom_ };
+}
+
+juce::Rectangle<float> BeatScholarLinuxEditor::zoomRailBounds(int axis) const
+{
+    return (axis == 1 ? designRect(getWidth(), getHeight(), 1014.0f, 510.0f, 110.0f, 4.0f)
+                      : designRect(getWidth(), getHeight(), 1140.0f, 369.0f, 3.0f, 96.0f)).toFloat();
+}
+
+juce::Rectangle<int> BeatScholarLinuxEditor::zoomButtonBounds(int axis, bool increase) const
+{
+    return axis == 1 ? designRect(getWidth(), getHeight(), increase ? 1132.0f : 987.0f,
+                                  503.0f, 18.0f, 18.0f)
+                     : designRect(getWidth(), getHeight(), 1132.0f,
+                                  increase ? 344.0f : 478.0f, 18.0f, 18.0f);
+}
+
 void BeatScholarLinuxEditor::moveScrollRail(juce::Point<int> point)
 {
     const auto& pattern = processor_.projectState().patterns[processor_.projectState().activePattern];
+    const auto rail = scrollRailBounds(draggingScrollRail_);
     if (draggingScrollRail_ == 1)
-    {
-        const auto rail = designRect(getWidth(), getHeight(), 62.0f, 511.0f, 1008.0f, 7.0f);
-        const float fraction = std::clamp(static_cast<float>(point.x - rail.getX()) / rail.getWidth(), 0.0f, 1.0f);
-        const float quarters = static_cast<float>(pattern.durationInQuarterNotes());
-        horizontalScroll_ = fraction * (quarters - quarters / horizontalZoom_);
-    }
+        horizontalScroll_ = (point.x - rail.getX() - scrollRailGrabOffset_) / rail.getWidth()
+            * static_cast<float>(pattern.durationInQuarterNotes());
     else if (draggingScrollRail_ == 2)
-    {
-        const auto rail = designRect(getWidth(), getHeight(), 1139.0f, 66.0f, 5.0f, 378.0f);
-        const float fraction = std::clamp(static_cast<float>(point.y - rail.getY()) / rail.getHeight(), 0.0f, 1.0f);
-        const float lanes = static_cast<float>(pattern.lanes.size());
-        verticalScroll_ = fraction * (lanes - lanes / verticalZoom_);
-    }
+        verticalScroll_ = (point.y - rail.getY() - scrollRailGrabOffset_) / rail.getHeight()
+            * static_cast<float>(pattern.lanes.size());
+    clampView();
+    repaint();
+}
+
+void BeatScholarLinuxEditor::moveZoomRail(juce::Point<int> point)
+{
+    const auto rail = zoomRailBounds(draggingZoomRail_);
+    const float fraction = draggingZoomRail_ == 1
+        ? (point.x - rail.getX()) / rail.getWidth()
+        : (rail.getBottom() - point.y) / rail.getHeight();
+    auto& zoom = draggingZoomRail_ == 1 ? horizontalZoom_ : verticalZoom_;
+    zoom = 1.0f + 7.0f * std::clamp(fraction, 0.0f, 1.0f);
+    clampView();
     repaint();
 }
 
 juce::Rectangle<int> BeatScholarLinuxEditor::lowerBounds() const
 {
-    return designRect(getWidth(), getHeight(), 8.0f, 522.0f, 1264.0f, 190.0f);
+    return designRect(getWidth(), getHeight(), 8.0f, 522.0f, 1264.0f, 192.0f);
 }
 
 juce::Rectangle<int> BeatScholarLinuxEditor::soundBounds() const
 {
+    if (module_ == Module::randomizer)
+        return designRect(getWidth(), getHeight(), 408.0f, 524.0f, 652.0f, 190.0f);
     return designRect(getWidth(), getHeight(), 400.0f, 522.0f, 648.0f, 190.0f);
 }
 
 juce::Rectangle<int> BeatScholarLinuxEditor::masterBounds() const
 {
-    return designRect(getWidth(), getHeight(), 1052.0f, 522.0f, 220.0f, 190.0f);
+    return designRect(getWidth(), getHeight(), 1066.0f, 524.0f, 206.0f, 190.0f);
 }
 
 void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
@@ -1023,9 +1267,8 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                               meterArea.withTrimmedLeft(meterArea.getWidth() * 0.54f),
                               juce::Justification::centredLeft);
         }
-        if (bounds.getWidth() >= 140.0f * scale)
+        if (auto actions = barHeaderActions(bounds, scale); !actions.isEmpty())
         {
-            auto actions = bounds.removeFromRight(std::min(bounds.getWidth() * 0.30f, 95.0f * scale));
             const float actionWidth = actions.getWidth() / 3.0f;
             for (int action = 0; action < 3; ++action)
                 drawActionGlyph(actions.removeFromLeft(actionWidth)
@@ -1036,6 +1279,14 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
     graphics.restoreState();
 
     // Visible lane column, including the manual's lane-wide brush arrows.
+    const auto laneModifiers = juce::ModifierKeys::getCurrentModifiers();
+    const bool wholeLaneAction = laneModifiers.isShiftDown()
+        || juce::KeyPress::isKeyCurrentlyDown(juce::KeyPress::leftKey)
+        || juce::KeyPress::isKeyCurrentlyDown(juce::KeyPress::rightKey)
+        || juce::KeyPress::isKeyCurrentlyDown(juce::KeyPress::downKey)
+        || (!laneModifiers.isAltDown()
+            && (brush_ == Brush::slicer || brush_ == Brush::randomizer
+                || juce::KeyPress::isKeyCurrentlyDown('/')));
     const auto laneRail = designRect(getWidth(), getHeight(), 8.0f, 60.0f, 50.0f, 448.0f);
     graphics.setColour(juce::Colour(lookAndFeel_.palette().panel));
     graphics.fillRect(laneRail);
@@ -1045,24 +1296,18 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
     graphics.setFont(bsl::ui::font(22.0f * scale, true));
     graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
     graphics.drawText("+", addLane, juce::Justification::centred);
-    const float laneHeight = static_cast<float>(pattern.getHeight())
-                             / static_cast<float>(std::max<std::size_t>(1, current.lanes.size()));
     graphics.setFont(bsl::ui::font(9.0f * scale, true));
     graphics.saveState();
     graphics.reduceClipRegion(laneRail.withY(pattern.getY()).withHeight(pattern.getHeight()));
     for (std::size_t lane = 0; lane < current.lanes.size(); ++lane)
     {
-        const float y = static_cast<float>(pattern.getY())
-                        + (static_cast<float>(lane) - verticalScroll_) * laneHeight * verticalZoom_;
-        const juce::Rectangle<float> cell(static_cast<float>(laneRail.getX()), y,
-                                          static_cast<float>(laneRail.getWidth()),
-                                          laneHeight * verticalZoom_ - scale);
+        const auto cell = laneCellBounds(lane);
         if (cell.getBottom() < pattern.getY() || cell.getY() > pattern.getBottom())
             continue;
         graphics.setColour(juce::Colour(lookAndFeel_.palette().border));
         graphics.drawRect(cell, std::max(1.0f, scale));
         graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
-        if (brush_ == Brush::slicer || brush_ == Brush::randomizer)
+        if (wholeLaneAction)
         {
             juce::Path arrow;
             const auto centre = cell.getCentre();
@@ -1076,11 +1321,9 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
         else
         {
             const auto& laneState = current.lanes[lane];
-            auto controls = cell.reduced(4.0f * scale, 5.0f * scale);
-            const float controlHeight = controls.getHeight() / 4.0f;
             for (int control = 0; control < 4; ++control)
             {
-                auto slot = controls.removeFromTop(controlHeight).reduced(0.0f, 1.0f * scale);
+                const auto slot = laneControlBounds(lane, control);
                 graphics.setColour(juce::Colour(control == 0 && laneState.solo
                                                      ? lookAndFeel_.palette().accent
                                                  : control == 1 && laneState.muted
@@ -1090,7 +1333,8 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                 graphics.setColour(juce::Colour(lookAndFeel_.palette().borderBright));
                 graphics.drawRect(slot, std::max(0.8f, scale));
                 graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
-                graphics.setFont(bsl::ui::font(8.0f * scale, true));
+                // Tutorial lane labels fill the button vertically; shrink only for dense lanes.
+                graphics.setFont(bsl::ui::font(std::min(16.0f * scale, slot.getHeight()), true));
                 graphics.drawText(control == 0 ? "S" : control == 1 ? "M" : control == 2 ? "-" : "+",
                                   slot.toNearestInt(), juce::Justification::centred);
             }
@@ -1099,21 +1343,28 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
 
     graphics.restoreState();
 
-    // Manual-style zoom/scroll rails.
-    const auto horizontalRail = designRect(getWidth(), getHeight(), 62.0f, 511.0f, 1008.0f, 7.0f).toFloat();
-    graphics.setColour(juce::Colour(lookAndFeel_.palette().border));
-    graphics.fillRoundedRectangle(horizontalRail, horizontalRail.getHeight() * 0.5f);
-    graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
-    const float horizontalMaximum = static_cast<float>(current.durationInQuarterNotes()) * (1.0f - 1.0f / horizontalZoom_);
-    const float horizontalFraction = horizontalMaximum > 0.0f ? horizontalScroll_ / horizontalMaximum : 0.0f;
-    graphics.fillEllipse(horizontalRail.getX() + horizontalFraction * (horizontalRail.getWidth() - 11.0f * scale),
-                         horizontalRail.getY() - 2.0f * scale,
-                         11.0f * scale, 11.0f * scale);
-    graphics.setFont(bsl::ui::font(13.0f * scale, true));
-    graphics.drawText("-", designRect(getWidth(), getHeight(), 1082.0f, 502.0f, 18.0f, 18.0f),
-                      juce::Justification::centred);
-    graphics.drawText("+", designRect(getWidth(), getHeight(), 1112.0f, 502.0f, 18.0f, 18.0f),
-                      juce::Justification::centred);
+    // Independent zoom sliders and viewport-sized scroll thumbs (Basic tutorial 5:28).
+    const auto paintViewControls = [&](int axis) {
+        const auto scrollRail = scrollRailBounds(axis);
+        graphics.setColour(juce::Colour(lookAndFeel_.palette().border));
+        graphics.fillRect(scrollRail);
+        graphics.setColour(juce::Colour(lookAndFeel_.palette().textMuted));
+        graphics.fillRect(scrollThumbBounds(axis));
+        const auto zoomRail = zoomRailBounds(axis);
+        graphics.setColour(juce::Colour(lookAndFeel_.palette().borderBright));
+        graphics.fillRect(zoomRail);
+        const float fraction = ((axis == 1 ? horizontalZoom_ : verticalZoom_) - 1.0f) / 7.0f;
+        const auto centre = axis == 1
+            ? juce::Point<float>(zoomRail.getX() + fraction * zoomRail.getWidth(), zoomRail.getCentreY())
+            : juce::Point<float>(zoomRail.getCentreX(), zoomRail.getBottom() - fraction * zoomRail.getHeight());
+        graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
+        graphics.fillEllipse(centre.x - 4.0f * scale, centre.y - 4.0f * scale,
+                             8.0f * scale, 8.0f * scale);
+        graphics.setFont(bsl::ui::font(13.0f * scale, true));
+        graphics.drawText("-", zoomButtonBounds(axis, false), juce::Justification::centred);
+        graphics.drawText("+", zoomButtonBounds(axis, true), juce::Justification::centred);
+    };
+    paintViewControls(1);
 
     // Right-side arrangement rail and vertical pads.
     const auto arrangement = arrangementBounds();
@@ -1121,26 +1372,23 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
     graphics.fillRect(arrangement);
     graphics.setColour(juce::Colour(lookAndFeel_.palette().border));
     graphics.drawRect(arrangement.toFloat(), std::max(1.0f, scale));
-    const auto verticalRail = designRect(getWidth(), getHeight(), 1139.0f, 66.0f, 5.0f, 378.0f).toFloat();
-    graphics.setColour(juce::Colour(lookAndFeel_.palette().border));
-    graphics.fillRoundedRectangle(verticalRail, verticalRail.getWidth() * 0.5f);
-    graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
-    const float verticalMaximum = static_cast<float>(current.lanes.size()) * (1.0f - 1.0f / verticalZoom_);
-    const float verticalFraction = verticalMaximum > 0.0f ? verticalScroll_ / verticalMaximum : 0.0f;
-    graphics.fillEllipse(verticalRail.getX() - 2.0f * scale,
-                         verticalRail.getY() + verticalFraction * (verticalRail.getHeight() - 9.0f * scale),
-                         9.0f * scale, 9.0f * scale);
-    graphics.setFont(bsl::ui::font(13.0f * scale, true));
-    graphics.drawText("-", designRect(getWidth(), getHeight(), 1132.0f, 446.0f, 18.0f, 16.0f),
-                      juce::Justification::centred);
-    graphics.drawText("+", designRect(getWidth(), getHeight(), 1132.0f, 466.0f, 18.0f, 16.0f),
-                      juce::Justification::centred);
+    paintViewControls(2);
     graphics.setColour(juce::Colour(lookAndFeel_.palette().textMuted));
     graphics.setFont(bsl::ui::font(10.0f * scale, true));
-    graphics.drawText(state.ui.patternMode ? "Q  " + quantizationLabel(current.quantization)
-                                           : juce::String(current.name),
-                      designRect(getWidth(), getHeight(), 1144.0f, 88.0f, 122.0f, 18.0f),
-                      juce::Justification::centred);
+    if (state.ui.patternMode)
+    {
+        graphics.drawText("Q", designRect(getWidth(), getHeight(), 1198.0f, 88.0f, 12.0f, 18.0f),
+                          juce::Justification::centred);
+        const auto arrow = designRect(getWidth(), getHeight(), 1213.0f, 94.0f, 8.0f, 5.0f).toFloat();
+        juce::Path triangle;
+        triangle.addTriangle(arrow.getTopLeft(), arrow.getTopRight(),
+                             {arrow.getCentreX(), arrow.getBottom()});
+        graphics.fillPath(triangle);
+    }
+    else
+        graphics.drawText(juce::String(current.name),
+                          designRect(getWidth(), getHeight(), 1161.0f, 88.0f, 99.0f, 18.0f),
+                          juce::Justification::centred);
     {
         const auto padArea = arrangementPadBounds();
         const juce::Graphics::ScopedSaveState savedGraphics(graphics);
@@ -1161,8 +1409,10 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                                        : juce::Colour(lookAndFeel_.palette().border));
                 graphics.drawRect(bounds, index == state.activePattern ? 2 : 1);
                 graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
-                graphics.setFont(bsl::ui::font(11.0f * scale, true));
-                graphics.drawFittedText(juce::String(state.patterns[index].name), bounds.reduced(5, 3),
+                graphics.setFont(bsl::ui::font(14.0f * scale, true));
+                graphics.drawFittedText(juce::String(state.patterns[index].name),
+                                        bounds.reduced(juce::roundToInt(5.0f * scale),
+                                                       juce::roundToInt(3.0f * scale)),
                                         juce::Justification::centred, 1);
                 drawActionGlyph(bounds.toFloat().removeFromTop(18.0f * scale)
                                     .removeFromLeft(18.0f * scale), 1);
@@ -1170,8 +1420,12 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                                     .removeFromRight(18.0f * scale), 2);
                 drawActionGlyph(bounds.toFloat().withSize(18.0f * scale, 18.0f * scale)
                                     .withY(bounds.getBottom() - 18.0f * scale), 0);
+                // Action glyphs use the muted tint; note labels retain the text tint.
+                graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
+                graphics.setFont(bsl::ui::font(9.0f * scale, true));
                 graphics.drawText(midiNoteLabel(state.patterns[index].triggerNote, state.ui),
-                                  bounds.withY(bounds.getBottom() - 14).withHeight(14),
+                                  bounds.toFloat().reduced(7.0f * scale, 5.0f * scale)
+                                      .removeFromBottom(12.0f * scale),
                                   juce::Justification::centredRight);
             }
         }
@@ -1227,9 +1481,10 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
     graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
     graphics.setFont(bsl::ui::font(14.0f * scale, true));
     graphics.drawText(module_ == Module::randomizer ? "Randomizer" : juce::String(padNames[state.ui.selectedPad]),
-                      designRect(getWidth(), getHeight(), 510.0f, 524.0f, 420.0f, 30.0f),
+                      designRect(getWidth(), getHeight(), 546.0f, 524.0f, 384.0f, 30.0f),
                       juce::Justification::centred);
-    graphics.drawText("Master", designRect(getWidth(), getHeight(), 1060.0f, 524.0f, 150.0f, 30.0f),
+    graphics.setFont(bsl::ui::font(17.0f * scale, true));
+    graphics.drawText("Master", designRect(getWidth(), getHeight(), 1066.0f, 526.0f, 206.0f, 30.0f),
                       juce::Justification::centred);
 
     const auto drawMeter = [&graphics, this](float level, float x, float y, float width, float height) {
@@ -1240,26 +1495,32 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
         graphics.setColour(level > 1.0f ? juce::Colour(0xffef4665) : juce::Colour(lookAndFeel_.palette().meter));
         graphics.fillRect(bounds.removeFromBottom(bounds.getHeight() * fraction));
     };
-    drawMeter(outputMeterLevels_[0], 1205.0f, 602.0f, 8.0f, 88.0f);
-    drawMeter(outputMeterLevels_[1], 1225.0f, 602.0f, 8.0f, 88.0f);
+    // These are the fader's two rails. The slider paints only its thumb so
+    // its opaque background cannot cover the actual output levels.
+    drawMeter(outputMeterLevels_[0], 1233.5f, 612.0f, 4.0f, 92.0f);
+    drawMeter(outputMeterLevels_[1], 1244.5f, 612.0f, 4.0f, 92.0f);
     if (module_ != Module::randomizer)
         drawMeter(padMeterLevels_[state.ui.selectedPad], 1031.0f, 616.0f, 7.0f, 76.0f);
 
     if (module_ == Module::randomizer)
     {
-        graphics.setFont(bsl::ui::font(9.0f * scale, true));
-        for (const auto& item : std::array<std::pair<const char*, juce::Rectangle<int>>, 4> {{
-                 { "Drum Selection", designRect(getWidth(), getHeight(), 402.0f, 558.0f, 126.0f, 152.0f) },
-                 { "Beat Slicing", designRect(getWidth(), getHeight(), 530.0f, 558.0f, 166.0f, 152.0f) },
-                 { "Step Triggering", designRect(getWidth(), getHeight(), 698.0f, 558.0f, 174.0f, 152.0f) },
-                 { "Velocity Range", designRect(getWidth(), getHeight(), 874.0f, 558.0f, 172.0f, 152.0f) }
+        // Positions measured from the official Randomizer tutorial at 5:11.
+        // Each section has its own outline, with space between adjacent sections.
+        struct RandomizerPanel { const char* title; float x; float width; float titleCentre; };
+        graphics.setFont(bsl::ui::font(11.0f * scale, true));
+        for (const auto& item : std::array<RandomizerPanel, 4> {{
+                 { "Drum Selection", 408.0f, 121.0f, 459.0f },
+                 { "Beat Slicing", 542.0f, 171.0f, 626.0f },
+                 { "Step Triggering", 727.0f, 150.0f, 796.0f },
+                 { "Velocity Range", 890.0f, 166.0f, 970.0f }
              }})
         {
             graphics.setColour(juce::Colour(lookAndFeel_.palette().border));
-            graphics.drawRect(item.second.toFloat(), std::max(1.0f, scale));
+            graphics.drawRect(designRect(getWidth(), getHeight(), item.x, 556.0f, item.width, 158.0f).toFloat(),
+                              std::max(1.0f, scale));
             graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
-            auto heading = item.second;
-            graphics.drawText(item.first, heading.removeFromTop(static_cast<int>(22.0f * scale)),
+            graphics.drawText(item.title,
+                              designRect(getWidth(), getHeight(), item.titleCentre - 48.0f, 560.0f, 96.0f, 22.0f),
                               juce::Justification::centred);
         }
     }
@@ -1270,42 +1531,35 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
         const auto sampleColour = padColours_[state.ui.selectedPad].withSaturation(0.72f)
                                                               .withBrightness(0.70f);
         const bool custom = !selectedPad.customSampleName.empty();
-        graphics.setColour(custom ? juce::Colour(lookAndFeel_.palette().panel) : sampleColour);
+        graphics.setColour(juce::Colour(lookAndFeel_.palette().panel));
         graphics.fillRect(samplePanel);
-        graphics.setColour(sampleColour.brighter(0.24f));
-        graphics.fillRect(samplePanel.removeFromTop(static_cast<int>((custom ? 7.0f : 17.0f) * scale)));
+        graphics.setColour(sampleColour);
+        graphics.fillRect(samplePanel.removeFromTop(static_cast<int>((custom ? 7.0f : 10.0f) * scale)));
         graphics.setColour(juce::Colour(lookAndFeel_.palette().text).withAlpha(0.90f));
-        const auto sampleGlyph = designRect(getWidth(), getHeight(), 451.0f, custom ? 618.0f : 594.0f,
+        const auto sampleGlyph = designRect(getWidth(), getHeight(), custom ? 451.0f : 448.0f, custom ? 627.0f : 607.0f,
                                              52.0f, custom ? 36.0f : 42.0f).toFloat();
         if (!selectedPad.customSampleName.empty())
         {
             juce::Path waveform;
-            waveform.startNewSubPath(sampleGlyph.getX(), sampleGlyph.getCentreY());
-            constexpr std::array<float, 13> waveformHeights {
-                0.00f, 0.08f, -0.22f, 0.55f, -0.82f, 0.38f, -0.16f,
-                0.73f, -0.48f, 0.18f, -0.06f, 0.02f, 0.00f
-            };
-            for (std::size_t index = 1; index < waveformHeights.size(); ++index)
-                waveform.lineTo(sampleGlyph.getX()
-                                      + sampleGlyph.getWidth() * static_cast<float>(index)
-                                            / static_cast<float>(waveformHeights.size() - 1),
-                                sampleGlyph.getCentreY()
-                                      - waveformHeights[index] * sampleGlyph.getHeight() * 0.46f);
-            graphics.strokePath(waveform, juce::PathStrokeType(std::max(1.5f, 2.0f * scale),
+            // The tutorial's custom-sample symbol has flat ends and three sharp peaks.
+            constexpr std::array<juce::Point<float>, 9> waveformPoints {{
+                { 0.000f, 0.590f }, { 0.171f, 0.590f }, { 0.239f, 0.415f },
+                { 0.316f, 0.771f }, { 0.382f, 0.339f }, { 0.454f, 0.920f },
+                { 0.533f, 0.000f }, { 0.632f, 0.590f }, { 1.000f, 0.590f }
+            }};
+            waveform.startNewSubPath(sampleGlyph.getX(),
+                                     sampleGlyph.getY() + waveformPoints.front().y * sampleGlyph.getHeight());
+            for (std::size_t index = 1; index < waveformPoints.size(); ++index)
+                waveform.lineTo(sampleGlyph.getX() + waveformPoints[index].x * sampleGlyph.getWidth(),
+                                sampleGlyph.getY() + waveformPoints[index].y * sampleGlyph.getHeight());
+            graphics.strokePath(waveform, juce::PathStrokeType(std::max(1.5f, 2.75f * scale),
                                                                juce::PathStrokeType::curved));
         }
         else
         {
-            const auto drum = sampleGlyph.withSizeKeepingCentre(36.0f * scale, 36.0f * scale);
-            graphics.drawEllipse(drum, std::max(1.4f, 1.7f * scale));
-            graphics.fillEllipse(juce::Rectangle<float>(5.0f * scale, 5.0f * scale)
-                                     .withCentre(drum.getCentre()));
-            graphics.drawLine(drum.getCentreX(), drum.getCentreY() + 2.0f * scale,
-                              drum.getCentreX(), drum.getBottom() + 7.0f * scale,
-                              std::max(1.0f, scale));
-            graphics.drawEllipse(drum.getCentreX() - 3.0f * scale,
-                                 drum.getBottom() + 5.0f * scale,
-                                 6.0f * scale, 4.0f * scale, std::max(1.0f, scale));
+            bsl::ui::drawInstrumentGlyph(graphics, sampleGlyph, state.ui.selectedPad,
+                juce::Colour(lookAndFeel_.palette().text).withAlpha(0.90f),
+                std::max(1.4f, 1.7f * scale));
         }
         // Vertical separators reproduce the manual's sound design groupings.
         for (const float x : { 548.0f, 608.0f, 668.0f, 850.0f, 976.0f })
@@ -1330,6 +1584,11 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
     const float quarterWidth = area.getWidth() / static_cast<float>(pattern.durationInQuarterNotes()) * horizontalZoom_;
     const float cellHeight = area.getHeight() / static_cast<float>(laneCount) * verticalZoom_;
     const float scale = designScale(getWidth(), getHeight());
+
+    const auto preview = beatClipboard_ && beatHoverPosition_
+                             && juce::KeyPress::isKeyCurrentlyDown('v')
+                             && !juce::KeyPress::isKeyCurrentlyDown('c')
+                         ? beatAt(*beatHoverPosition_) : std::nullopt;
 
     graphics.saveState();
     graphics.reduceClipRegion(area.toNearestInt());
@@ -1378,22 +1637,25 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
             continue;
         for (std::size_t beatIndex = 0; beatIndex < beatCount; ++beatIndex)
         {
-            const auto& beat = lane.beats[beatIndex];
+            const bool previewing = preview && preview->lane == laneIndex && preview->beat == beatIndex;
+            const auto& beat = previewing ? *beatClipboard_ : lane.beats[beatIndex];
             const float radius = std::max(3.0f, std::min(std::min(1.0f, spans[beatIndex].length) * quarterWidth,
                                                        cellHeight) * 0.36f);
             const float x = area.getX()
                             + (spans[beatIndex].start + spans[beatIndex].length * 0.5f - horizontalScroll_) * quarterWidth;
             if (x + radius < area.getX() || x - radius > area.getRight())
                 continue;
+            if (previewing)
+                graphics.beginTransparencyLayer(0.5f);
             const auto slices = beat.slices.size();
             for (std::size_t sliceIndex = 0; sliceIndex < slices; ++sliceIndex)
             {
-                const float start = juce::MathConstants<float>::twoPi
+                const float start = juce::MathConstants<float>::pi + juce::MathConstants<float>::twoPi
                                           * static_cast<float>(sliceIndex) / static_cast<float>(slices);
-                const float end = juce::MathConstants<float>::twoPi
+                const float end = juce::MathConstants<float>::pi + juce::MathConstants<float>::twoPi
                                         * static_cast<float>(sliceIndex + 1) / static_cast<float>(slices);
                 juce::Path wedge;
-                // JUCE angles start at twelve o'clock and increase clockwise,
+                // Slice zero starts at six o'clock and proceeds clockwise,
                 // matching beatAt(). A pie closes through the centre, not a chord.
                 wedge.addPieSegment(x - radius, y - radius, radius * 2.0f,
                                     radius * 2.0f, start, end, 0.0f);
@@ -1410,6 +1672,8 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
                                                    : juce::Colour(lookAndFeel_.palette().border));
                 graphics.strokePath(wedge, juce::PathStrokeType(std::max(1.0f, scale * 1.15f)));
             }
+            if (previewing)
+                graphics.endTransparencyLayer();
             if (lastHit_ && lastHit_->lane == laneIndex && lastHit_->beat == beatIndex)
             {
                 graphics.setColour(juce::Colour(lookAndFeel_.palette().accentBright));
@@ -1423,8 +1687,12 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
 
 void BeatScholarLinuxEditor::resized()
 {
+    for (auto& label : effectLabels_)
+        label.setFont(bsl::ui::font(11.0f * designScale(getWidth(), getHeight()), true));
     for (auto& label : soundLabels_)
-        label.setFont(juce::FontOptions(10.0f * designScale(getWidth(), getHeight()), juce::Font::bold));
+        label.setFont(module_ == Module::randomizer
+                          ? bsl::ui::font(14.0f * designScale(getWidth(), getHeight()), true)
+                          : juce::Font(juce::FontOptions(10.0f * designScale(getWidth(), getHeight()), juce::Font::bold)));
     title_.setFont(juce::Font(juce::FontOptions("Nimbus Sans Narrow", "Bold",
 +                                                24.0f * designScale(getWidth(), getHeight()))));
     title_.setBounds(designRect(getWidth(), getHeight(), 16.0f, 13.0f, 132.0f, 34.0f));
@@ -1439,7 +1707,7 @@ void BeatScholarLinuxEditor::resized()
     play_.setBounds(designRect(getWidth(), getHeight(), 535.0f, 12.0f, 38.0f, 38.0f));
     pause_.setVisible(false);
     bpm_.setBounds(designRect(getWidth(), getHeight(), 580.0f, 15.0f, 90.0f, 32.0f));
-    bpm_.setVisible(processor_.wrapperType == juce::AudioProcessor::wrapperType_Standalone);
+    bpm_.setVisible(true);
     drumBrush_.setBounds(designRect(getWidth(), getHeight(), 688.0f, 14.0f, 34.0f, 34.0f));
     slicerBrush_.setBounds(designRect(getWidth(), getHeight(), 742.0f, 14.0f, 34.0f, 34.0f));
     velocityBrush_.setBounds(designRect(getWidth(), getHeight(), 806.0f, 14.0f, 34.0f, 34.0f));
@@ -1469,12 +1737,12 @@ void BeatScholarLinuxEditor::resized()
     kitSave_.setBounds(designRect(getWidth(), getHeight(), 322.0f, 526.0f, 28.0f, 26.0f));
     kitPrevious_.setBounds(designRect(getWidth(), getHeight(), 354.0f, 526.0f, 18.0f, 26.0f));
     kitNext_.setBounds(designRect(getWidth(), getHeight(), 374.0f, 526.0f, 18.0f, 26.0f));
-    soundTab_.setBounds(designRect(getWidth(), getHeight(), 468.0f, 524.0f, 438.0f, 30.0f));
-    randomizerTab_.setBounds(designRect(getWidth(), getHeight(), 650.0f, 524.0f, 330.0f, 30.0f));
-    randomizerPrevious_.setBounds(designRect(getWidth(), getHeight(), 990.0f, 526.0f, 24.0f, 26.0f));
-    randomizerNext_.setBounds(designRect(getWidth(), getHeight(), 1018.0f, 526.0f, 24.0f, 26.0f));
-    routing_.setBounds(designRect(getWidth(), getHeight(), 1180.0f, 527.0f, 82.0f, 25.0f));
-    masterTab_.setBounds(designRect(getWidth(), getHeight(), 1236.0f, 526.0f, 28.0f, 27.0f));
+    soundTab_.setBounds(designRect(getWidth(), getHeight(), 546.0f, 524.0f, 360.0f, 30.0f));
+    randomizerTab_.setBounds(designRect(getWidth(), getHeight(), 546.0f, 524.0f, 360.0f, 30.0f));
+    randomizerPrevious_.setBounds(designRect(getWidth(), getHeight(), 1004.0f, 528.0f, 24.0f, 26.0f));
+    randomizerNext_.setBounds(designRect(getWidth(), getHeight(), 1032.0f, 528.0f, 24.0f, 26.0f));
+    routing_.setBounds(designRect(getWidth(), getHeight(), 1210.0f, 527.0f, 54.0f, 25.0f));
+    masterTab_.setBounds(designRect(getWidth(), getHeight(), 1243.0f, 527.0f, 28.0f, 27.0f));
     const bool standalone = processor_.wrapperType == juce::AudioProcessor::wrapperType_Standalone;
     routing_.setVisible(!standalone);
     masterTab_.setVisible(standalone);
@@ -1484,64 +1752,67 @@ void BeatScholarLinuxEditor::resized()
     randomizerNext_.setVisible(module_ == Module::randomizer);
 
     const bool custom = !processor_.projectState().kit.pads[processor_.projectState().ui.selectedPad].customSampleName.empty();
-    loadSample_.setBounds(designRect(getWidth(), getHeight(), 406.0f, custom ? 563.0f : 596.0f, 40.0f, 26.0f));
+    loadSample_.setBounds(designRect(getWidth(), getHeight(), 402.0f, 622.0f, 28.0f, 26.0f));
     clearSample_.setBounds(designRect(getWidth(), getHeight(), 512.0f, 563.0f, 27.0f, 24.0f));
-    layerOne_.setBounds(designRect(getWidth(), getHeight(), 408.0f, custom ? 587.0f : 562.0f,
-                                   custom ? 131.0f : 101.0f, 26.0f));
-    layerTwo_.setBounds(designRect(getWidth(), getHeight(), 408.0f, 674.0f, 131.0f, 28.0f));
+    layerOne_.setBounds(designRect(getWidth(), getHeight(), custom ? 408.0f : 415.0f,
+                                   custom ? 587.0f : 578.0f, custom ? 131.0f : 118.0f,
+                                   custom ? 26.0f : 19.0f));
+    layerTwo_.setBounds(designRect(getWidth(), getHeight(), 415.0f, 683.0f, 118.0f, 19.0f));
     padMute_.setBounds(designRect(getWidth(), getHeight(), 404.0f, 526.0f, 30.0f, 26.0f));
     padSolo_.setBounds(designRect(getWidth(), getHeight(), 436.0f, 526.0f, 30.0f, 26.0f));
-    oneShot_.setBounds(designRect(getWidth(), getHeight(), 440.0f, custom ? 672.0f : 640.0f, 80.0f, 24.0f));
+    mono_.setBounds(designRect(getWidth(), getHeight(), 468.0f, 526.0f, 76.0f, 26.0f));
+    oneShot_.setBounds(designRect(getWidth(), getHeight(), 440.0f, custom ? 672.0f : 650.0f, 80.0f, 24.0f));
 
     if (module_ == Module::randomizer)
     {
-        const std::array<float, 4> toggleX { 500.0f, 668.0f, 846.0f, 1018.0f };
+        const std::array<float, 4> toggleX { 503.0f, 687.0f, 851.0f, 1033.0f };
         for (std::size_t index = 0; index < randomModuleToggles_.size(); ++index)
-            randomModuleToggles_[index].setBounds(designRect(getWidth(), getHeight(), toggleX[index], 562.0f, 24.0f, 24.0f));
-        randomClearPads_.setBounds(designRect(getWidth(), getHeight(), 438.0f, 600.0f, 54.0f, 28.0f));
-        randomAllPads_.setBounds(designRect(getWidth(), getHeight(), 438.0f, 650.0f, 54.0f, 28.0f));
-        randomClearSlices_.setBounds(designRect(getWidth(), getHeight(), 548.0f, 584.0f, 54.0f, 24.0f));
-        randomAllSlices_.setBounds(designRect(getWidth(), getHeight(), 622.0f, 584.0f, 54.0f, 24.0f));
-        randomSlicePrevious_.setBounds(designRect(getWidth(), getHeight(), 536.0f, 625.0f, 24.0f, 32.0f));
-        randomSliceNext_.setBounds(designRect(getWidth(), getHeight(), 666.0f, 625.0f, 24.0f, 32.0f));
+            randomModuleToggles_[index].setBounds(designRect(getWidth(), getHeight(), toggleX[index], 559.0f, 24.0f, 24.0f));
+        randomClearPads_.setBounds(designRect(getWidth(), getHeight(), 445.0f, 607.0f, 45.0f, 32.0f));
+        randomAllPads_.setBounds(designRect(getWidth(), getHeight(), 445.0f, 663.0f, 45.0f, 31.0f));
+        randomClearSlices_.setBounds(designRect(getWidth(), getHeight(), 585.0f, 592.0f, 35.0f, 20.0f));
+        randomAllSlices_.setBounds(designRect(getWidth(), getHeight(), 636.0f, 592.0f, 35.0f, 20.0f));
+        randomSlicePrevious_.setBounds(designRect(getWidth(), getHeight(), 553.0f, 651.0f, 23.0f, 25.0f));
+        randomSliceNext_.setBounds(designRect(getWidth(), getHeight(), 681.0f, 651.0f, 23.0f, 25.0f));
         for (std::size_t index = 0; index < randomSliceButtons_.size(); ++index)
         {
             const int column = static_cast<int>(index % 3);
             const int row = static_cast<int>(index / 3);
             randomSliceButtons_[index].setBounds(designRect(getWidth(), getHeight(),
-                565.0f + static_cast<float>(column) * 32.0f,
-                614.0f + static_cast<float>(row) * 30.0f, 28.0f, 27.0f));
+                582.0f + static_cast<float>(column) * 30.5f,
+                620.0f + static_cast<float>(row) * 30.5f, 27.0f, 27.0f));
         }
         const std::array<juce::Rectangle<int>, 8> controlBounds {
-            designRect(getWidth(), getHeight(), 716.0f, 601.0f, 58.0f, 58.0f),
-            designRect(getWidth(), getHeight(), 718.0f, 675.0f, 136.0f, 20.0f),
-            designRect(getWidth(), getHeight(), 886.0f, 601.0f, 62.0f, 62.0f),
-            designRect(getWidth(), getHeight(), 968.0f, 601.0f, 62.0f, 62.0f),
+            designRect(getWidth(), getHeight(), 737.0f, 606.0f, 72.0f, 72.0f),
+            designRect(getWidth(), getHeight(), 750.0f, 689.0f, 104.0f, 20.0f),
+            designRect(getWidth(), getHeight(), 901.0f, 605.0f, 72.0f, 72.0f),
+            designRect(getWidth(), getHeight(), 977.0f, 605.0f, 72.0f, 72.0f),
             designRect(getWidth(), getHeight(), 668.0f, 564.0f, 24.0f, 24.0f),
             designRect(getWidth(), getHeight(), 500.0f, 564.0f, 24.0f, 24.0f),
             designRect(getWidth(), getHeight(), 1018.0f, 564.0f, 24.0f, 24.0f),
-            designRect(getWidth(), getHeight(), 824.0f, 610.0f, 28.0f, 28.0f)
+            designRect(getWidth(), getHeight(), 831.0f, 627.0f, 28.0f, 28.0f)
         };
         const std::array<juce::Rectangle<int>, 8> labelBounds {
-            designRect(getWidth(), getHeight(), 704.0f, 583.0f, 82.0f, 14.0f),
-            designRect(getWidth(), getHeight(), 748.0f, 658.0f, 76.0f, 14.0f),
-            designRect(getWidth(), getHeight(), 886.0f, 583.0f, 62.0f, 14.0f),
-            designRect(getWidth(), getHeight(), 968.0f, 583.0f, 62.0f, 14.0f),
+            designRect(getWidth(), getHeight(), 732.0f, 590.0f, 82.0f, 14.0f),
+            designRect(getWidth(), getHeight(), 764.0f, 675.0f, 76.0f, 14.0f),
+            designRect(getWidth(), getHeight(), 901.0f, 592.0f, 72.0f, 14.0f),
+            designRect(getWidth(), getHeight(), 977.0f, 592.0f, 72.0f, 14.0f),
             designRect(getWidth(), getHeight(), 668.0f, 564.0f, 24.0f, 14.0f),
             designRect(getWidth(), getHeight(), 500.0f, 564.0f, 24.0f, 14.0f),
             designRect(getWidth(), getHeight(), 1018.0f, 564.0f, 24.0f, 14.0f),
-            designRect(getWidth(), getHeight(), 786.0f, 583.0f, 76.0f, 14.0f)
+            designRect(getWidth(), getHeight(), 814.0f, 590.0f, 62.0f, 14.0f)
         };
         for (std::size_t index = 0; index < 8; ++index)
         {
             soundLabels_[index].setBounds(labelBounds[index]);
             soundControls_[index].setBounds(controlBounds[index]);
         }
+        randomFillEmpty_.setBounds(controlBounds[7]);
     }
     else
     {
         const std::array<juce::Point<float>, 8> characterPositions {{
-            { 552.0f, 566.0f }, { 552.0f, 642.0f }, { 612.0f, 566.0f }, { 612.0f, 642.0f },
+            { 558.0f, 573.0f }, { 558.0f, 649.0f }, { 620.0f, 573.0f }, { 620.0f, 649.0f },
             { 508.0f, 605.0f }, { 984.0f, 566.0f }, { 984.0f, 642.0f }, { 468.0f, 638.0f }
         }};
         for (std::size_t index = 0; index < characterPositions.size(); ++index)
@@ -1551,7 +1822,7 @@ void BeatScholarLinuxEditor::resized()
                 soundLabels_[index].setBounds(designRect(getWidth(), getHeight(),
                     510.0f, 568.0f, 34.0f, 14.0f));
                 soundControls_[index].setBounds(designRect(getWidth(), getHeight(),
-                    516.0f, 584.0f, 24.0f, 88.0f));
+                    524.0f, 578.0f, 24.0f, 85.0f));
             }
             else if (index == 5)
             {
@@ -1567,45 +1838,79 @@ void BeatScholarLinuxEditor::resized()
             {
                 soundLabels_[index].setBounds(designRect(getWidth(), getHeight(),
                     characterPositions[index].x, characterPositions[index].y, 54.0f, 14.0f));
-                soundControls_[index].setBounds(designRect(getWidth(), getHeight(),
-                    characterPositions[index].x, characterPositions[index].y + 12.0f, 54.0f, 55.0f));
+                // Character dials use the smaller insert-control rings in the
+                // Samples & Sounds tutorial; send controls are deliberately larger.
+                soundControls_[index].setBounds(index < 4
+                    ? designRect(getWidth(), getHeight(), characterPositions[index].x + 6.0f,
+                                 index % 2 == 0 ? 589.0f : 662.0f, 42.0f, 42.0f)
+                    : designRect(getWidth(), getHeight(), characterPositions[index].x,
+                                 characterPositions[index].y + 12.0f, 54.0f, 55.0f));
             }
         }
         const std::array<juce::Point<float>, 10> effectPositions {{
-            { 672.0f, 566.0f }, { 732.0f, 566.0f }, { 792.0f, 566.0f },
-            { 672.0f, 642.0f }, { 732.0f, 642.0f }, { 792.0f, 642.0f },
-            { 918.0f, 566.0f }, { 858.0f, 566.0f }, { 858.0f, 642.0f }, { 918.0f, 642.0f }
+            { 680.0f, 573.0f }, { 736.0f, 573.0f }, { 791.0f, 573.0f },
+            { 680.0f, 649.0f }, { 736.0f, 649.0f }, { 791.0f, 649.0f },
+            { 910.0f, 573.0f }, { 852.0f, 573.0f }, { 852.0f, 649.0f }, { 910.0f, 649.0f }
         }};
         for (std::size_t index = 0; index < effectPositions.size(); ++index)
         {
             effectLabels_[index].setBounds(designRect(getWidth(), getHeight(),
                 effectPositions[index].x, effectPositions[index].y, 54.0f, 14.0f));
-            effectControls_[index].setBounds(designRect(getWidth(), getHeight(),
-                effectPositions[index].x, effectPositions[index].y + 12.0f, 54.0f, 55.0f));
+            if (index < 6)
+                effectControls_[index].setBounds(designRect(getWidth(), getHeight(),
+                    effectPositions[index].x + 6.0f,
+                    index < 3 ? 589.0f : 662.0f, 42.0f, 42.0f));
+            else if (index < 9)
+                // Including the centered outline, 50px bounds paint the tutorial's
+                // 40px send rings. The lower ring aligns with the insert row.
+                effectControls_[index].setBounds(designRect(getWidth(), getHeight(),
+                    effectPositions[index].x + 2.0f,
+                    index < 8 ? 586.0f : 658.0f, 50.0f, 50.0f));
+            else
+                // Gain is a vertical fader, with its own track and thumb geometry.
+                effectControls_[index].setBounds(designRect(getWidth(), getHeight(),
+                    effectPositions[index].x, 654.0f, 54.0f, 55.0f));
         }
     }
 
+    // Painted centers and labels measured from the official Randomizer
+    // tutorial at 5:11, normalized to the 1280 x 720 design surface.
     const std::array<juce::Point<float>, 5> masterPositions {{
-        { 1064.0f, 566.0f }, { 1120.0f, 566.0f }, { 1064.0f, 642.0f },
-        { 1120.0f, 642.0f }, { 1184.0f, 566.0f }
+        { 1108.0f, 573.0f }, { 1179.0f, 573.0f }, { 1108.0f, 649.0f },
+        { 1179.0f, 649.0f }, { 1241.0f, 571.0f }
     }};
     for (std::size_t index = 0; index < masterPositions.size(); ++index)
     {
+        masterLabels_[index].setFont(bsl::ui::font(11.5f * designScale(getWidth(), getHeight()), true));
         masterLabels_[index].setBounds(designRect(getWidth(), getHeight(),
-            masterPositions[index].x, masterPositions[index].y, 52.0f, 14.0f));
-        masterControls_[index].setBounds(designRect(getWidth(), getHeight(),
-            index == 4 ? 1190.0f : masterPositions[index].x,
-            masterPositions[index].y + 12.0f,
-            index == 4 ? 58.0f : 52.0f, index == 4 ? 116.0f : 55.0f));
+            masterPositions[index].x - 26.0f, masterPositions[index].y, 52.0f, 14.0f));
+        masterControls_[index].setBounds(index == 4
+            ? designRect(getWidth(), getHeight(), 1216.0f, 600.0f, 50.0f, 116.0f)
+            : designRect(getWidth(), getHeight(), masterPositions[index].x - 21.0f,
+                         masterPositions[index].y + 19.0f, 42.0f, 42.0f));
     }
 
-    barsPatterns_.setBounds(designRect(getWidth(), getHeight(), 1155.0f, 64.0f, 94.0f, 22.0f));
-    addItem_.setBounds(designRect(getWidth(), getHeight(), 1148.0f, 456.0f, 114.0f, 46.0f));
+    barsPatterns_.setBounds(designRect(getWidth(), getHeight(), 1185.0f, 64.0f, 60.0f, 22.0f));
+    auto addBounds = designRect(getWidth(), getHeight(), 1161.0f, 456.0f, 99.0f,
+                                shortPatternList() ? 62.0f : 46.0f);
+    const auto& arrangementState = processor_.projectState();
+    if (arrangementState.ui.patternMode && maximumArrangementScroll() == 0.0f)
+    {
+        // The tutorial's short Pattern lists place + immediately after the cards.
+        // Keep it below the viewport when the complete list and tile do not fit.
+        const auto nextY = arrangementPadBounds().getY()
+            + static_cast<int>(arrangementState.patterns.size()) * arrangementItemHeight();
+        if (nextY + addBounds.getHeight() <= arrangementPadBounds().getBottom())
+            addBounds.setY(nextY);
+    }
+    addItem_.setBounds(addBounds);
     duplicateItem_.setVisible(false);
     removeItem_.setVisible(false);
+    updateEffectDragValue();
 }
 
-std::optional<BeatScholarLinuxEditor::BeatHit> BeatScholarLinuxEditor::beatAt(juce::Point<int> point) const
+std::optional<BeatScholarLinuxEditor::BeatHit> BeatScholarLinuxEditor::beatAt(juce::Point<int> point,
+                                                                         bool insidePieOnly) const
 {
     const auto area = patternBounds();
     if (!area.contains(point))
@@ -1636,9 +1941,16 @@ std::optional<BeatScholarLinuxEditor::BeatHit> BeatScholarLinuxEditor::beatAt(ju
                           + (found->start + found->length * 0.5f - horizontalScroll_) * quarterWidth;
     const float centreY = area.getY()
                           + (static_cast<float>(lane) - verticalScroll_ + 0.5f) * cellHeight;
+    if (insidePieOnly)
+    {
+        const float radius = std::max(3.0f,
+            std::min(std::min(1.0f, found->length) * quarterWidth, cellHeight) * 0.36f);
+        if (point.toFloat().getDistanceFrom({ centreX, centreY }) > radius)
+            return std::nullopt;
+    }
     float angle = std::atan2(static_cast<float>(point.y) - centreY,
                              static_cast<float>(point.x) - centreX)
-                  + juce::MathConstants<float>::halfPi;
+                  - juce::MathConstants<float>::halfPi;
     if (angle < 0.0f)
         angle += juce::MathConstants<float>::twoPi;
     const auto slices = pattern.lanes[lane].beats[beat].slices.size();
@@ -1705,6 +2017,34 @@ std::optional<std::size_t> BeatScholarLinuxEditor::barAt(juce::Point<int> point,
     return std::nullopt;
 }
 
+std::optional<bool> BeatScholarLinuxEditor::barMeterDenominatorAt(juce::Point<int> point,
+                                                                 std::size_t bar) const
+{
+    if (arrangementPadBounds().contains(point))
+    {
+        if (arrangementActionAt(point, bar) >= 0) return std::nullopt;
+        return point.x >= arrangementItemBounds(bar).getCentreX();
+    }
+    const auto& state = processor_.projectState();
+    const auto& pattern = state.patterns[state.activePattern];
+    const auto header = barHeaderBounds();
+    const float quarterWidth = static_cast<float>(header.getWidth())
+        / static_cast<float>(pattern.durationInQuarterNotes()) * horizontalZoom_;
+    float barStart = 0.0f;
+    for (std::size_t index = 0; index < bar; ++index)
+        barStart += static_cast<float>(pattern.bars[index].durationInQuarterNotes());
+    const float barLeft = header.getX() + (barStart - horizontalScroll_) * quarterWidth;
+    const float barWidth = static_cast<float>(pattern.bars[bar].durationInQuarterNotes()) * quarterWidth;
+    const float scale = designScale(getWidth(), getHeight());
+    const float drawnWidth = barWidth - scale;
+    const auto actions = barHeaderActions({ barLeft, static_cast<float>(header.getY()),
+                                           drawnWidth, static_cast<float>(header.getHeight()) }, scale);
+    if (actions.contains(point.toFloat()))
+        return std::nullopt;
+    return drawnWidth < 110.0f * scale ? point.y >= header.getCentreY()
+                                     : point.x >= barLeft + barWidth * 0.5f;
+}
+
 std::optional<std::size_t> BeatScholarLinuxEditor::patternAt(juce::Point<int> point) const
 {
     const auto area = arrangementPadBounds();
@@ -1713,7 +2053,8 @@ std::optional<std::size_t> BeatScholarLinuxEditor::patternAt(juce::Point<int> po
         return std::nullopt;
     const auto index = static_cast<std::size_t>(arrangementScroll_
         + static_cast<float>(point.y - area.getY()) / arrangementItemHeight());
-    return index < state.patterns.size() ? std::optional<std::size_t>(index) : std::nullopt;
+    return index < state.patterns.size() && arrangementItemBounds(index).contains(point)
+        ? std::optional<std::size_t>(index) : std::nullopt;
 }
 
 juce::File BeatScholarLinuxEditor::writePatternMidi(std::size_t patternIndex,
@@ -1728,8 +2069,10 @@ juce::File BeatScholarLinuxEditor::writePatternMidi(std::size_t patternIndex,
     const double endTick = std::round(pattern.durationInQuarterNotes() * ticksPerQuarter);
     juce::MidiMessageSequence track;
     track.addEvent(juce::MidiMessage::textMetaEvent(3, juce::String(pattern.name)));
+    const double exportBpm = processor_.wrapperType == juce::AudioProcessor::wrapperType_Standalone
+        ? state.global.beatsPerMinute : processor_.effectiveBpm();
     auto tempo = juce::MidiMessage::tempoMetaEvent(static_cast<int>(
-        std::llround(60000000.0 / std::max(1.0, state.global.beatsPerMinute))));
+        std::llround(60000000.0 / std::max(1.0, exportBpm))));
     tempo.setTimeStamp(0.0);
     track.addEvent(tempo);
     double barTick = 0.0;
@@ -1740,14 +2083,25 @@ juce::File BeatScholarLinuxEditor::writePatternMidi(std::size_t patternIndex,
         track.addEvent(meter);
         barTick += static_cast<double>(bar.numerator) * 4.0 / bar.denominator * ticksPerQuarter;
     }
-    const auto noteLength = static_cast<double>(ticksPerQuarter / 8);
-    for (const auto& event : events)
+    // Match live note lifetimes: a retrigger releases the previous same-note hit.
+    // Explicitly bound each release so JUCE cannot leave stale note-offs behind.
+    std::array<std::int64_t, 128> nextOn;
+    nextOn.fill(static_cast<std::int64_t>(endTick));
+    std::vector<std::int64_t> noteOffTicks(events.size());
+    for (std::size_t index = events.size(); index-- > 0;)
     {
+        const auto& event = events[index];
+        noteOffTicks[index] = std::min(event.tick + event.gateTicks, nextOn[event.note]);
+        nextOn[event.note] = event.tick;
+    }
+    for (std::size_t index = 0; index < events.size(); ++index)
+    {
+        const auto& event = events[index];
         auto on = juce::MidiMessage::noteOn(1, event.note, event.velocity);
         on.setTimeStamp(static_cast<double>(event.tick));
         track.addEvent(on);
         auto off = juce::MidiMessage::noteOff(1, event.note);
-        off.setTimeStamp(std::min(endTick, static_cast<double>(event.tick) + noteLength));
+        off.setTimeStamp(static_cast<double>(noteOffTicks[index]));
         track.addEvent(off);
     }
     track.updateMatchedPairs();
@@ -1782,10 +2136,34 @@ void BeatScholarLinuxEditor::mouseDoubleClick(const juce::MouseEvent& event)
     auto* slider = dynamic_cast<juce::Slider*>(event.eventComponent);
     if (slider == nullptr)
         slider = dynamic_cast<juce::Slider*>(getComponentAt(position));
-    if (slider == nullptr || !slider->isVisible()) return;
-    numericEntryControl_ = slider;
-    numericEntry_.setText(juce::String(slider->getValue(), slider->getNumDecimalPlacesToDisplay()), false);
-    const auto centre = slider->getBounds().getCentre();
+    refreshRestoredState();
+    auto centre = position;
+    if (slider != nullptr && !slider->isEnabled()) return;
+    if (slider != nullptr && slider->isVisible())
+    {
+        numericEntryBar_.reset();
+        numericEntryControl_ = slider;
+        numericEntry_.setTitle("Numeric value");
+        numericEntry_.setText(slider->textFromValueFunction
+                                  ? slider->textFromValueFunction(slider->getValue())
+                                  : juce::String(slider->getValue(), slider->getNumDecimalPlacesToDisplay()), false);
+        centre = slider->getBounds().getCentre();
+    }
+    else
+    {
+        const auto bar = barAt(position, false).has_value() ? barAt(position, false) : barAt(position, true);
+        if (!bar) return;
+        const auto denominator = barMeterDenominatorAt(position, *bar);
+        if (!denominator) return;
+        cancelPatternInteraction();
+        const auto& state = processor_.projectState();
+        const auto& meter = state.patterns[state.activePattern].bars[*bar];
+        numericEntryControl_ = nullptr;
+        numericEntryBar_ = BarMeterEntry { state.activePattern, *bar, *denominator,
+                                          processor_.restoredStateRevision() };
+        numericEntry_.setTitle(*denominator ? "Bar note value" : "Bar beat count");
+        numericEntry_.setText(juce::String(*denominator ? meter.denominator : meter.numerator), false);
+    }
     numericEntry_.setBounds(std::clamp(centre.x - 48, 0, std::max(0, getWidth() - 96)),
                             std::clamp(centre.y - 13, 0, std::max(0, getHeight() - 26)), 96, 26);
     numericEntry_.setVisible(true);
@@ -1794,36 +2172,71 @@ void BeatScholarLinuxEditor::mouseDoubleClick(const juce::MouseEvent& event)
     numericEntry_.selectAll();
 }
 
+void BeatScholarLinuxEditor::mouseEnter(const juce::MouseEvent& event)
+{
+    mouseMove(event);
+}
+
+void BeatScholarLinuxEditor::mouseMove(const juce::MouseEvent& event)
+{
+    beatHoverPosition_ = event.getEventRelativeTo(this).getPosition();
+    if (beatClipboard_ && juce::KeyPress::isKeyCurrentlyDown('v'))
+        repaint();
+}
+
+void BeatScholarLinuxEditor::mouseExit(const juce::MouseEvent&)
+{
+    beatHoverPosition_.reset();
+    if (beatClipboard_)
+        repaint();
+}
+
 void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
 {
     refreshRestoredState();
     cancelPatternInteraction();
     const auto position = event.getEventRelativeTo(this).getPosition();
+    beatHoverPosition_ = position;
     clampView();
     if (!event.mods.isPopupMenu())
     {
-        const bool horizontalMinus = designRect(getWidth(), getHeight(), 1082.0f, 502.0f, 18.0f, 18.0f).contains(position);
-        const bool horizontalPlus = designRect(getWidth(), getHeight(), 1112.0f, 502.0f, 18.0f, 18.0f).contains(position);
-        const bool verticalMinus = designRect(getWidth(), getHeight(), 1132.0f, 446.0f, 18.0f, 16.0f).contains(position);
-        const bool verticalPlus = designRect(getWidth(), getHeight(), 1132.0f, 466.0f, 18.0f, 16.0f).contains(position);
-        if (horizontalMinus || horizontalPlus || verticalMinus || verticalPlus)
+        if (processor_.projectState().ui.patternMode
+            && designRect(getWidth(), getHeight(), 1161.0f, 88.0f, 99.0f, 18.0f).contains(position))
         {
-            if (horizontalMinus || horizontalPlus)
-                horizontalZoom_ = std::clamp(horizontalZoom_ * (horizontalPlus ? 2.0f : 0.5f), 1.0f, 8.0f);
-            else
-                verticalZoom_ = std::clamp(verticalZoom_ * (verticalPlus ? 2.0f : 0.5f), 1.0f, 8.0f);
-            clampView();
-            repaint();
+            showPatternQuantizationMenu();
             return;
         }
-        if (designRect(getWidth(), getHeight(), 62.0f, 502.0f, 1008.0f, 18.0f).contains(position))
-            draggingScrollRail_ = 1;
-        else if (designRect(getWidth(), getHeight(), 1132.0f, 66.0f, 14.0f, 378.0f).contains(position))
-            draggingScrollRail_ = 2;
-        if (draggingScrollRail_ != 0)
+        const float scale = designScale(getWidth(), getHeight());
+        for (const int axis : { 1, 2 })
         {
-            moveScrollRail(position);
-            return;
+            const bool increase = zoomButtonBounds(axis, true).contains(position);
+            if (increase || zoomButtonBounds(axis, false).contains(position))
+            {
+                auto& zoom = axis == 1 ? horizontalZoom_ : verticalZoom_;
+                zoom = std::clamp(zoom * (increase ? 2.0f : 0.5f), 1.0f, 8.0f);
+                clampView();
+                repaint();
+                return;
+            }
+            if (zoomRailBounds(axis).expanded(5.0f * scale).contains(position.toFloat()))
+            {
+                draggingZoomRail_ = axis;
+                moveZoomRail(position);
+                return;
+            }
+            if (scrollRailBounds(axis).expanded(4.0f * scale).contains(position.toFloat()))
+            {
+                draggingScrollRail_ = axis;
+                const auto thumb = scrollThumbBounds(axis);
+                const float coordinate = axis == 1 ? position.x : position.y;
+                const float start = axis == 1 ? thumb.getX() : thumb.getY();
+                const float length = axis == 1 ? thumb.getWidth() : thumb.getHeight();
+                // A grab inside the thumb keeps its offset; track clicks centre it.
+                scrollRailGrabOffset_ = coordinate >= start && coordinate <= start + length
+                    ? coordinate - start : length * 0.5f;
+                moveScrollRail(position);
+                return;
+            }
         }
     }
     if (designRect(getWidth(), getHeight(), 775.0f, 14.0f, 31.0f, 34.0f).contains(position))
@@ -1849,25 +2262,33 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
             swing_.setValue(0.0);
             return;
         }
-        if (bpm_.isVisible() && bpm_.getBounds().contains(position))
+        if (bpm_.isEnabled() && bpm_.getBounds().contains(position))
         {
             bpm_.setValue(120.0);
             return;
         }
         if (defaultVelocity_.getBounds().contains(position))
         {
-            defaultVelocity_.setValue(80.0);
+            auto& velocity = processor_.projectState().global.defaultVelocity;
+            const auto defaultVelocity = bsl::GlobalState{}.defaultVelocity;
+            if (velocity != defaultVelocity)
+            {
+                checkpointModuleControl();
+                velocity = defaultVelocity;
+            }
+            // The MIDI display rounds to 102; reset retains the exact model default.
+            defaultVelocity_.setValue(defaultVelocity * 127.0, juce::dontSendNotification);
             return;
         }
         std::array<double, 9> defaults {};
         if (module_ == Module::soundCharacter)
             defaults = { 0, 0, 0, 0, 0, 1, 0, 1, 0 };
         else if (module_ == Module::soundEffects)
-            defaults = { 0, 1, 0, 0, 0, 0, 0, 0, 0 };
+            defaults = { 0, 1, bsl::defaultFilterResonance, 0, 0, 0, 0, 0, 0 };
         else if (module_ == Module::randomizer)
             defaults = { 0.5, 0.5, 0.4, 1, 1, 1, 1, 0, 0 };
         else
-            defaults = { 1, 0, 0, 0, 1, 0, 0, 0, 0 };
+            defaults = { 1, bsl::defaultFilterResonance, 0, 0, 1, 0, 0, 0, 0 };
         for (std::size_t index = 0; index < soundControls_.size(); ++index)
             if (soundControls_[index].isVisible()
                 && soundControls_[index].getBounds().contains(position))
@@ -1875,7 +2296,8 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
                 soundControls_[index].setValue(defaults[index], juce::sendNotificationSync);
                 return;
             }
-        static constexpr std::array<double, 10> effectDefaults { 0, 1, 0, 0, 0, 0, 0, 0, 0, 0.5 };
+        static constexpr std::array<double, 10> effectDefaults {
+            0, 1, bsl::defaultFilterResonance, 0, 0, 0, 0, 0, 0, 0.5 };
         for (std::size_t index = 0; index < effectControls_.size(); ++index)
             if (effectControls_[index].isVisible()
                 && effectControls_[index].getBounds().contains(position))
@@ -1883,7 +2305,7 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
                 effectControls_[index].setValue(effectDefaults[index], juce::sendNotificationSync);
                 return;
             }
-        static constexpr std::array<double, 5> masterDefaults { 1, 0, 0, 0, 1 };
+        static constexpr std::array<double, 5> masterDefaults { 1, bsl::defaultFilterResonance, 0, 0, 1 };
         for (std::size_t index = 0; index < masterControls_.size(); ++index)
             if (masterControls_[index].getBounds().contains(position))
             {
@@ -1919,11 +2341,12 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
             for (auto& beat : state.patterns[state.activePattern].lanes[*lane].beats)
                 if (left || right) beat.rotate(left ? -1 : 1); else beat.mirror();
         }
-        else if (brush_ == Brush::randomizer || juce::KeyPress::isKeyCurrentlyDown('/'))
+        else if (!event.mods.isAltDown()
+                 && (brush_ == Brush::randomizer || juce::KeyPress::isKeyCurrentlyDown('/')))
             processor_.projectEditor().randomizeLane(
                 state.activePattern, *lane,
                 static_cast<std::uint32_t>(juce::Time::getMillisecondCounter()));
-        else if (brush_ == Brush::slicer)
+        else if (brush_ == Brush::slicer && !event.mods.isAltDown())
         {
             processor_.projectEditor().checkpoint();
             auto& beats = state.patterns[state.activePattern].lanes[*lane].beats;
@@ -1932,23 +2355,16 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
         }
         else
         {
-            const auto area = patternBounds();
-            const auto laneCount = state.patterns[state.activePattern].lanes.size();
-            const float laneHeight = static_cast<float>(area.getHeight())
-                                     / static_cast<float>(laneCount) * verticalZoom_;
-            const float laneTop = static_cast<float>(area.getY())
-                                  + (static_cast<float>(*lane) - verticalScroll_) * laneHeight;
-            const int action = std::clamp(static_cast<int>(
-                (static_cast<float>(position.y) - laneTop) / std::max(1.0f, laneHeight) * 4.0f), 0, 3);
+            int action = -1;
+            for (int control = 0; control < 4; ++control)
+                if (laneControlBounds(*lane, control).contains(event.getEventRelativeTo(this).position))
+                    action = control;
+            if (action < 0)
+                return;
             if (action <= 1)
             {
-                processor_.projectEditor().checkpoint();
                 auto& laneState = state.patterns[state.activePattern].lanes[*lane];
-                if (action == 0)
-                    laneState.solo = !laneState.solo;
-                else
-                    laneState.muted = !laneState.muted;
-                processor_.markProjectDirty();
+                resetOrToggle(action == 0 ? laneState.solo : laneState.muted, false, event.mods);
             }
             else if (action == 2)
                 processor_.projectEditor().removeLane(state.activePattern, *lane);
@@ -1983,27 +2399,9 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
             start += static_cast<std::size_t>(pattern.bars[index].numerator);
         const auto count = static_cast<std::size_t>(pattern.bars[*bar].numerator);
         if (juce::KeyPress::isKeyCurrentlyDown('c'))
-        {
-            BarClipboard copy;
-            copy.meter = pattern.bars[*bar];
-            for (const auto& lane : pattern.lanes)
-                copy.lanes.emplace_back(lane.beats.begin() + static_cast<std::ptrdiff_t>(start),
-                                        lane.beats.begin() + static_cast<std::ptrdiff_t>(start + count));
-            barClipboard_ = std::move(copy);
-        }
+            copyBar(*bar);
         else if (juce::KeyPress::isKeyCurrentlyDown('v') && barClipboard_)
-        {
-            processor_.projectEditor().setBarMeter(state.activePattern, *bar,
-                                                   barClipboard_->meter.numerator,
-                                                   barClipboard_->meter.denominator);
-            auto& updated = state.patterns[state.activePattern];
-            start = 0;
-            for (std::size_t index = 0; index < *bar; ++index)
-                start += static_cast<std::size_t>(updated.bars[index].numerator);
-            for (std::size_t lane = 0; lane < std::min(updated.lanes.size(), barClipboard_->lanes.size()); ++lane)
-                std::copy(barClipboard_->lanes[lane].begin(), barClipboard_->lanes[lane].end(),
-                          updated.lanes[lane].beats.begin() + static_cast<std::ptrdiff_t>(start));
-        }
+            pasteBar(*bar);
         else if (event.mods.isShiftDown())
         {
             processor_.projectEditor().checkpoint();
@@ -2013,7 +2411,7 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
         }
         else if (event.mods.isPopupMenu())
             showBarMenu(*bar);
-        else if (barHeaderBounds().contains(position))
+        else
         {
             draggingBarMeter_ = true;
             barMeterDragChanged_ = false;
@@ -2021,33 +2419,38 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
             dragStartY_ = position.y;
             dragStartBarNumerator_ = pattern.bars[*bar].numerator;
             dragStartBarDenominator_ = pattern.bars[*bar].denominator;
-            const auto header = barHeaderBounds();
-            const float quarterWidth = static_cast<float>(header.getWidth())
-                                       / static_cast<float>(pattern.durationInQuarterNotes()) * horizontalZoom_;
-            float barStart = 0.0f;
-            for (std::size_t index = 0; index < *bar; ++index)
-                barStart += static_cast<float>(pattern.bars[index].numerator) * 4.0f / pattern.bars[index].denominator;
-            const float barLeft = static_cast<float>(header.getX())
-                                  + (barStart - horizontalScroll_) * quarterWidth;
-            const float barWidth = static_cast<float>(count) * 4.0f / pattern.bars[*bar].denominator * quarterWidth;
-            const float scale = designScale(getWidth(), getHeight());
-            const float drawnWidth = barWidth - scale;
-            const float actionsWidth = std::min(drawnWidth * 0.30f, 95.0f * scale);
-            const float actionsLeft = barLeft + drawnWidth - actionsWidth;
-            if (drawnWidth >= 140.0f * scale && position.x >= actionsLeft)
+            if (arrangementPadBounds().contains(position))
+                draggingBarDenominator_ = position.x >= arrangementItemBounds(*bar).getCentreX();
+            else
             {
-                draggingBarMeter_ = false;
-                lastHit_.reset();
-                const int action = std::clamp(static_cast<int>((position.x - actionsLeft) / (actionsWidth / 3.0f)), 0, 2);
-                if (action == 0) processor_.projectEditor().duplicateBar(state.activePattern, *bar);
-                else if (action == 1) processor_.projectEditor().addBar(state.activePattern, bsl::BarState::make(4, 4));
-                else processor_.projectEditor().removeBar(state.activePattern, *bar);
-                updateControlsFromState();
-                return;
+                const auto header = barHeaderBounds();
+                const float quarterWidth = static_cast<float>(header.getWidth())
+                                           / static_cast<float>(pattern.durationInQuarterNotes()) * horizontalZoom_;
+                float barStart = 0.0f;
+                for (std::size_t index = 0; index < *bar; ++index)
+                    barStart += static_cast<float>(pattern.bars[index].numerator) * 4.0f / pattern.bars[index].denominator;
+                const float barLeft = static_cast<float>(header.getX())
+                                      + (barStart - horizontalScroll_) * quarterWidth;
+                const float barWidth = static_cast<float>(count) * 4.0f / pattern.bars[*bar].denominator * quarterWidth;
+                const float scale = designScale(getWidth(), getHeight());
+                const float drawnWidth = barWidth - scale;
+                const auto actions = barHeaderActions({ barLeft, static_cast<float>(header.getY()),
+                                                       drawnWidth, static_cast<float>(header.getHeight()) }, scale);
+                if (actions.contains(position.toFloat()))
+                {
+                    draggingBarMeter_ = false;
+                    lastHit_.reset();
+                    const int action = std::clamp(static_cast<int>((position.x - actions.getX()) / (actions.getWidth() / 3.0f)), 0, 2);
+                    if (action == 0) processor_.projectEditor().duplicateBar(state.activePattern, *bar);
+                    else if (action == 1) processor_.projectEditor().addBar(state.activePattern, bsl::BarState::make(4, 4));
+                    else processor_.projectEditor().removeBar(state.activePattern, *bar);
+                    updateControlsFromState();
+                    return;
+                }
+                draggingBarDenominator_ = drawnWidth < 110.0f * scale
+                    ? position.y >= header.getCentreY()
+                    : static_cast<float>(position.x) >= barLeft + barWidth * 0.5f;
             }
-            draggingBarDenominator_ = drawnWidth < 110.0f * scale
-                ? position.y >= header.getCentreY()
-                : static_cast<float>(position.x) >= barLeft + barWidth * 0.5f;
         }
         repaint();
         return;
@@ -2069,29 +2472,31 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
             }
         }
         if (juce::KeyPress::isKeyCurrentlyDown('c'))
-            patternClipboard_ = state.patterns[*pattern];
+            copyPattern(*pattern);
         else if (juce::KeyPress::isKeyCurrentlyDown('v') && patternClipboard_)
+            pastePattern(*pattern);
+        else if (event.mods.isShiftDown())
         {
-            processor_.projectEditor().checkpoint();
-            const auto name = state.patterns[*pattern].name;
-            const auto note = state.patterns[*pattern].triggerNote;
-            state.patterns[*pattern] = *patternClipboard_;
-            state.patterns[*pattern].name = name;
-            state.patterns[*pattern].triggerNote = note;
+            midiDragPending_ = true;
+            midiDragPattern_ = *pattern;
         }
         else
         {
-            state.activePattern = *pattern;
-            processor_.markProjectDirty();
-            if (event.mods.isShiftDown())
-            {
-                midiDragPending_ = true;
-                midiDragPattern_ = *pattern;
-            }
-            else if (event.mods.isPopupMenu())
+            processor_.selectPatternFromUi(*pattern);
+            if (event.mods.isPopupMenu())
                 showPatternMenu(*pattern);
         }
         repaint();
+        return;
+    }
+    // Command on a pie edits its subdivision; the blank grid is a grab surface.
+    if (event.mods.isCommandDown() && !event.mods.isPopupMenu()
+        && patternBounds().contains(position) && !beatAt(position, true))
+    {
+        draggingGrid_ = true;
+        gridDragStart_ = position;
+        gridDragStartHorizontal_ = horizontalScroll_;
+        gridDragStartVertical_ = verticalScroll_;
         return;
     }
     if (const auto hit = beatAt(position))
@@ -2115,6 +2520,13 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
                 else
                     beat.mirror();
             }
+            else if (juce::KeyPress::isKeyCurrentlyDown('c'))
+                beatClipboard_ = beat;
+            else if (juce::KeyPress::isKeyCurrentlyDown('v'))
+            {
+                draggingBeatPaste_ = true;
+                pasteBeat(*hit);
+            }
             else if (event.mods.isCommandDown())
             {
                 beatDragCheckpointed_ = false;
@@ -2132,6 +2544,11 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
                 dragStartY_ = position.y;
                 dragStartVelocity_ = slice.velocity;
             }
+            else if (brush_ == Brush::randomizer || juce::KeyPress::isKeyCurrentlyDown('/'))
+            {
+                draggingRandomizer_ = true;
+                randomizeBeatInStroke(*hit);
+            }
             else
                 applyBrush(*hit, event.mods);
         }
@@ -2143,9 +2560,57 @@ void BeatScholarLinuxEditor::mouseDrag(const juce::MouseEvent& event)
 {
     refreshRestoredState();
     const auto position = event.getEventRelativeTo(this).getPosition();
+    beatHoverPosition_ = position;
+    if (draggingBeatPaste_)
+    {
+        if (!juce::KeyPress::isKeyCurrentlyDown('v') || juce::KeyPress::isKeyCurrentlyDown('c'))
+            draggingBeatPaste_ = false;
+        else if (const auto hit = beatAt(position))
+        {
+            lastHit_ = hit;
+            pasteBeat(*hit);
+        }
+        repaint();
+        return;
+    }
+    if (draggingRandomizer_)
+    {
+        if (event.mods.isShiftDown() || event.mods.isAltDown() || event.mods.isCommandDown()
+            || !(brush_ == Brush::randomizer || juce::KeyPress::isKeyCurrentlyDown('/')))
+            draggingRandomizer_ = false;
+        else if (const auto hit = beatAt(position))
+        {
+            lastHit_ = hit;
+            randomizeBeatInStroke(*hit);
+        }
+        repaint();
+        return;
+    }
+    if (draggingZoomRail_ != 0)
+    {
+        moveZoomRail(position);
+        return;
+    }
     if (draggingScrollRail_ != 0)
     {
         moveScrollRail(position);
+        return;
+    }
+    if (draggingGrid_)
+    {
+        const auto area = patternBounds();
+        const auto& state = processor_.projectState();
+        const auto& pattern = state.patterns[state.activePattern];
+        const float quarterWidth = static_cast<float>(area.getWidth())
+            / static_cast<float>(pattern.durationInQuarterNotes()) * horizontalZoom_;
+        const float cellHeight = static_cast<float>(area.getHeight())
+            / static_cast<float>(pattern.lanes.size()) * verticalZoom_;
+        horizontalScroll_ = gridDragStartHorizontal_
+            - static_cast<float>(position.x - gridDragStart_.x) / quarterWidth;
+        verticalScroll_ = gridDragStartVertical_
+            - static_cast<float>(position.y - gridDragStart_.y) / cellHeight;
+        clampView();
+        repaint();
         return;
     }
     if (draggingBarMeter_)
@@ -2249,6 +2714,11 @@ void BeatScholarLinuxEditor::mouseDrag(const juce::MouseEvent& event)
 void BeatScholarLinuxEditor::mouseUp(const juce::MouseEvent&)
 {
     draggingScrollRail_ = 0;
+    draggingZoomRail_ = 0;
+    draggingGrid_ = false;
+    draggingBeatPaste_ = false;
+    draggingRandomizer_ = false;
+    randomizedBeats_.clear();
     draggingVelocity_ = false;
     draggingSubdivision_ = false;
     beatDragCheckpointed_ = false;
@@ -2339,21 +2809,52 @@ void BeatScholarLinuxEditor::showSubdivisionMenu()
     });
 }
 
+void BeatScholarLinuxEditor::pasteBeat(const BeatHit& hit)
+{
+    if (!beatClipboard_)
+        return;
+    auto& state = processor_.projectState();
+    auto& beat = state.patterns[state.activePattern].lanes[hit.lane].beats[hit.beat];
+    if (beat == *beatClipboard_)
+        return;
+    if (!beatDragCheckpointed_)
+    {
+        processor_.projectEditor().checkpoint();
+        beatDragCheckpointed_ = true;
+    }
+    beat = *beatClipboard_;
+    processor_.markProjectDirty();
+}
+
+void BeatScholarLinuxEditor::randomizeBeatInStroke(const BeatHit& hit)
+{
+    // Subdivision may change while painting; membership belongs to the whole pie.
+    if (std::any_of(randomizedBeats_.begin(), randomizedBeats_.end(), [&](const auto& previous) {
+            return previous.lane == hit.lane && previous.beat == hit.beat;
+        }))
+        return;
+    randomizedBeats_.push_back(hit);
+    auto& state = processor_.projectState();
+    auto& beat = state.patterns[state.activePattern].lanes[hit.lane].beats[hit.beat];
+    auto changed = beat;
+    bsl::Randomizer::apply(changed, state.randomizer,
+                          static_cast<std::uint32_t>(juce::Time::getMillisecondCounter()),
+                          state.global.defaultVelocity);
+    if (changed == beat)
+        return;
+    if (!beatDragCheckpointed_)
+    {
+        processor_.projectEditor().checkpoint();
+        beatDragCheckpointed_ = true;
+    }
+    beat = std::move(changed);
+    processor_.markProjectDirty();
+}
+
 void BeatScholarLinuxEditor::applyBrush(const BeatHit& hit, const juce::ModifierKeys& modifiers)
 {
     auto& state = processor_.projectState();
     auto& beat = state.patterns[state.activePattern].lanes[hit.lane].beats[hit.beat];
-    if (juce::KeyPress::isKeyCurrentlyDown('c'))
-    {
-        beatClipboard_ = beat;
-        return;
-    }
-    if (juce::KeyPress::isKeyCurrentlyDown('v') && beatClipboard_)
-    {
-        processor_.projectEditor().checkpoint();
-        beat = *beatClipboard_;
-        return;
-    }
     processor_.projectEditor().checkpoint();
     if (modifiers.isShiftDown())
     {
@@ -2367,13 +2868,6 @@ void BeatScholarLinuxEditor::applyBrush(const BeatHit& hit, const juce::Modifier
                 enableSlice(slice, static_cast<std::uint8_t>(state.ui.selectedPad),
                             state.global.defaultVelocity);
         }
-        return;
-    }
-    if (brush_ == Brush::randomizer || juce::KeyPress::isKeyCurrentlyDown('/'))
-    {
-        bsl::Randomizer::apply(beat, state.randomizer,
-                               static_cast<std::uint32_t>(juce::Time::getMillisecondCounter()),
-                               state.global.defaultVelocity);
         return;
     }
     if (brush_ == Brush::slicer)
@@ -2390,12 +2884,22 @@ void BeatScholarLinuxEditor::applyBrush(const BeatHit& hit, const juce::Modifier
 void BeatScholarLinuxEditor::showBeatMenu(const BeatHit& hit)
 {
     juce::PopupMenu menu;
-    menu.addItem(1, "Fill / empty beat");
-    menu.addItem(2, "Copy beat");
-    menu.addItem(3, "Paste beat", beatClipboard_.has_value());
+    addShortcutMenuItem(menu, 2, "Copy", "C");
+    addShortcutMenuItem(menu, 3, "Paste", "V", beatClipboard_.has_value());
+    addShortcutMenuItem(menu, 4, "Clear", "Shift");
+    addShortcutMenuItem(menu, 1, "Fill", "Shift");
+    addShortcutMenuItem(menu, 5, "Mirror", "Down Arrow");
+    addShortcutMenuItem(menu, 6, "Shift Right", "Right Arrow");
+    addShortcutMenuItem(menu, 7, "Shift Left", "Left Arrow");
     menu.addSeparator();
-    for (int slices = 1; slices <= 9; ++slices)
-        menu.addItem(100 + slices, "Slice into " + juce::String(slices));
+    for (const auto range : {std::pair{1, 9}, std::pair{10, 19},
+                             std::pair{20, 29}, std::pair{30, 45}})
+    {
+        juce::PopupMenu subdivisions;
+        for (int slices = range.first; slices <= range.second; ++slices)
+            subdivisions.addItem(100 + slices, juce::String(slices));
+        menu.addSubMenu("Slice " + juce::String(range.first) + "-" + juce::String(range.second), subdivisions);
+    }
     menu.setLookAndFeel(&lookAndFeel_);
     menu.showMenuAsync({}, [safe = juce::Component::SafePointer<BeatScholarLinuxEditor>(this), revision = processor_.restoredStateRevision(), openedPattern = processor_.projectState().activePattern, hit](int result) {
         if (safe == nullptr || result == 0
@@ -2414,13 +2918,11 @@ void BeatScholarLinuxEditor::showBeatMenu(const BeatHit& hit)
             return;
         }
         safe->processor_.projectEditor().checkpoint();
-        if (result == 1)
+        if (result == 1 || result == 4)
         {
-            const bool enable = std::any_of(beat.slices.begin(), beat.slices.end(),
-                                           [](const auto& slice) { return !slice.enabled; });
             for (auto& slice : beat.slices)
             {
-                if (enable)
+                if (result == 1)
                     enableSlice(slice, slice.padIndex, state.global.defaultVelocity);
                 else
                     slice.enabled = false;
@@ -2428,7 +2930,11 @@ void BeatScholarLinuxEditor::showBeatMenu(const BeatHit& hit)
         }
         else if (result == 3 && safe->beatClipboard_)
             beat = *safe->beatClipboard_;
-        else if (result >= 101 && result <= 109)
+        else if (result == 5)
+            beat.mirror();
+        else if (result == 6 || result == 7)
+            beat.rotate(result == 6 ? 1 : -1);
+        else if (result >= 101 && result <= 145)
             beat.setSubdivision(static_cast<std::size_t>(result - 100));
         safe->repaint();
     });
@@ -2452,10 +2958,24 @@ void BeatScholarLinuxEditor::updateControlsFromState()
     configureModuleControls();
 }
 
+void BeatScholarLinuxEditor::cancelNumericEntry()
+{
+    numericEntryControl_ = nullptr;
+    numericEntryBar_.reset();
+    numericEntry_.setVisible(false);
+}
+
 void BeatScholarLinuxEditor::cancelPatternInteraction()
 {
+    if (numericEntryBar_) cancelNumericEntry();
     draggingScrollRail_ = 0;
+    draggingZoomRail_ = 0;
+    draggingGrid_ = false;
     lastHit_.reset();
+    beatHoverPosition_.reset();
+    draggingBeatPaste_ = false;
+    draggingRandomizer_ = false;
+    randomizedBeats_.clear();
     draggingVelocity_ = false;
     draggingSubdivision_ = false;
     beatDragCheckpointed_ = false;
@@ -2472,7 +2992,12 @@ void BeatScholarLinuxEditor::refreshRestoredState(juce::Slider* editedControl)
     const double editedValue = editedControl != nullptr ? editedControl->getValue() : 0.0;
     observedStateRevision_ = revision;
     cancelPatternInteraction();
-    momentaryBrushActive_ = false;
+    if (momentaryBrushActive_)
+    {
+        brush_ = momentaryBrushPrevious_;
+        module_ = momentaryModulePrevious_;
+        momentaryBrushActive_ = false;
+    }
     if (processor_.projectState().ui.randomizerVisible)
     {
         module_ = Module::randomizer;
@@ -2483,13 +3008,46 @@ void BeatScholarLinuxEditor::refreshRestoredState(juce::Slider* editedControl)
         if (module_ == Module::randomizer) module_ = Module::soundCharacter;
         if (brush_ == Brush::randomizer) brush_ = Brush::drum;
     }
+    // The loaded panel becomes the base; physically held shortcuts still apply.
+    keyStateChanged(false);
     configureModuleControls();
     if (editedControl != nullptr)
         editedControl->setValue(editedValue, juce::dontSendNotification);
 }
 
+void BeatScholarLinuxEditor::syncBrushButtons()
+{
+    const auto selectedPad = std::min(processor_.projectState().ui.selectedPad, bsl::padCount - 1);
+    drumBrush_.setColour(juce::TextButton::buttonOnColourId, padColours_[selectedPad]);
+    drumBrush_.setToggleState(brush_ == Brush::drum, juce::dontSendNotification);
+    slicerBrush_.setToggleState(brush_ == Brush::slicer, juce::dontSendNotification);
+    velocityBrush_.setToggleState(brush_ == Brush::velocity, juce::dontSendNotification);
+    randomizerBrush_.setToggleState(brush_ == Brush::randomizer, juce::dontSendNotification);
+}
+
+void BeatScholarLinuxEditor::updateEffectDragValue()
+{
+    if (effectDragIndex_ < 0) return;
+    const auto& control = effectControls_[static_cast<std::size_t>(effectDragIndex_)];
+    const float scale = designScale(getWidth(), getHeight());
+    // Samples & Sounds 05:22-05:27: fixed box above the initial drag point.
+    const auto centreX = static_cast<float>(control.getX())
+                       + control.dragAnchorX * static_cast<float>(control.getWidth());
+    effectDragValue_.setBounds(juce::roundToInt(centreX - 40.0f * scale),
+        control.getY() - juce::roundToInt(12.0f * scale) - juce::roundToInt(50.0f * scale),
+        juce::roundToInt(80.0f * scale), juce::roundToInt(50.0f * scale));
+    effectDragValue_.setFont(bsl::ui::font(14.0f * scale, true));
+    effectDragValue_.setText(effectDragIndex_ == 8
+        ? juce::String(juce::roundToInt(control.getValue() * 100.0)) + "%"
+        : juce::String(control.getValue(), 2), juce::dontSendNotification);
+    effectDragValue_.setVisible(true);
+}
+
 void BeatScholarLinuxEditor::configureModuleControls()
 {
+    effectDragIndex_ = -1;
+    effectDragValue_.setVisible(false);
+    syncBrushButtons();
     updatingControls_ = true;
     auto& state = processor_.projectState();
     lookAndFeel_.setDarkMode(state.ui.darkMode);
@@ -2506,6 +3064,8 @@ void BeatScholarLinuxEditor::configureModuleControls()
         randomModuleToggles_[index].setVisible(randomizerVisible);
         randomModuleToggles_[index].setToggleState(moduleEnabled[index], juce::dontSendNotification);
     }
+    randomFillEmpty_.setVisible(randomizerVisible);
+    randomFillEmpty_.setToggleState(state.randomizer.fillEmptyOnly, juce::dontSendNotification);
     std::array<double, 9> values {};
     std::array<double, 9> defaults {};
     std::array<const char*, 9> labels {};
@@ -2518,9 +3078,9 @@ void BeatScholarLinuxEditor::configureModuleControls()
                    pad.damp, pad.pitchSemitones, pad.fineCents,
                    pad.layerMix, pad.gain, pad.pan, pad.oneShot ? 1.0 : 0.0, 0 };
         defaults = { 0, 0, 0, 0, 0, 1, 0, 1, 0 };
-        labels = { "ATTACK", "DAMP", "PITCH", "FINE", "MIX", "LEVEL", "L             R", "ONE SHOT", "" };
+        labels = { "Attack", "Damp", "Pitch", "Fine", "Mix", "Level", "L             R", "One Shot", "" };
         suffixes = { " s", "", " st", " ct", "", "", "", "", "" };
-        ranges = {{{ 0, 2, 0.001 }, { 0, 1, 0.001 }, { -12, 12, 0.01 }, { -100, 100, 0.1 },
+        ranges = {{{ 0, 2, 0.001 }, { 0, 1, 0.001 }, { -12, 12, 1.0 }, { -100, 100, 0.1 },
                    { 0, 1, 0.001 }, { 0, 2, 0.001 }, { -1, 1, 0.001 }, { 0, 1, 1 },
                    { 0, 1, 0.001 }}};
         visible = 7;
@@ -2533,9 +3093,9 @@ void BeatScholarLinuxEditor::configureModuleControls()
                    random.slicingEnabled ? 1.0 : 0.0, random.noteSelectionEnabled ? 1.0 : 0.0,
                    random.velocityEnabled ? 1.0 : 0.0, random.fillEmptyOnly ? 1.0 : 0.0, 0 };
         defaults = { 0.5, 0.5, 0.4, 1, 1, 1, 1, 0, 0 };
-        labels = { "TRIGGER CHANCE", "SPACING", "MIN", "MAX", "", "", "", "FILL EMPTY", "" };
+        labels = { "Trigger Chance", "Spacing", "Min", "Max", "", "", "", "Fill Empty", "" };
         for (std::size_t index = 0; index < 4; ++index)
-            ranges[index] = { 0, 1, 0.001 };
+            ranges[index] = { 0, 1, index >= 2 ? 0.0 : 0.001 };
         for (std::size_t index = 4; index < 8; ++index)
             ranges[index] = { 0, 1, 1 };
         ranges[8] = { 0, 1, 0.001 };
@@ -2548,10 +3108,23 @@ void BeatScholarLinuxEditor::configureModuleControls()
     {
         const bool visibleControl = index < visible && !(randomizerVisible && index >= 4 && index <= 6)
                                     && !(!randomizerVisible && custom && index == 4);
-        soundControls_[index].setVisible(visibleControl);
-        soundLabels_[index].setVisible(visibleControl);
+        soundControls_[index].setVisible(visibleControl && !(randomizerVisible && index == 7));
+        soundLabels_[index].setVisible(visibleControl && (randomizerVisible || index != 4));
         soundControls_[index].setRange(ranges[index][0], ranges[index][1], ranges[index][2]);
         soundControls_[index].setTextValueSuffix(suffixes[index]);
+        soundControls_[index].textFromValueFunction = nullptr;
+        soundControls_[index].valueFromTextFunction = nullptr;
+        if (randomizerVisible && (index == 0 || index == 2 || index == 3))
+        {
+            const double scale = index == 0 ? 100.0 : 127.0;
+            soundControls_[index].textFromValueFunction = [scale](double value) {
+                return juce::String(static_cast<int>(std::lround(value * scale)));
+            };
+            soundControls_[index].valueFromTextFunction = [scale](const juce::String& text) {
+                return text.getDoubleValue() / scale;
+            };
+            soundControls_[index].setTextValueSuffix(index == 0 ? "%" : "");
+        }
         soundControls_[index].setDoubleClickReturnValue(false, defaults[index]);
         soundLabels_[index].setText(labels[index], juce::dontSendNotification);
         soundControls_[index].setValue(values[index], juce::dontSendNotification);
@@ -2579,15 +3152,19 @@ void BeatScholarLinuxEditor::configureModuleControls()
         soundControls_[4].setEnabled(true);
 
     const std::array<const char*, 10> effectNames {
-        "HPF", "CUTOFF", "RESO", "DRIVE", "COMP", "CRUSH", "REVERB", "ROOM", "DIST", "GAIN"
+        "HPF", "Cutoff", "Reso", "Drive", "Comp", "Crush", "Reverb", "Room", "Dist", "Gain"
     };
     const std::array<double, 10> effectValues {
         pad.highPass, pad.cutoff, pad.resonance, pad.driveGainDb, pad.compression,
         pad.crush, pad.reverb, pad.room, pad.distortionMix, pad.distortionDrive
     };
-    const std::array<double, 10> effectDefaults { 0, 1, 0, 0, 0, 0, 0, 0, 0, 0.5 };
+    const std::array<double, 10> effectDefaults {
+        0, 1, bsl::defaultFilterResonance, 0, 0, 0, 0, 0, 0, 0.5
+    };
     for (std::size_t index = 0; index < effectControls_.size(); ++index)
     {
+        effectControls_[index].setEnabled(index < 6 || state.global.auxEnabled);
+        effectLabels_[index].setEnabled(index < 6 || state.global.auxEnabled);
         effectControls_[index].setVisible(!randomizerVisible);
         effectLabels_[index].setVisible(!randomizerVisible);
         effectLabels_[index].setText(effectNames[index], juce::dontSendNotification);
@@ -2602,13 +3179,15 @@ void BeatScholarLinuxEditor::configureModuleControls()
             effectControls_[index].setTooltip("Parallel distortion gain for all drum sends");
     }
 
-    const std::array<const char*, 5> masterNames { "CUTOFF", "RESO", "CRUSH", "COMP", "MASTER" };
+    const std::array<const char*, 5> masterNames { "Cutoff", "Reso", "Crush", "Comp", "Master" };
     const std::array<double, 5> masterValues { state.master.cutoff, state.master.resonance,
                                                state.master.crush, state.master.compression,
                                                state.master.gain };
-    const std::array<double, 5> masterDefaults { 1, 0, 0, 0, 1 };
+    const std::array<double, 5> masterDefaults { 1, bsl::defaultFilterResonance, 0, 0, 1 };
     for (std::size_t index = 0; index < masterControls_.size(); ++index)
     {
+        masterControls_[index].setEnabled(index == 4 || state.global.masterEnabled);
+        masterLabels_[index].setEnabled(index == 4 || state.global.masterEnabled);
         masterLabels_[index].setText(masterNames[index], juce::dontSendNotification);
         masterControls_[index].setComponentID("master." + juce::String(static_cast<int>(index)));
         masterControls_[index].setDoubleClickReturnValue(false, masterDefaults[index]);
@@ -2630,6 +3209,7 @@ void BeatScholarLinuxEditor::configureModuleControls()
     padSolo_.setToggleState(pad.solo, juce::dontSendNotification);
     padMute_.setToggleState(pad.muted, juce::dontSendNotification);
     oneShot_.setToggleState(pad.oneShot, juce::dontSendNotification);
+    mono_.setToggleState(pad.mono, juce::dontSendNotification);
     loadSample_.setVisible(!randomizerVisible);
     clearSample_.setVisible(!randomizerVisible && !pad.customSampleName.empty());
     layerOne_.setVisible(!randomizerVisible);
@@ -2637,6 +3217,7 @@ void BeatScholarLinuxEditor::configureModuleControls()
     padSolo_.setVisible(!randomizerVisible);
     padMute_.setVisible(!randomizerVisible);
     oneShot_.setVisible(!randomizerVisible);
+    mono_.setVisible(!randomizerVisible);
     soundTab_.setVisible(!randomizerVisible);
     randomizerTab_.setVisible(randomizerVisible);
     randomClearPads_.setVisible(randomizerVisible);
@@ -2672,8 +3253,8 @@ void BeatScholarLinuxEditor::configureModuleControls()
                 juce::File(juce::String(padState.factorySampleIds[0])));
         pads_[index].setTooltip(tooltip);
     }
-    barsPatterns_.setButtonText(state.ui.patternMode ? "Patterns" : "Bars");
-    defaultVelocity_.setValue(state.global.defaultVelocity * 100.0,
+    barsPatterns_.setButtonText(state.ui.patternMode ? "Bars" : "Patterns");
+    defaultVelocity_.setValue(state.global.defaultVelocity * 127.0,
                               juce::dontSendNotification);
     auditionDuringPlayback_.setToggleState(state.global.auditionDuringPlayback,
                                            juce::dontSendNotification);
@@ -2708,55 +3289,68 @@ void BeatScholarLinuxEditor::restoreHistory(bool redo)
 }
 
 
-void BeatScholarLinuxEditor::applyModuleControls(bool writeMasterGain)
+void BeatScholarLinuxEditor::applyModuleControls(juce::Slider& changedControl)
 {
     if (updatingControls_)
         return;
     auto& state = processor_.projectState();
     auto& pad = state.kit.pads[state.ui.selectedPad];
+    // Sliders may round their displayed value. Only the edited control may
+    // write back, so another gesture cannot alter restored parameter precision.
+    const auto applyValue = [&changedControl](juce::Slider& control, float& value) {
+        if (&changedControl == &control)
+            value = static_cast<float>(control.getValue());
+    };
     if (module_ != Module::randomizer)
     {
-        pad.attackSeconds = static_cast<float>(soundControls_[0].getValue());
-        pad.attackNormalized = std::clamp(pad.attackSeconds, 0.0f, 1.0f);
-        pad.damp = static_cast<float>(soundControls_[1].getValue());
-        pad.pitchSemitones = static_cast<float>(soundControls_[2].getValue());
-        pad.fineCents = static_cast<float>(soundControls_[3].getValue());
-        pad.layerMix = static_cast<float>(soundControls_[4].getValue());
-        pad.gain = static_cast<float>(soundControls_[5].getValue());
-        pad.pan = static_cast<float>(soundControls_[6].getValue());
-        pad.oneShot = soundControls_[7].getValue() >= 0.5;
+        if (&changedControl == &soundControls_[0])
+        {
+            pad.attackSeconds = static_cast<float>(soundControls_[0].getValue());
+            pad.attackNormalized = std::clamp(pad.attackSeconds, 0.0f, 1.0f);
+        }
+        applyValue(soundControls_[1], pad.damp);
+        applyValue(soundControls_[2], pad.pitchSemitones);
+        applyValue(soundControls_[3], pad.fineCents);
+        applyValue(soundControls_[4], pad.layerMix);
+        applyValue(soundControls_[5], pad.gain);
+        applyValue(soundControls_[6], pad.pan);
+        if (&changedControl == &soundControls_[7])
+            pad.oneShot = soundControls_[7].getValue() >= 0.5;
+        applyValue(effectControls_[0], pad.highPass);
+        applyValue(effectControls_[1], pad.cutoff);
+        applyValue(effectControls_[2], pad.resonance);
+        applyValue(effectControls_[3], pad.driveGainDb);
+        applyValue(effectControls_[4], pad.compression);
+        applyValue(effectControls_[5], pad.crush);
+        applyValue(effectControls_[6], pad.reverb);
+        applyValue(effectControls_[7], pad.room);
+        applyValue(effectControls_[8], pad.distortionMix);
     }
-    else if (module_ == Module::randomizer)
+    else
     {
         auto& random = state.randomizer;
-        random.triggerChance = static_cast<float>(soundControls_[0].getValue());
-        random.spacing = static_cast<float>(soundControls_[1].getValue());
-        random.minimumVelocity = static_cast<float>(soundControls_[2].getValue());
-        random.maximumVelocity = static_cast<float>(soundControls_[3].getValue());
-        if (random.minimumVelocity > random.maximumVelocity)
-            random.maximumVelocity = random.minimumVelocity;
-        random.slicingEnabled = soundControls_[4].getValue() >= 0.5;
-        random.noteSelectionEnabled = soundControls_[5].getValue() >= 0.5;
-        random.velocityEnabled = soundControls_[6].getValue() >= 0.5;
-        random.fillEmptyOnly = soundControls_[7].getValue() >= 0.5;
+        applyValue(soundControls_[0], random.triggerChance);
+        applyValue(soundControls_[1], random.spacing);
+        if (&changedControl == &soundControls_[2] || &changedControl == &soundControls_[3])
+        {
+            // The callback keeps these paired sliders ordered during a gesture.
+            random.minimumVelocity = static_cast<float>(soundControls_[2].getValue());
+            random.maximumVelocity = static_cast<float>(soundControls_[3].getValue());
+        }
+        if (&changedControl == &soundControls_[4])
+            random.slicingEnabled = soundControls_[4].getValue() >= 0.5;
+        if (&changedControl == &soundControls_[5])
+            random.noteSelectionEnabled = soundControls_[5].getValue() >= 0.5;
+        if (&changedControl == &soundControls_[6])
+            random.velocityEnabled = soundControls_[6].getValue() >= 0.5;
+        if (&changedControl == &soundControls_[7])
+            random.fillEmptyOnly = soundControls_[7].getValue() >= 0.5;
     }
-    if (module_ != Module::randomizer)
-    {
-        pad.highPass = static_cast<float>(effectControls_[0].getValue());
-        pad.cutoff = static_cast<float>(effectControls_[1].getValue());
-        pad.resonance = static_cast<float>(effectControls_[2].getValue());
-        pad.driveGainDb = static_cast<float>(effectControls_[3].getValue());
-        pad.compression = static_cast<float>(effectControls_[4].getValue());
-        pad.crush = static_cast<float>(effectControls_[5].getValue());
-        pad.reverb = static_cast<float>(effectControls_[6].getValue());
-        pad.room = static_cast<float>(effectControls_[7].getValue());
-        pad.distortionMix = static_cast<float>(effectControls_[8].getValue());
-    }
-    state.master.cutoff = static_cast<float>(masterControls_[0].getValue());
-    state.master.resonance = static_cast<float>(masterControls_[1].getValue());
-    state.master.crush = static_cast<float>(masterControls_[2].getValue());
-    state.master.compression = static_cast<float>(masterControls_[3].getValue());
-    if (writeMasterGain)
+    applyValue(masterControls_[0], state.master.cutoff);
+    applyValue(masterControls_[1], state.master.resonance);
+    applyValue(masterControls_[2], state.master.crush);
+    applyValue(masterControls_[3], state.master.compression);
+    if (&changedControl == &masterControls_[4])
     {
         state.master.gain = static_cast<float>(masterControls_[4].getValue());
         if (auto* master = processor_.parameters().getParameter("masterGain"))
@@ -2815,6 +3409,66 @@ void BeatScholarLinuxEditor::showLaneMenu(std::size_t laneIndex)
     });
 }
 
+void BeatScholarLinuxEditor::copyBar(std::size_t barIndex)
+{
+    const auto& state = processor_.projectState();
+    const auto& pattern = state.patterns[state.activePattern];
+    if (barIndex >= pattern.bars.size())
+        return;
+    std::size_t start = 0;
+    for (std::size_t index = 0; index < barIndex; ++index)
+        start += static_cast<std::size_t>(pattern.bars[index].numerator);
+    const auto count = static_cast<std::size_t>(pattern.bars[barIndex].numerator);
+    BarClipboard copy;
+    copy.meter = pattern.bars[barIndex];
+    for (const auto& lane : pattern.lanes)
+        copy.lanes.emplace_back(lane.beats.begin() + static_cast<std::ptrdiff_t>(start),
+                                lane.beats.begin() + static_cast<std::ptrdiff_t>(start + count));
+    barClipboard_ = std::move(copy);
+}
+
+void BeatScholarLinuxEditor::pasteBar(std::size_t barIndex)
+{
+    auto& state = processor_.projectState();
+    if (!barClipboard_ || !processor_.projectEditor().setBarMeter(state.activePattern, barIndex,
+            barClipboard_->meter.numerator, barClipboard_->meter.denominator))
+        return;
+    auto& pattern = state.patterns[state.activePattern];
+    std::size_t start = 0;
+    for (std::size_t index = 0; index < barIndex; ++index)
+        start += static_cast<std::size_t>(pattern.bars[index].numerator);
+    const auto copiedLanes = std::min(pattern.lanes.size(), barClipboard_->lanes.size());
+    for (std::size_t lane = 0; lane < copiedLanes; ++lane)
+        std::copy(barClipboard_->lanes[lane].begin(), barClipboard_->lanes[lane].end(),
+                  pattern.lanes[lane].beats.begin() + static_cast<std::ptrdiff_t>(start));
+    const auto count = static_cast<std::size_t>(pattern.bars[barIndex].numerator);
+    for (std::size_t lane = copiedLanes; lane < pattern.lanes.size(); ++lane)
+        for (std::size_t beat = start; beat < start + count; ++beat)
+            pattern.lanes[lane].beats[beat].reset();
+}
+
+void BeatScholarLinuxEditor::copyPattern(std::size_t patternIndex)
+{
+    const auto& state = processor_.projectState();
+    if (patternIndex < state.patterns.size())
+        patternClipboard_ = state.patterns[patternIndex];
+}
+
+void BeatScholarLinuxEditor::pastePattern(std::size_t patternIndex)
+{
+    auto& state = processor_.projectState();
+    if (!patternClipboard_ || patternIndex >= state.patterns.size())
+        return;
+    processor_.projectEditor().checkpoint();
+    const auto name = state.patterns[patternIndex].name;
+    const auto note = state.patterns[patternIndex].triggerNote;
+    const auto identity = state.patterns[patternIndex].runtimeId;
+    state.patterns[patternIndex] = *patternClipboard_;
+    state.patterns[patternIndex].runtimeId = identity;
+    state.patterns[patternIndex].name = name;
+    state.patterns[patternIndex].triggerNote = note;
+}
+
 void BeatScholarLinuxEditor::showBarMenu(std::size_t barIndex)
 {
     static constexpr std::array<std::pair<int, int>, 8> meters {{
@@ -2824,11 +3478,17 @@ void BeatScholarLinuxEditor::showBarMenu(std::size_t barIndex)
     for (std::size_t index = 0; index < meters.size(); ++index)
         meterMenu.addItem(100 + static_cast<int>(index), juce::String(meters[index].first)
                                                         + "/" + juce::String(meters[index].second));
+    const auto& state = processor_.projectState();
     juce::PopupMenu menu;
+    addShortcutMenuItem(menu, 4, "Copy", "C");
+    addShortcutMenuItem(menu, 5, "Paste", "V", barClipboard_.has_value());
+    addShortcutMenuItem(menu, 1, "Clear", "Shift");
+    menu.addItem(2, "Duplicate");
+    menu.addItem(3, "Delete", state.patterns[state.activePattern].bars.size() > 1);
+    menu.addItem(6, "Insert Here");
+    menu.addItem(7, "Append");
+    menu.addSeparator();
     menu.addSubMenu("Meter", meterMenu);
-    menu.addItem(1, "Reset bar");
-    menu.addItem(2, "Duplicate bar");
-    menu.addItem(3, "Remove bar");
     menu.setLookAndFeel(&lookAndFeel_);
     menu.showMenuAsync({}, [safe = juce::Component::SafePointer<BeatScholarLinuxEditor>(this), revision = processor_.restoredStateRevision(), openedPattern = processor_.projectState().activePattern,
                             barIndex](int result) {
@@ -2861,29 +3521,63 @@ void BeatScholarLinuxEditor::showBarMenu(std::size_t barIndex)
             safe->processor_.projectEditor().duplicateBar(state.activePattern, barIndex);
         else if (result == 3)
             safe->processor_.projectEditor().removeBar(state.activePattern, barIndex);
+        else if (result == 4)
+            safe->copyBar(barIndex);
+        else if (result == 5)
+            safe->pasteBar(barIndex);
+        else if (result == 6)
+            safe->processor_.projectEditor().insertBar(state.activePattern, barIndex, bsl::BarState::make(4, 4));
+        else if (result == 7)
+            safe->processor_.projectEditor().addBar(state.activePattern, bsl::BarState::make(4, 4));
+        safe->updateControlsFromState();
         safe->repaint();
     });
+}
+
+void BeatScholarLinuxEditor::showPatternQuantizationMenu()
+{
+    const auto& state = processor_.projectState();
+    const auto index = state.activePattern;
+    if (index >= state.patterns.size()) return;
+    auto menu = quantizationMenu(state.patterns[index].quantization);
+    menu.setLookAndFeel(&lookAndFeel_);
+    const auto bounds = designRect(getWidth(), getHeight(), 1161.0f, 88.0f, 99.0f, 18.0f);
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(localAreaToGlobal(bounds)),
+        [safe = juce::Component::SafePointer<BeatScholarLinuxEditor>(this),
+         revision = processor_.restoredStateRevision(), index,
+         identity = state.patterns[index].runtimeId](int result) {
+            if (safe == nullptr || result < 10 || result > 16
+                || safe->processor_.restoredStateRevision() != revision) return;
+            auto& patterns = safe->processor_.projectState().patterns;
+            if (index >= patterns.size() || patterns[index].runtimeId != identity) return;
+            const auto value = static_cast<bsl::PatternQuantization>(result - 10);
+            if (patterns[index].quantization == value) return;
+            safe->processor_.projectEditor().checkpoint();
+            patterns[index].quantization = value;
+            safe->updateControlsFromState();
+            safe->repaint();
+        });
 }
 
 void BeatScholarLinuxEditor::showPatternMenu(std::size_t patternIndex)
 {
     if (patternIndex >= processor_.projectState().patterns.size())
         return;
+    const auto patternCount = processor_.projectState().patterns.size();
     juce::PopupMenu menu;
-    menu.addItem(1, "Rename...");
+    addShortcutMenuItem(menu, 4, "Export MIDI", "Shift + DRAG");
+    menu.addSeparator();
+    menu.addItem(1, "Rename");
+    addShortcutMenuItem(menu, 5, "Copy", "C");
+    addShortcutMenuItem(menu, 6, "Paste", "V", patternClipboard_.has_value());
+    menu.addItem(7, "Insert", patternCount < 116);
+    menu.addItem(8, "Delete", patternCount > 1);
+    menu.addItem(9, "Duplicate", patternCount < 116);
+    menu.addSeparator();
     menu.addItem(2, "Trigger note down");
     menu.addItem(3, "Trigger note up");
-    juce::PopupMenu quantization;
-    const auto currentQuantization = processor_.projectState().patterns[patternIndex].quantization;
-    quantization.addItem(10, "Off", true, currentQuantization == bsl::PatternQuantization::off);
-    quantization.addItem(16, "1/32", true, currentQuantization == bsl::PatternQuantization::thirtySecond);
-    quantization.addItem(15, "1/16", true, currentQuantization == bsl::PatternQuantization::sixteenth);
-    quantization.addItem(11, "1/8", true, currentQuantization == bsl::PatternQuantization::eighth);
-    quantization.addItem(12, "1/4", true, currentQuantization == bsl::PatternQuantization::quarter);
-    quantization.addItem(13, "2/4", true, currentQuantization == bsl::PatternQuantization::half);
-    quantization.addItem(14, "4/4", true, currentQuantization == bsl::PatternQuantization::whole);
-    menu.addSubMenu("Trigger quantization", quantization);
-    menu.addItem(4, "Export MIDI file");
+    menu.addSubMenu("Trigger quantization",
+                    quantizationMenu(processor_.projectState().patterns[patternIndex].quantization));
     menu.setLookAndFeel(&lookAndFeel_);
     menu.showMenuAsync({}, [safe = juce::Component::SafePointer<BeatScholarLinuxEditor>(this), revision = processor_.restoredStateRevision(),
                             patternIndex](int result) {
@@ -2928,12 +3622,25 @@ void BeatScholarLinuxEditor::showPatternMenu(std::size_t patternIndex)
                                                       : "Pattern has no MIDI notes",
                                   juce::dontSendNotification);
         }
+        else if (result == 5)
+            safe->copyPattern(patternIndex);
+        else if (result == 6)
+            safe->pastePattern(patternIndex);
+        else if (result == 7)
+            safe->processor_.projectEditor().insertPattern(patternIndex);
+        else if (result == 8)
+            safe->processor_.projectEditor().removePattern(patternIndex);
+        else if (result == 9)
+            safe->processor_.projectEditor().duplicatePattern(patternIndex);
         else if (result >= 10 && result <= 16)
         {
+            if (state.patterns[patternIndex].quantization
+                == static_cast<bsl::PatternQuantization>(result - 10)) return;
             safe->processor_.projectEditor().checkpoint();
             state.patterns[patternIndex].quantization =
                 static_cast<bsl::PatternQuantization>(result - 10);
         }
+        safe->updateControlsFromState();
         safe->repaint();
     });
 }
@@ -2967,24 +3674,7 @@ void BeatScholarLinuxEditor::showPadMenu(std::size_t padIndex)
         }
         if (result == 1)
         {
-            safe->chooser_ = std::make_unique<juce::FileChooser>("Load a sample", juce::File {},
-                                                                 "*.wav;*.flac;*.aif;*.aiff;*.mp3;*.ogg");
-            safe->chooser_->launchAsync(juce::FileBrowserComponent::openMode
-                                            | juce::FileBrowserComponent::canSelectFiles,
-                                        [safe, padIndex, revision](const juce::FileChooser& chooser) {
-                if (safe == nullptr || chooser.getResult() == juce::File {}
-                    || safe->processor_.restoredStateRevision() != revision) return;
-                const auto result = safe->processor_.loadCustomSample(padIndex, chooser.getResult());
-                if (result.wasOk())
-                {
-                    safe->updateControlsFromState();
-                    safe->repaint();
-                    safe->status_.setText("Loaded " + chooser.getResult().getFileName(),
-                                          juce::dontSendNotification);
-                }
-                else
-                    safe->status_.setText(result.getErrorMessage(), juce::dontSendNotification);
-            });
+            safe->chooseCustomSample(padIndex);
             return;
         }
         if (result == 2)
@@ -3009,6 +3699,31 @@ void BeatScholarLinuxEditor::showPadMenu(std::size_t padIndex)
     });
 }
 
+void BeatScholarLinuxEditor::chooseCustomSample(std::size_t padIndex)
+{
+    if (padIndex >= bsl::padCount)
+        return;
+    chooser_ = std::make_unique<juce::FileChooser>("Load Custom Sample", juce::File {},
+                                                 "*.wav;*.flac;*.aif;*.aiff;*.mp3;*.ogg");
+    chooser_->launchAsync(juce::FileBrowserComponent::openMode
+                              | juce::FileBrowserComponent::canSelectFiles,
+                          [safe = juce::Component::SafePointer<BeatScholarLinuxEditor>(this),
+                           revision = processor_.restoredStateRevision(), padIndex](const juce::FileChooser& chooser) {
+        if (safe == nullptr || chooser.getResult() == juce::File {}
+            || safe->processor_.restoredStateRevision() != revision)
+            return;
+        const auto result = safe->processor_.loadCustomSample(padIndex, chooser.getResult());
+        if (result.wasOk())
+        {
+            safe->updateControlsFromState();
+            safe->repaint();
+            safe->status_.setText("Loaded " + chooser.getResult().getFileName(), juce::dontSendNotification);
+        }
+        else
+            safe->status_.setText(result.getErrorMessage(), juce::dontSendNotification);
+    });
+}
+
 void BeatScholarLinuxEditor::showFactorySampleMenu(std::size_t padIndex, std::size_t layer)
 {
     if (padIndex >= bsl::padCount || layer >= 2 || (layer == 1 && padIndex > 1))
@@ -3016,8 +3731,9 @@ void BeatScholarLinuxEditor::showFactorySampleMenu(std::size_t padIndex, std::si
     const auto directory = dataRoot().getChildFile("Factory/Samples");
     const auto token = factorySampleToken(padIndex);
     std::vector<juce::File> files;
-    for (const auto& file : directory.findChildFiles(juce::File::findFiles, false, "*.flac"))
+    for (const auto& file : directory.findChildFiles(juce::File::findFiles, false))
     {
+        if (!isAudioFile(file)) continue;
         const auto name = file.getFileName();
         bool matches = name.containsIgnoreCase(token);
         if (padIndex == 4)
@@ -3175,22 +3891,30 @@ void BeatScholarLinuxEditor::showKitPresetMenu()
     userDirectory.createDirectory();
     std::vector<MenuFile> entries;
     int nextId = 1000;
-    juce::PopupMenu factory;
-    juce::PopupMenu user;
-    addDirectoryMenu(factory, factoryDirectory, MenuContent::kit, entries, nextId);
-    addDirectoryMenu(user, userDirectory, MenuContent::kit, entries, nextId);
     juce::PopupMenu menu;
-    menu.addSubMenu("Factory", factory, factory.getNumItems() > 0);
-    menu.addSubMenu("User", user, user.getNumItems() > 0);
+    menu.addItem(3, "Init Preset");
     menu.addSeparator();
-    menu.addItem(1, "Save Kit");
-    menu.addItem(2, "Show Kit Dir");
+    menu.addSectionHeader("Factory:");
+    addDirectoryMenu(menu, factoryDirectory, MenuContent::kit, entries, nextId);
+    menu.addSeparator();
+    menu.addSectionHeader("User:");
+    addDirectoryMenu(menu, userDirectory, MenuContent::kit, entries, nextId);
+    menu.addSeparator();
+    menu.addItem(1, "Save Preset");
+    menu.addItem(2, "Show Preset Dir");
     menu.setLookAndFeel(&lookAndFeel_);
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(kitMenu_),
                        [safe = juce::Component::SafePointer<BeatScholarLinuxEditor>(this),
                         entries = std::move(entries), userDirectory](int result) {
         if (safe == nullptr || result == 0)
             return;
+        if (result == 3)
+        {
+            safe->processor_.resetKitToInit();
+            safe->status_.setText("Kit initialized", juce::dontSendNotification);
+            safe->updateControlsFromState();
+            return;
+        }
         if (result == 1)
         {
             safe->saveKitAs();
@@ -3221,13 +3945,14 @@ void BeatScholarLinuxEditor::showRandomizerPresetMenu()
     userDirectory.createDirectory();
     std::vector<MenuFile> entries;
     int nextId = 1000;
-    juce::PopupMenu factory;
-    juce::PopupMenu user;
-    addDirectoryMenu(factory, factoryDirectory, MenuContent::randomizer, entries, nextId);
-    addDirectoryMenu(user, userDirectory, MenuContent::randomizer, entries, nextId);
     juce::PopupMenu menu;
-    menu.addSubMenu("Factory", factory, factory.getNumItems() > 0);
-    menu.addSubMenu("User", user, user.getNumItems() > 0);
+    menu.addItem(3, "Init Preset");
+    menu.addSeparator();
+    menu.addSectionHeader("Factory:");
+    addDirectoryMenu(menu, factoryDirectory, MenuContent::randomizer, entries, nextId);
+    menu.addSeparator();
+    menu.addSectionHeader("User:");
+    addDirectoryMenu(menu, userDirectory, MenuContent::randomizer, entries, nextId);
     menu.addSeparator();
     menu.addItem(1, "Save Preset");
     menu.addItem(2, "Show Preset Dir");
@@ -3237,6 +3962,14 @@ void BeatScholarLinuxEditor::showRandomizerPresetMenu()
                         entries = std::move(entries), userDirectory](int result) {
         if (safe == nullptr || result == 0)
             return;
+        if (result == 3)
+        {
+            safe->processor_.resetRandomizerToInit();
+            safe->randomSlicePage_ = 0;
+            safe->status_.setText("Randomizer initialized", juce::dontSendNotification);
+            safe->configureModuleControls();
+            return;
+        }
         if (result == 2)
         {
             userDirectory.startAsProcess();
@@ -3290,14 +4023,14 @@ void BeatScholarLinuxEditor::showPresetMenu()
 
     std::vector<MenuFile> entries;
     int nextId = 1000;
-    juce::PopupMenu factoryPresetMenu;
-    juce::PopupMenu userPresetMenu;
-    addDirectoryMenu(factoryPresetMenu, factoryPresets, MenuContent::preset, entries, nextId);
-    addDirectoryMenu(userPresetMenu, userPresets, MenuContent::preset, entries, nextId);
-
     juce::PopupMenu menu;
-    menu.addSubMenu("Factory", factoryPresetMenu, factoryPresetMenu.getNumItems() > 0);
-    menu.addSubMenu("User", userPresetMenu, userPresetMenu.getNumItems() > 0);
+    menu.addItem(4, "Init Preset");
+    menu.addSeparator();
+    menu.addSectionHeader("Factory:");
+    addDirectoryMenu(menu, factoryPresets, MenuContent::preset, entries, nextId);
+    menu.addSeparator();
+    menu.addSectionHeader("User:");
+    addDirectoryMenu(menu, userPresets, MenuContent::preset, entries, nextId);
     menu.addItem(1, "Load preset file...");
     menu.addSeparator();
     menu.addItem(2, "Save Preset");
@@ -3306,10 +4039,8 @@ void BeatScholarLinuxEditor::showPresetMenu()
     const auto& global = processor_.projectState().global;
     menu.addItem(10, "Sequencer", true, global.sequencerEnabled);
     menu.addItem(11, "Sampler", true, global.samplerEnabled);
-    juce::PopupMenu enable;
-    enable.addItem(12, "AUX", true, global.multiOutput);
-    enable.addItem(13, "Master", true, !global.multiOutput);
-    menu.addSubMenu("Enable", enable);
+    menu.addItem(12, "AUX", true, global.auxEnabled);
+    menu.addItem(13, "Master", true, global.masterEnabled);
     const auto& ui = processor_.projectState().ui;
     menu.addSeparator();
     menu.addItem(20, "Dark Mode", true, ui.darkMode);
@@ -3330,6 +4061,13 @@ void BeatScholarLinuxEditor::showPresetMenu()
                         entries = std::move(entries), userPresets, factoryPresets](int result) {
         if (safe == nullptr || result == 0)
             return;
+        if (result == 4)
+        {
+            safe->processor_.resetPresetToInit();
+            safe->status_.setText("Preset initialized", juce::dontSendNotification);
+            safe->updateControlsFromState();
+            return;
+        }
         if (result >= 1000)
         {
             const auto found = std::find_if(entries.begin(), entries.end(), [result](const auto& entry) {
@@ -3371,21 +4109,20 @@ void BeatScholarLinuxEditor::showPresetMenu()
             safe->repaint();
             return;
         }
-        if (result == 10 || result == 11)
+        if (result >= 10 && result <= 13)
         {
             safe->processor_.projectEditor().checkpoint();
             auto& mutableGlobal = safe->processor_.projectState().global;
             if (result == 10)
                 mutableGlobal.sequencerEnabled = !mutableGlobal.sequencerEnabled;
-            else
+            else if (result == 11)
                 mutableGlobal.samplerEnabled = !mutableGlobal.samplerEnabled;
+            else if (result == 12)
+                mutableGlobal.auxEnabled = !mutableGlobal.auxEnabled;
+            else
+                mutableGlobal.masterEnabled = !mutableGlobal.masterEnabled;
             safe->processor_.markProjectDirty();
             safe->configureModuleControls();
-            return;
-        }
-        if (result == 12 || result == 13)
-        {
-            safe->routing_.setSelectedId(result == 12 ? 2 : 1, juce::sendNotificationSync);
             return;
         }
         if (result == 1)
@@ -3410,14 +4147,8 @@ void BeatScholarLinuxEditor::loadAdjacentPreset(int delta)
     auto files = contentFiles(dataRoot().getChildFile("Factory/Presets"), MenuContent::preset);
     auto user = contentFiles(dataRoot().getChildFile("User/Presets"), MenuContent::preset);
     files.insert(files.end(), user.begin(), user.end());
-    if (files.empty())
-        return;
-    auto found = std::find(files.begin(), files.end(), currentPresetFile());
-    int index = found == files.end() ? (delta < 0 ? static_cast<int>(files.size()) - 1 : 0)
-                                    : static_cast<int>(std::distance(files.begin(), found)) + delta;
-    index = (index % static_cast<int>(files.size()) + static_cast<int>(files.size()))
-            % static_cast<int>(files.size());
-    if (processor_.loadPresetFile(files[static_cast<std::size_t>(index)]))
+    if (loadAdjacentContent(files, currentPresetFile(), delta,
+                            [this](const juce::File& file) { return processor_.loadPresetFile(file); }))
     {
         status_.setText("Preset: " + currentPresetFile().getFileNameWithoutExtension(),
                         juce::dontSendNotification);
@@ -3430,14 +4161,8 @@ void BeatScholarLinuxEditor::loadAdjacentKit(int delta)
     auto files = contentFiles(dataRoot().getChildFile("Factory/Kits"), MenuContent::kit);
     auto user = contentFiles(dataRoot().getChildFile("User/Kits"), MenuContent::kit);
     files.insert(files.end(), user.begin(), user.end());
-    if (files.empty())
-        return;
-    auto found = std::find(files.begin(), files.end(), currentKitFile());
-    int index = found == files.end() ? (delta < 0 ? static_cast<int>(files.size()) - 1 : 0)
-                                    : static_cast<int>(std::distance(files.begin(), found)) + delta;
-    index = (index % static_cast<int>(files.size()) + static_cast<int>(files.size()))
-            % static_cast<int>(files.size());
-    if (processor_.loadKitFile(files[static_cast<std::size_t>(index)]))
+    if (loadAdjacentContent(files, currentKitFile(), delta,
+                            [this](const juce::File& file) { return processor_.loadKitFile(file); }))
     {
         status_.setText("Kit: " + currentKitFile().getFileNameWithoutExtension(),
                         juce::dontSendNotification);
@@ -3450,14 +4175,8 @@ void BeatScholarLinuxEditor::loadAdjacentRandomizer(int delta)
     auto files = contentFiles(dataRoot().getChildFile("Factory/Step Randomizer"), MenuContent::randomizer);
     auto user = contentFiles(dataRoot().getChildFile("User/Randomizers"), MenuContent::randomizer);
     files.insert(files.end(), user.begin(), user.end());
-    if (files.empty())
-        return;
-    auto found = std::find(files.begin(), files.end(), currentRandomizerFile());
-    int index = found == files.end() ? (delta < 0 ? static_cast<int>(files.size()) - 1 : 0)
-                                    : static_cast<int>(std::distance(files.begin(), found)) + delta;
-    index = (index % static_cast<int>(files.size()) + static_cast<int>(files.size()))
-            % static_cast<int>(files.size());
-    if (processor_.loadRandomizerFile(files[static_cast<std::size_t>(index)]))
+    if (loadAdjacentContent(files, currentRandomizerFile(), delta,
+                            [this](const juce::File& file) { return processor_.loadRandomizerFile(file); }))
     {
         status_.setText("Randomizer: " + currentRandomizerFile().getFileNameWithoutExtension(),
                         juce::dontSendNotification);
@@ -3475,6 +4194,17 @@ void BeatScholarLinuxEditor::showAbout()
 bool BeatScholarLinuxEditor::keyPressed(const juce::KeyPress& key)
 {
     refreshRestoredState();
+    if (key == juce::KeyPress::spaceKey)
+    {
+        auto* focused = juce::Component::getCurrentlyFocusedComponent();
+        if (processor_.wrapperType != juce::AudioProcessor::wrapperType_Standalone
+            || numericEntry_.isVisible()
+            || dynamic_cast<juce::TextEditor*>(focused) != nullptr
+            || (focused != nullptr && focused->findParentComponentOfClass<juce::TextEditor>() != nullptr))
+            return false;
+        play_.onClick();
+        return true;
+    }
     if (key.getKeyCode() == juce::KeyPress::F2Key)
     {
         auto* topLevel = getTopLevelComponent();
@@ -3502,12 +4232,14 @@ bool BeatScholarLinuxEditor::keyPressed(const juce::KeyPress& key)
             status_.setText("Could not open the manual", juce::dontSendNotification);
         return true;
     }
-    if (key.getModifiers().isCommandDown() && (key.getTextCharacter() == 'z' || key.getTextCharacter() == 'Z'))
+    // X11 reports Ctrl+letter text as a control character; the key code
+    // still identifies the letter for command shortcuts.
+    if (key.getModifiers().isCommandDown() && (key.getKeyCode() == 'z' || key.getKeyCode() == 'Z'))
     {
         restoreHistory(false);
         return true;
     }
-    if (key.getModifiers().isCommandDown() && (key.getTextCharacter() == 'y' || key.getTextCharacter() == 'Y'))
+    if (key.getModifiers().isCommandDown() && (key.getKeyCode() == 'y' || key.getKeyCode() == 'Y'))
     {
         restoreHistory(true);
         return true;
@@ -3515,42 +4247,41 @@ bool BeatScholarLinuxEditor::keyPressed(const juce::KeyPress& key)
     const auto character = static_cast<char>(std::tolower(static_cast<unsigned char>(key.getTextCharacter())));
     const juce::String lowerRow("asdfghjk");
     const juce::String upperRow("qwertyui");
-    if (const int index = lowerRow.indexOfChar(character); index >= 0)
+    const int lowerIndex = lowerRow.indexOfChar(character);
+    const int upperIndex = upperRow.indexOfChar(character);
+    const int padIndex = lowerIndex >= 0 ? lowerIndex : upperIndex >= 0 ? upperIndex + 8 : -1;
+    if (padIndex >= 0)
     {
-        selectPad(static_cast<std::size_t>(index), false);
-        return true;
-    }
-    if (const int index = upperRow.indexOfChar(character); index >= 0)
-    {
-        selectPad(static_cast<std::size_t>(index + 8), false);
+        // Pad keys prime Drum/Sounds. A held shortcut still overrides the tool
+        // until release, then returns to this newly selected placement mode.
+        previousBrush_ = momentaryBrushActive_ ? momentaryBrushPrevious_ : brush_;
+        if (momentaryBrushActive_)
+        {
+            momentaryBrushPrevious_ = Brush::drum;
+            momentaryModulePrevious_ = Module::soundCharacter;
+            updateMomentaryBrush();
+        }
+        else
+        {
+            brush_ = Brush::drum;
+            module_ = Module::soundCharacter;
+            processor_.projectState().ui.randomizerVisible = false;
+        }
+        selectPad(static_cast<std::size_t>(padIndex), false);
         return true;
     }
     if (character >= '1' && character <= '9')
     {
-        requestedSubdivision_ = static_cast<std::size_t>(character - '0');
-        if (!momentaryBrushActive_)
-        {
-            momentaryBrushPrevious_ = brush_;
-            momentaryModulePrevious_ = module_;
-        }
-        momentaryBrushActive_ = true;
-        brush_ = Brush::slicer;
+        momentaryKey_ = character;
+        updateMomentaryBrush();
         status_.setText("Subdivision " + juce::String(static_cast<int>(requestedSubdivision_)),
                         juce::dontSendNotification);
         return true;
     }
     if (character == '/')
     {
-        if (!momentaryBrushActive_)
-        {
-            momentaryBrushPrevious_ = brush_;
-            momentaryModulePrevious_ = module_;
-        }
-        momentaryBrushActive_ = true;
-        brush_ = Brush::randomizer;
-        module_ = Module::randomizer;
-        processor_.projectState().ui.randomizerVisible = true;
-        configureModuleControls();
+        momentaryKey_ = character;
+        updateMomentaryBrush();
         return true;
     }
     if (key.getKeyCode() == juce::KeyPress::tabKey)
@@ -3564,42 +4295,71 @@ bool BeatScholarLinuxEditor::keyPressed(const juce::KeyPress& key)
         configureModuleControls();
         return true;
     }
-    if (lastHit_ && (key.getKeyCode() == juce::KeyPress::leftKey
-                     || key.getKeyCode() == juce::KeyPress::rightKey
-                     || key.getKeyCode() == juce::KeyPress::downKey))
-    {
-        auto& state = processor_.projectState();
-        auto& beat = state.patterns[state.activePattern].lanes[lastHit_->lane].beats[lastHit_->beat];
-        processor_.projectEditor().checkpoint();
-        if (key.getKeyCode() == juce::KeyPress::leftKey)
-            beat.rotate(-1);
-        else if (key.getKeyCode() == juce::KeyPress::rightKey)
-            beat.rotate(1);
-        else
-            beat.mirror();
-        repaint();
-        return true;
-    }
     return false;
+}
+
+void BeatScholarLinuxEditor::resetOrToggle(bool& value, bool defaultValue,
+                                                const juce::ModifierKeys& modifiers)
+{
+    const bool next = modifiers.isAltDown() ? defaultValue : !value;
+    if (next == value)
+        return;
+    processor_.projectEditor().checkpoint();
+    value = next;
+    processor_.markProjectDirty();
+}
+
+void BeatScholarLinuxEditor::updateMomentaryBrush()
+{
+    const bool active = momentaryAltActive_ || momentaryKey_ != 0;
+    if (!active && !momentaryBrushActive_)
+        return;
+    if (active && !momentaryBrushActive_)
+    {
+        momentaryBrushPrevious_ = brush_;
+        momentaryModulePrevious_ = module_;
+        momentarySubdivisionPrevious_ = requestedSubdivision_;
+    }
+    momentaryBrushActive_ = active;
+    brush_ = !active ? momentaryBrushPrevious_
+                    : momentaryAltActive_ ? Brush::velocity
+                    : momentaryKey_ == '/' ? Brush::randomizer : Brush::slicer;
+    module_ = momentaryKey_ == '/' ? Module::randomizer : momentaryModulePrevious_;
+    if (momentaryKey_ >= '1' && momentaryKey_ <= '9')
+        requestedSubdivision_ = static_cast<std::size_t>(momentaryKey_ - '0');
+    else if (!active)
+        requestedSubdivision_ = momentarySubdivisionPrevious_;
+    processor_.projectState().ui.randomizerVisible = module_ == Module::randomizer;
+    configureModuleControls();
+    repaint();
+}
+
+void BeatScholarLinuxEditor::modifierKeysChanged(const juce::ModifierKeys& modifiers)
+{
+    momentaryAltActive_ = modifiers.isAltDown();
+    updateMomentaryBrush();
+    juce::AudioProcessorEditor::modifierKeysChanged(modifiers);
 }
 
 bool BeatScholarLinuxEditor::keyStateChanged(bool)
 {
-    if (!momentaryBrushActive_)
-        return false;
-    bool shortcutHeld = juce::KeyPress::isKeyCurrentlyDown('/');
-    for (int key = '1'; key <= '9' && !shortcutHeld; ++key)
-        shortcutHeld = juce::KeyPress::isKeyCurrentlyDown(key);
-    if (shortcutHeld)
-        return true;
-    brush_ = momentaryBrushPrevious_;
-    module_ = momentaryModulePrevious_;
-    processor_.projectState().ui.randomizerVisible = module_ == Module::randomizer;
-    configureModuleControls();
-    requestedSubdivision_ = 1;
-    momentaryBrushActive_ = false;
-    repaint();
-    return true;
+    if (!juce::KeyPress::isKeyCurrentlyDown('v') || juce::KeyPress::isKeyCurrentlyDown('c'))
+        draggingBeatPaste_ = false;
+    if (beatClipboard_)
+        repaint();
+    const bool wasActive = momentaryBrushActive_;
+    // Hosts can deliver key state to the focused editor while modifier changes
+    // go to the component under the mouse, so both paths must observe Alt.
+    momentaryAltActive_ = juce::ModifierKeys::getCurrentModifiers().isAltDown();
+    if (momentaryKey_ != 0 && !juce::KeyPress::isKeyCurrentlyDown(momentaryKey_))
+    {
+        momentaryKey_ = juce::KeyPress::isKeyCurrentlyDown('/') ? '/' : 0;
+        for (int key = '1'; key <= '9' && momentaryKey_ == 0; ++key)
+            if (juce::KeyPress::isKeyCurrentlyDown(key))
+                momentaryKey_ = static_cast<char>(key);
+    }
+    updateMomentaryBrush();
+    return wasActive || momentaryBrushActive_;
 }
 
 bool BeatScholarLinuxEditor::isInterestedInFileDrag(const juce::StringArray& files)
@@ -3611,13 +4371,26 @@ void BeatScholarLinuxEditor::filesDropped(const juce::StringArray& files, int x,
 {
     if (files.isEmpty())
         return;
-    const auto pad = padAt({ x, y }).value_or(processor_.projectState().ui.selectedPad);
-    const juce::File file(files[0]);
-    const auto result = isAudioFile(file) ? processor_.loadCustomSample(pad, file)
-                                         : juce::Result::fail("Unsupported sample file type");
+    auto pad = padAt({ x, y });
+    if (!pad)
+    {
+        const auto sampleArea = designRect(getWidth(), getHeight(), 402.0f, 558.0f, 146.0f, 152.0f);
+        if (module_ == Module::randomizer || !sampleArea.contains(x, y))
+            return;
+        pad = processor_.projectState().ui.selectedPad;
+    }
+    const auto supported = std::find_if(files.begin(), files.end(),
+        [](const auto& path) { return isAudioFile(juce::File(path)); });
+    if (supported == files.end())
+    {
+        status_.setText("Unsupported sample file type", juce::dontSendNotification);
+        return;
+    }
+    const juce::File file(*supported);
+    const auto result = processor_.loadCustomSample(*pad, file);
     if (result.wasOk())
     {
-        selectPad(pad, true);
+        selectPad(*pad, true);
         status_.setText("Loaded " + file.getFileName(), juce::dontSendNotification);
     }
     else
@@ -3655,11 +4428,15 @@ void BeatScholarLinuxEditor::timerCallback()
     auditionDuringPlayback_.setToggleState(state.global.auditionDuringPlayback,
                                            juce::dontSendNotification);
     kitLocked_.setToggleState(state.global.kitLocked, juce::dontSendNotification);
-    play_.setToggleState(processor_.isStandalonePlaying(), juce::dontSendNotification);
-    drumBrush_.setToggleState(brush_ == Brush::drum, juce::dontSendNotification);
-    slicerBrush_.setToggleState(brush_ == Brush::slicer, juce::dontSendNotification);
-    velocityBrush_.setToggleState(brush_ == Brush::velocity, juce::dontSendNotification);
-    randomizerBrush_.setToggleState(brush_ == Brush::randomizer, juce::dontSendNotification);
+    const bool standaloneTransport = processor_.wrapperType == juce::AudioProcessor::wrapperType_Standalone;
+    if (!standaloneTransport)
+        bpm_.setValue(processor_.effectiveBpm(), juce::dontSendNotification);
+    const bool playing = standaloneTransport && processor_.isStandalonePlaying();
+    play_.setToggleState(playing, juce::dontSendNotification);
+    play_.setTitle(playing ? "Pause" : "Play");
+    play_.setTooltip(!standaloneTransport ? "Playback follows the host timeline"
+        : playing ? "Pause standalone playback" : "Resume standalone playback");
+    syncBrushButtons();
     undo_.setEnabled(processor_.projectEditor().canUndo());
     redo_.setEnabled(processor_.projectEditor().canRedo());
     repaint();

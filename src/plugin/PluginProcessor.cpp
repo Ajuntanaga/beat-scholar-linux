@@ -68,6 +68,30 @@ bool readableStateFile(const juce::File& file)
         && file.getSize() <= static_cast<juce::int64>(bsl::statecodec::maximumSerializedBytes);
 }
 
+juce::String legacyPresetKitFile(const juce::String& json)
+{
+    const auto sampler = juce::JSON::parse(json).getProperty("Sampler", {});
+    const auto id = sampler.getProperty("id", {}).toString();
+    const auto name = sampler.getProperty("name", {}).toString();
+    if (id.isEmpty() && name.isEmpty()) return {};
+    juce::StringArray idMatches, nameMatches;
+    for (const auto& file : bsl::dataRoot().getChildFile("Factory/Kits")
+                               .findChildFiles(juce::File::findFiles, true, "*.json"))
+    {
+        if (!readableStateFile(file)) continue;
+        const auto kit = juce::JSON::parse(file);
+        const auto pads = kit.getProperty("Pads", {}).getProperty("Pads", {});
+        if (!kit.isObject() || !pads.isArray() || pads.size() == 0) continue;
+        if (id.isNotEmpty() && kit.getProperty("id", {}).toString() == id)
+            idMatches.add(file.getFullPathName());
+        if (name.isNotEmpty() && file.getFileNameWithoutExtension() == name)
+            nameMatches.add(file.getFullPathName());
+    }
+    if (idMatches.size() == 1) return idMatches[0];
+    if (idMatches.size() > 1) return {};
+    return nameMatches.size() == 1 ? nameMatches[0] : juce::String {};
+}
+
 } // namespace
 
 juce::AudioProcessor::BusesProperties BeatScholarLinuxProcessor::makeBuses()
@@ -109,11 +133,10 @@ BeatScholarLinuxProcessor::BeatScholarLinuxProcessor()
         for (std::size_t effect = 0; effect < padBypassNames.size(); ++effect)
             padBypassParameters_[pad][effect] = parameters_.getRawParameterValue(padBypassId(pad, effect));
     pendingMidiOffFrames_.fill(-1);
-    for (auto& trigger : pendingTriggers_)
-        trigger.store(0.0f);
     for (auto& snapshot : stateSnapshots_)
         snapshot = projectEditor_.state();
-    lastPublishedActivePattern_ = projectEditor_.state().activePattern;
+    const auto& state = projectEditor_.state();
+    lastPublishedActivePattern_ = state.patterns[state.activePattern].runtimeId;
     audioPattern_.store(lastPublishedActivePattern_);
 }
 
@@ -130,6 +153,30 @@ std::optional<juce::String> BeatScholarLinuxProcessor::getNameForMidiNoteNumber(
     return std::nullopt;
 }
 
+int BeatScholarLinuxProcessor::takeRequestedPatternForUi() noexcept
+{
+    const auto id = requestedPatternForUi_.exchange(0);
+    if (pendingUiPattern_.load(std::memory_order_acquire) != 0) return -1;
+    const auto& patterns = projectEditor_.state().patterns;
+    const auto found = std::find_if(patterns.begin(), patterns.end(), [id](const auto& pattern) {
+        return pattern.runtimeId == id;
+    });
+    return found == patterns.end() ? -1 : static_cast<int>(std::distance(patterns.begin(), found));
+}
+
+void BeatScholarLinuxProcessor::selectPatternFromUi(std::size_t index)
+{
+    auto& state = projectEditor_.state();
+    if (index >= state.patterns.size()) return;
+    state.activePattern = index;
+    markProjectDirty();
+    publishProjectStateIfNeeded();
+    requestedPatternForUi_.store(0, std::memory_order_release);
+    // A direct click cancels a queued switch, even when the model already has
+    // this selection and the audio thread is ahead of the display timer.
+    pendingUiPattern_.store(state.patterns[index].runtimeId, std::memory_order_release);
+}
+
 void BeatScholarLinuxProcessor::publishProjectStateIfNeeded()
 {
     const std::lock_guard lock(statePublishMutex_);
@@ -144,7 +191,8 @@ void BeatScholarLinuxProcessor::publishProjectStateIfNeeded()
     while (target == published || target == reading)
         ++target;
     stateSnapshots_[static_cast<std::size_t>(target)] = projectEditor_.state();
-    const auto activePattern = stateSnapshots_[static_cast<std::size_t>(target)].activePattern;
+    const auto& snapshot = stateSnapshots_[static_cast<std::size_t>(target)];
+    const auto activePattern = snapshot.patterns[snapshot.activePattern].runtimeId;
     publishedStateIndex_.store(target, std::memory_order_release);
     if (activePattern != lastPublishedActivePattern_)
     {
@@ -207,13 +255,27 @@ bool BeatScholarLinuxProcessor::restoreProjectHistory(bool redo)
 
 void BeatScholarLinuxProcessor::prepareToPlay(double sampleRate, int maximumExpectedSamplesPerBlock)
 {
-    audioEngine_.prepare(sampleRate, static_cast<std::size_t>(std::max(1, maximumExpectedSamplesPerBlock)));
+    const auto maximumBlockSize = static_cast<std::size_t>(std::max(1, maximumExpectedSamplesPerBlock));
+    ambience_.prepareFromFactory(bsl::dataRoot().getChildFile("Factory/ImpulseResponses"),
+                                  sampleRate, maximumBlockSize);
+    audioEngine_.setAmbienceProcessor(&ambience_);
+    audioEngine_.prepare(sampleRate, maximumBlockSize);
+    const auto driveResponse = bsl::AmbienceConvolution::loadDriveResponse(
+        bsl::dataRoot().getChildFile("Factory/ImpulseResponses"), sampleRate);
+    std::array<std::vector<float>, 2> driveChannels;
+    if (driveResponse.getNumChannels() == 2)
+        for (int channel = 0; channel < 2; ++channel)
+            driveChannels[static_cast<std::size_t>(channel)].assign(
+                driveResponse.getReadPointer(channel),
+                driveResponse.getReadPointer(channel) + driveResponse.getNumSamples());
+    audioEngine_.setDistortionResponse(std::move(driveChannels));
     scratch_.assign(totalOutputChannels,
                     std::vector<float>(static_cast<std::size_t>(std::max(1, maximumExpectedSamplesPerBlock))));
     for (auto& peak : padPeaks_) peak.store(0.0f, std::memory_order_relaxed);
     for (auto& peak : outputPeaks_) peak.store(0.0f, std::memory_order_relaxed);
     pendingMidiOffFrames_.fill(-1);
     midiWasPlaying_ = false;
+    samplerWasEnabled_ = true;
     fallbackSamplePosition_.store(0);
     patternScheduler_.reset(audioPattern_.load(std::memory_order_acquire));
     loadBuiltInPreviewKit();
@@ -267,10 +329,39 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         readingStateIndex_.store(snapshotIndex, std::memory_order_release);
     } while (snapshotIndex != publishedStateIndex_.load(std::memory_order_acquire));
     const auto& state = stateSnapshots_[static_cast<std::size_t>(snapshotIndex)];
-    const auto requestedAudioPattern = std::min(audioPattern_.load(std::memory_order_acquire),
-                                                state.patterns.size() - 1);
-    if (requestedAudioPattern != patternScheduler_.activePattern())
+    // Disabling the sampler ends its voices and tails. Pausing its renderer
+    // alone would replay stale audio on enable, including notes released while off.
+    if (samplerWasEnabled_ && !state.global.samplerEnabled && !resetRequested)
+        audioEngine_.reset();
+    samplerWasEnabled_ = state.global.samplerEnabled;
+    const auto findPattern = [&](bsl::PatternId id) {
+        return std::find_if(state.patterns.begin(), state.patterns.end(), [id](const auto& pattern) {
+            return pattern.runtimeId == id;
+        });
+    };
+    auto uiPattern = pendingUiPattern_.load(std::memory_order_acquire);
+    const bool directSelection = uiPattern != 0 && findPattern(uiPattern) != state.patterns.end();
+    auto requestedAudioPattern = directSelection ? uiPattern : audioPattern_.load(std::memory_order_acquire);
+    if (findPattern(requestedAudioPattern) == state.patterns.end())
+        requestedAudioPattern = state.patterns[state.activePattern].runtimeId;
+    if (directSelection || requestedAudioPattern != patternScheduler_.activePattern())
         patternScheduler_.reset(requestedAudioPattern);
+    if (directSelection)
+    {
+        audioPattern_.store(requestedAudioPattern, std::memory_order_release);
+        requestedPatternForUi_.store(0, std::memory_order_release);
+        // A newer, different click arriving during this callback stays pending.
+        pendingUiPattern_.compare_exchange_strong(uiPattern, 0, std::memory_order_acq_rel);
+    }
+    else if (uiPattern != 0 && snapshotIndex == publishedStateIndex_.load(std::memory_order_acquire))
+    {
+        // The clicked pattern may have been removed or replaced before audio
+        // saw it. Keep a request only while this snapshot predates publication.
+        pendingUiPattern_.compare_exchange_strong(uiPattern, 0, std::memory_order_acq_rel);
+    }
+    // Cancel before planning: skipping a deleted target's render segment would
+    // otherwise leave a silent gap and make its reused list position playable.
+    patternScheduler_.removeMissingPatterns(state.patterns);
 
     const bool standalone = wrapperType == juce::AudioProcessor::wrapperType_Standalone;
     // The standalone wrapper enables only the main stereo bus.
@@ -293,7 +384,7 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
             {
                 patternTriggerCollector_.push({
                     std::clamp(metadata.samplePosition, 0, samplesInBlock),
-                    static_cast<std::size_t>(std::distance(state.patterns.begin(), found)),
+                    found->runtimeId,
                     found->quantization
                 });
             }
@@ -326,6 +417,7 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
             if (const auto ppq = position->getPpqPosition())
                 frame.quarterNotePosition = *ppq;
         }
+    effectiveBpm_.store(frame.bpm, std::memory_order_relaxed);
     transportPlaying_.store(frame.playing, std::memory_order_release);
     const bool midiPlaying = frame.playing && state.global.sequencerEnabled;
     const bool midiDiscontinuity = midiWasPlaying_
@@ -357,13 +449,11 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         schedulerTransport,
         patternTriggerCollector_.triggers(),
         renderSegments_);
-    const auto scheduledPattern = std::min(patternScheduler_.activePattern(),
-                                           state.patterns.size() - 1);
+    const auto scheduledPattern = patternScheduler_.activePattern();
     if (scheduledPattern != audioPattern_.load(std::memory_order_acquire))
     {
         audioPattern_.store(scheduledPattern, std::memory_order_release);
-        requestedPatternForUi_.store(static_cast<int>(scheduledPattern),
-                                     std::memory_order_release);
+        requestedPatternForUi_.store(scheduledPattern, std::memory_order_release);
     }
 
     for (std::size_t pad = 0; pad < state.kit.pads.size(); ++pad)
@@ -374,13 +464,16 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         // Read cached atomics directly: no string construction, model mutation,
         // or allocation on the audio thread. Automation preserves knob values.
         settings.filterEnabled = sound.filterEnabled && bypass[0]->load() < 0.5f;
-        settings.highPass = bypass[1]->load() >= 0.5f ? 0.0f : sound.highPass;
+        settings.highPassEnabled = bypass[1]->load() < 0.5f;
         settings.driveEnabled = sound.driveEnabled && bypass[2]->load() < 0.5f;
         settings.crush = bypass[3]->load() >= 0.5f ? 0.0f : sound.crush;
         audioEngine_.setPadSettings(pad, settings);
     }
-    audioEngine_.setMasterSettings(bsl::makeMasterPlaybackSettings(
-        state.master, parameters_.getRawParameterValue("masterGain")->load()));
+    auto masterSettings = bsl::makeMasterPlaybackSettings(
+        state.master, parameters_.getRawParameterValue("masterGain")->load());
+    masterSettings.distortionDrive = state.kit.pads[0].distortionDrive;
+    audioEngine_.setMasterSettings(masterSettings);
+    audioEngine_.setModuleEnables(state.global.auxEnabled, state.global.masterEnabled);
     audioEngine_.beginBlock(scratch_, static_cast<std::size_t>(samplesInBlock));
     std::size_t audioCursor = 0;
     const auto advanceAudio = [&](int offset) {
@@ -402,23 +495,35 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
             {
                 advanceAudio(metadata.samplePosition);
                 if (message.isNoteOn())
-                    audioEngine_.noteOn(static_cast<std::uint8_t>(36 + *pad), message.getFloatVelocity());
+                    audioEngine_.noteOn(static_cast<std::uint8_t>(36 + *pad), message.getFloatVelocity(),
+                                        0, true, static_cast<std::uint8_t>(message.getChannel()));
                 else
-                    audioEngine_.noteOff(static_cast<std::uint8_t>(36 + *pad));
+                    audioEngine_.noteOff(static_cast<std::uint8_t>(36 + *pad),
+                                         static_cast<std::uint8_t>(message.getChannel()));
             }
         }
     };
-    for (std::size_t pad = 0; pad < pendingTriggers_.size(); ++pad)
-    {
-        const float velocity = pendingTriggers_[pad].exchange(0.0f);
-        if (state.global.samplerEnabled && velocity > 0.0f)
-            audioEngine_.noteOn(static_cast<std::uint8_t>(36 + pad), velocity, 0, false);
-    }
+    int auditionStart1, auditionCount1, auditionStart2, auditionCount2;
+    auditionFifo_.prepareToRead(auditionFifo_.getNumReady(),
+                               auditionStart1, auditionCount1, auditionStart2, auditionCount2);
+    const auto playAuditions = [&](int start, int count) {
+        if (!state.global.samplerEnabled) return;
+        for (int i = start; i < start + count; ++i)
+        {
+            const auto& audition = pendingTriggers_[static_cast<std::size_t>(i)];
+            audioEngine_.noteOn(static_cast<std::uint8_t>(36 + audition.pad), audition.velocity, 0, false);
+        }
+    };
+    playAuditions(auditionStart1, auditionCount1);
+    playAuditions(auditionStart2, auditionCount2);
+    auditionFifo_.finishedRead(auditionCount1 + auditionCount2);
 
     for (std::size_t segmentIndex = 0; segmentIndex < segmentCount; ++segmentIndex)
     {
         const auto& segment = renderSegments_[segmentIndex];
-        if (segment.patternIndex >= state.patterns.size()) continue;
+        const auto pattern = findPattern(segment.patternId);
+        if (pattern == state.patterns.end()) continue;
+        const auto patternIndex = static_cast<std::size_t>(std::distance(state.patterns.begin(), pattern));
         auto segmentFrame = frame;
         segmentFrame.absoluteSampleStart += segment.sampleOffset;
         segmentFrame.blockSize = segment.sampleCount;
@@ -431,7 +536,7 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         bsl::SequencerBatchCursor cursor;
         while (!cursor.exhausted)
         {
-            const auto count = bsl::Sequencer::renderBatch(state, segmentFrame, segment.patternIndex,
+            const auto count = bsl::Sequencer::renderBatch(state, segmentFrame, patternIndex,
                                                           sequencerEvents_, cursor);
             for (std::size_t index = 0; index < count; ++index)
             {
@@ -569,8 +674,13 @@ void BeatScholarLinuxProcessor::syncParametersFromProject()
 
 void BeatScholarLinuxProcessor::triggerPad(std::size_t pad, float velocity) noexcept
 {
-    if (pad < pendingTriggers_.size())
-        pendingTriggers_[pad].store(std::clamp(velocity, 0.0f, 1.0f));
+    if (pad >= bsl::padCount || !std::isfinite(velocity) || velocity <= 0.0f) return;
+    int start1, count1, start2, count2;
+    auditionFifo_.prepareToWrite(1, start1, count1, start2, count2);
+    const PadAudition audition { static_cast<std::uint8_t>(pad), std::min(velocity, 1.0f) };
+    if (count1 > 0) pendingTriggers_[static_cast<std::size_t>(start1)] = audition;
+    if (count2 > 0) pendingTriggers_[static_cast<std::size_t>(start2)] = audition;
+    auditionFifo_.finishedWrite(count1 + count2);
 }
 
 void BeatScholarLinuxProcessor::stopStandalone() noexcept
@@ -641,8 +751,8 @@ bool BeatScholarLinuxProcessor::setFactorySample(std::size_t pad, std::size_t la
     if (pad > 1)
         state.factorySampleIds[1].clear();
     suspendProcessing(true);
-    loadBuiltInPreviewKit();
-    loadFactorySamples();
+    loadBuiltInPreviewKit(pad);
+    loadFactorySamples(pad);
     suspendProcessing(false);
     markProjectDirty();
     publishProjectStateIfNeeded();
@@ -659,8 +769,8 @@ void BeatScholarLinuxProcessor::clearCustomSample(std::size_t pad)
     state.customSampleSha256.clear();
     state.customSampleBase64.clear();
     suspendProcessing(true);
-    loadBuiltInPreviewKit();
-    loadFactorySamples();
+    loadBuiltInPreviewKit(pad);
+    loadFactorySamples(pad);
     suspendProcessing(false);
     markProjectDirty();
     publishProjectStateIfNeeded();
@@ -685,6 +795,10 @@ bool BeatScholarLinuxProcessor::loadPresetFile(const juce::File& file)
                : bsl::statecodec::importLegacyPresetJson(json, restored));
     if (!loaded)
         return false;
+    // Resolve the displayed kit identity without reloading or replacing the
+    // sampler settings embedded in this preset. Native state keeps its path.
+    if (!hostEnvelope && !file.hasFileExtension("bslpreset"))
+        restored.ui.kitFile = legacyPresetKitFile(json).toStdString();
     const bool preserveKit = projectEditor_.state().global.kitLocked;
     auto current = projectEditor_.state();
     copyParameterValuesToState(current);
@@ -762,6 +876,65 @@ bool BeatScholarLinuxProcessor::saveKitFile(const juce::File& file)
     markProjectDirty();
     restoredStateRevision_.fetch_add(1, std::memory_order_release);
     return true;
+}
+
+void BeatScholarLinuxProcessor::resetPresetToInit()
+{
+    auto current = projectEditor_.state();
+    copyParameterValuesToState(current);
+    auto initialized = bsl::ProjectState::makeMainInit();
+
+    // Display preferences are application choices, not preset content.
+    initialized.ui.selectedPad = current.ui.selectedPad;
+    initialized.ui.darkMode = current.ui.darkMode;
+    initialized.ui.midiNoteNames = current.ui.midiNoteNames;
+    initialized.ui.midiFlats = current.ui.midiFlats;
+    initialized.ui.middleCOctave = current.ui.middleCOctave;
+    if (current.global.kitLocked)
+    {
+        initialized.kit = std::move(current.kit);
+        initialized.ui.kitFile = std::move(current.ui.kitFile);
+        initialized.global.kitLocked = true;
+    }
+
+    // Main preset loads replace the undo domain; Init follows the same scope.
+    projectEditor_ = bsl::ProjectEditor(std::move(initialized));
+    syncParametersFromProject();
+    suspendProcessing(true);
+    loadBuiltInPreviewKit();
+    loadFactorySamples();
+    suspendProcessing(false);
+    markProjectDirty();
+    publishProjectStateIfNeeded();
+    restoredStateRevision_.fetch_add(1, std::memory_order_release);
+}
+
+void BeatScholarLinuxProcessor::resetKitToInit()
+{
+    auto initialized = bsl::ProjectState::makeDefault();
+    copyParameterValuesToState(projectEditor_.state());
+    projectEditor_.checkpoint(bsl::HistoryParameters::kit);
+    projectEditor_.state().kit = std::move(initialized.kit);
+    projectEditor_.state().master = initialized.master;
+    projectEditor_.state().ui.kitFile.clear();
+    syncParametersFromProject();
+    suspendProcessing(true);
+    loadBuiltInPreviewKit();
+    loadFactorySamples();
+    suspendProcessing(false);
+    markProjectDirty();
+    publishProjectStateIfNeeded();
+    restoredStateRevision_.fetch_add(1, std::memory_order_release);
+}
+
+void BeatScholarLinuxProcessor::resetRandomizerToInit()
+{
+    projectEditor_.checkpoint();
+    projectEditor_.state().randomizer = bsl::RandomizerSettings::makeInitPreset();
+    projectEditor_.state().ui.randomizerFile.clear();
+    markProjectDirty();
+    publishProjectStateIfNeeded();
+    restoredStateRevision_.fetch_add(1, std::memory_order_release);
 }
 
 bool BeatScholarLinuxProcessor::loadRandomizerFile(const juce::File& file)

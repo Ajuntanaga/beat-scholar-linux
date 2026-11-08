@@ -25,6 +25,7 @@ add_library(beat_scholar_core
     src/core/Randomizer.cpp
     src/core/Sequencer.cpp
     src/audio/AudioEngine.cpp
+    src/audio/AuxDistortion.cpp
 )
 
 # The core library is linked into the VST3 shared object. Make the requirement
@@ -90,6 +91,8 @@ if(BSL_BUILD_PLUGIN)
     )
 
     target_sources(BeatScholarLinux PRIVATE
+        src/plugin/AmbienceConvolution.cpp
+        src/plugin/AmbienceConvolution.h
         src/plugin/PluginProcessor.cpp
         src/plugin/PluginProcessor.h
         src/plugin/BeatScholarLookAndFeel.cpp
@@ -136,6 +139,12 @@ if(BSL_BUILD_PLUGIN)
     endif()
 
     if(BSL_BUILD_TESTS)
+        add_executable(beat_scholar_ambience_tests tests/ambience_tests.cpp)
+        target_link_libraries(beat_scholar_ambience_tests PRIVATE BeatScholarLinux)
+        target_include_directories(beat_scholar_ambience_tests PRIVATE src third_party/JUCE/modules)
+        target_compile_definitions(beat_scholar_ambience_tests PRIVATE
+            JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+        add_test(NAME beat_scholar_ambience_tests COMMAND beat_scholar_ambience_tests)
         add_executable(beat_scholar_factory_playback_tests tests/factory_playback_tests.cpp)
         target_link_libraries(beat_scholar_factory_playback_tests PRIVATE BeatScholarLinux)
         target_include_directories(beat_scholar_factory_playback_tests PRIVATE src third_party/JUCE/modules)
@@ -152,7 +161,7 @@ if(BSL_BUILD_PLUGIN)
         find_program(BSL_XVFB_RUN xvfb-run)
         if(BSL_XVFB_RUN)
             add_test(NAME beat_scholar_editor_tests
-                COMMAND ${BSL_XVFB_RUN} -a ${Python3_EXECUTABLE}
+                COMMAND ${BSL_XVFB_RUN} -a --server-args=-noreset ${Python3_EXECUTABLE}
                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_editor_tests.py
                     $<TARGET_FILE:beat_scholar_editor_tests>
                     ${CMAKE_BINARY_DIR}/editor-regression)
@@ -227,7 +236,14 @@ if(BSL_BUILD_PLUGIN)
                 --artifacts-dir "${CMAKE_BINARY_DIR}/actual-vst3-smoke"
                 --output "${CMAKE_BINARY_DIR}/actual-vst3-smoke/report.json"
         )
-        set_tests_properties(beat_scholar_actual_vst3_smoke PROPERTIES
+        add_test(NAME beat_scholar_actual_vst3_midi
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_vst3_midi_output.py
+                --plugin "${CMAKE_BINARY_DIR}/BeatScholarLinux_artefacts/$<CONFIG>/VST3/Beat Scholar Linux.vst3"
+                --host $<TARGET_FILE:actual_vst3_host>
+                --artifacts-dir "${CMAKE_BINARY_DIR}/actual-vst3-midi"
+        )
+        set_tests_properties(beat_scholar_actual_vst3_smoke beat_scholar_actual_vst3_midi PROPERTIES
             ENVIRONMENT "DISPLAY=;WAYLAND_DISPLAY=")
     endif()
 endif()

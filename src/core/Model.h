@@ -15,6 +15,12 @@ namespace bsl {
 inline constexpr std::size_t padCount = 16;
 inline constexpr std::size_t maximumLaneCount = 16;
 inline constexpr std::size_t maximumSubdivision = 45;
+inline constexpr float defaultFilterResonance = 7.0f / 24.0f;
+
+[[nodiscard]] float padHighPassCutoffHz(float normalized) noexcept;
+[[nodiscard]] float normalizedPadHighPassCutoff(float frequencyHz) noexcept;
+[[nodiscard]] float filterCutoffHz(float normalized) noexcept;
+[[nodiscard]] float normalizedFilterCutoff(float frequencyHz) noexcept;
 
 enum class SwingReference
 {
@@ -37,11 +43,13 @@ enum class PatternQuantization
 struct GlobalState
 {
     double swingPercent = 0.0;
-    SwingReference swingReference = SwingReference::eighth;
+    SwingReference swingReference = SwingReference::quarter;
     double beatsPerMinute = 120.0;
     float defaultVelocity = 0.8f;
     bool sequencerEnabled = true;
     bool samplerEnabled = true;
+    bool auxEnabled = true;
+    bool masterEnabled = true;
     bool auditionDuringPlayback = true;
     bool kitLocked = false;
     bool multiOutput = false;
@@ -93,6 +101,8 @@ struct LaneState
     static LaneState make(std::size_t beatCount);
 };
 
+using PatternId = std::uint64_t;
+
 struct PatternState
 {
     std::string name = "Pattern 1";
@@ -100,6 +110,8 @@ struct PatternState
     PatternQuantization quantization = PatternQuantization::whole;
     std::vector<BarState> bars;
     std::vector<LaneState> lanes;
+    // Runtime identity survives edits/undo but is not serialized into presets.
+    PatternId runtimeId = 0;
 
     [[nodiscard]] double durationInQuarterNotes() const;
 };
@@ -148,9 +160,10 @@ struct PadState
     float highPass = 0.0f;
     bool filterEnabled = true;
     float cutoff = 1.0f;
-    float resonance = 0.0f;
+    float resonance = defaultFilterResonance;
     bool driveEnabled = false;
     float driveGainDb = 0.0f;
+    bool nativeDriveInsert = true;
     float distortionMix = 0.0f;
     bool independentDistortion = false;
     float distortionDrive = 0.5f;
@@ -158,8 +171,10 @@ struct PadState
     float crush = 0.0f;
     float reverb = 0.0f;
     float room = 0.0f;
-    float delay = 0.0f;
+    float delay = 0.0f; // Older own-format echo send.
+    float auxGain = 0.0f; // Native Aux4 immediate parallel gain send.
     bool oneShot = true;
+    bool mono = false;
     bool muted = false;
     bool solo = false;
     bool lpfBypass = false;
@@ -177,8 +192,9 @@ struct MasterState
 {
     bool filterEnabled = true;
     float cutoff = 1.0f;
-    float resonance = 0.0f;
-    float delay = 0.0f;
+    float resonance = defaultFilterResonance;
+    float delay = 0.0f; // Older own-format echo return.
+    float distortionReturn = 1.0f;
     float distortion = 0.0f;
     float reverb = 0.0f;
     float room = 0.0f;
@@ -201,6 +217,7 @@ struct RandomizerSettings
     float minimumVelocity = 0.4f;
     float maximumVelocity = 1.0f;
 
+    [[nodiscard]] static RandomizerSettings makeInitPreset();
     [[nodiscard]] bool isValid() const noexcept;
 };
 
@@ -233,6 +250,7 @@ struct ProjectState
     std::size_t activePattern = 0;
 
     static ProjectState makeDefault();
+    static ProjectState makeMainInit();
     [[nodiscard]] bool isValid() const;
     [[nodiscard]] std::optional<std::size_t> padIndexForMidiNote(std::uint8_t note) const noexcept;
     bool selectPatternForTrigger(std::uint8_t note) noexcept;

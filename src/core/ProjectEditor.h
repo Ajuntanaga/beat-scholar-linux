@@ -24,11 +24,13 @@ public:
     bool randomizeLane(std::size_t patternIndex, std::size_t laneIndex,
                        std::uint32_t seed);
     bool addBar(std::size_t patternIndex, BarState bar);
+    bool insertBar(std::size_t patternIndex, std::size_t barIndex, BarState bar);
     bool duplicateBar(std::size_t patternIndex, std::size_t barIndex);
     bool removeBar(std::size_t patternIndex, std::size_t barIndex);
     bool setBarMeter(std::size_t patternIndex, std::size_t barIndex,
                      int numerator, int denominator, bool createUndoStep = true);
     bool addPattern();
+    bool insertPattern(std::size_t patternIndex);
     bool duplicatePattern(std::size_t patternIndex);
     bool removePattern(std::size_t patternIndex);
     bool shiftPatternTriggerNote(std::size_t patternIndex, int direction);

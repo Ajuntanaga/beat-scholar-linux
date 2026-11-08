@@ -24,6 +24,7 @@ image = (modal.Image.debian_slim(python_version='3.12')
                    ignore=['.git/**', 'build/**', '**/__pycache__/**']))
 for name in ['actual_vst3_host.cpp', 'extract_factory_samples.cpp', 'measure_effect_parity.py',
              'migrate_factory_content.py', 'run_editor_tests.py', 'run_standalone_settings_test.py', 'modal_effect_parity_verdict.py',
+             'check_vst3_midi_output.py',
              'bin/pluginval']:
     image = image.add_local_file(ROOT / 'tools' / name, str(REMOTE / 'tools' / name), copy=False)
 # Mount immutable project snapshots at runtime; only stable dependencies need image layers.
@@ -65,11 +66,20 @@ def validate(run_id: str) -> dict:
             run('standalone-settings', ['xvfb-run', '-a', '-s', '-screen 0 1600x1200x24',
                 'python3', str(REMOTE / 'tools/run_standalone_settings_test.py'),
                 str(build / 'BeatScholarLinux_artefacts/Release/Standalone/Beat Scholar Linux'),
-                str(out / 'standalone-settings')])
+                str(out / 'standalone-settings'),
+                '--midi-host', str(build / 'tools/actual_vst3_host'), '--plugin', str(bundle)])
         if (build / 'editor-regression').is_dir():
-            shutil.copytree(build / 'editor-regression', out / 'editor-regression')
+            # One archive avoids hundreds of tiny volume downloads.
+            with tarfile.open(out / 'editor-regression.tar.gz', 'w:gz') as archive:
+                archive.add(build / 'editor-regression', arcname='editor-regression')
         if (build / 'actual-vst3-smoke/report.json').is_file():
             shutil.copy2(build / 'actual-vst3-smoke/report.json', out / 'actual-vst3-report.json')
+        if (build / 'actual-vst3-midi/report.json').is_file():
+            shutil.copy2(build / 'actual-vst3-midi/report.json', out / 'actual-vst3-midi-report.json')
+        host = build / 'tools/actual_vst3_host'
+        if host.is_file():
+            shutil.copy2(host, out / 'actual_vst3_host')
+            results['host_sha256'] = hashlib.sha256(host.read_bytes()).hexdigest()
         module = bundle / 'Contents/x86_64-linux/Beat Scholar Linux.so'
         if module.is_file():
             results['module_sha256'] = hashlib.sha256(module.read_bytes()).hexdigest()
@@ -77,7 +87,8 @@ def validate(run_id: str) -> dict:
                 archive.add(bundle, arcname=bundle.name)
             # Export matching verification binaries before another run changes the cache.
             with tarfile.open(out / 'verification-binaries.tar.gz', 'w:gz') as archive:
-                for name, path in [('factory-playback-tests', build / 'beat_scholar_factory_playback_tests'),
+                for name, path in [('ambience-tests', build / 'beat_scholar_ambience_tests'),
+                                   ('factory-playback-tests', build / 'beat_scholar_factory_playback_tests'),
                                    ('Beat Scholar Linux', build / 'BeatScholarLinux_artefacts/Release/Standalone/Beat Scholar Linux')]:
                     archive.add(path, arcname=name)
                     results[name + '_sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()

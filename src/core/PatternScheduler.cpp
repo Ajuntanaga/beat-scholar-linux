@@ -31,7 +31,7 @@ double boundaryAtOrAfter(double position, double grid) noexcept
 
 } // namespace
 
-PatternScheduler::PatternScheduler(std::size_t activePattern) noexcept
+PatternScheduler::PatternScheduler(PatternId activePattern) noexcept
     : activePattern_(activePattern)
 {
 }
@@ -43,11 +43,22 @@ void PatternScheduler::clearTimelineState() noexcept
     expectedPpqValid_ = false;
 }
 
-void PatternScheduler::reset(std::size_t activePattern) noexcept
+void PatternScheduler::reset(PatternId activePattern) noexcept
 {
     activePattern_ = activePattern;
     wasPlaying_ = false;
     clearTimelineState();
+}
+
+void PatternScheduler::removeMissingPatterns(std::span<const PatternState> patterns) noexcept
+{
+    std::size_t count = 0;
+    for (std::size_t i = 0; i < pendingCount_; ++i)
+        if (std::any_of(patterns.begin(), patterns.end(), [&](const auto& pattern) {
+                return pattern.runtimeId == pending_[i].patternId;
+            }))
+            pending_[count++] = pending_[i];
+    pendingCount_ = count;
 }
 
 void PatternScheduler::addOrReplace(PendingTrigger trigger) noexcept
@@ -114,7 +125,7 @@ std::size_t PatternScheduler::planBlock(const SchedulerTransport& transport,
         const auto offset = std::clamp(source.sampleOffset, 0, transport.blockSize);
         const double grid = gridQuarterNotes(source.quantization);
         PendingTrigger trigger;
-        trigger.patternIndex = source.patternIndex;
+        trigger.patternId = source.patternId;
         trigger.sequence = ++nextSequence_;
         trigger.usesHostPpq = hasHostPpq;
 
@@ -161,7 +172,7 @@ std::size_t PatternScheduler::planBlock(const SchedulerTransport& transport,
             due[dueCount++] = {
                 static_cast<std::int32_t>(std::clamp<std::int64_t>(
                     relative, 0, transport.blockSize)),
-                pending.patternIndex,
+                pending.patternId,
                 pending.sequence
             };
         }
@@ -195,7 +206,7 @@ std::size_t PatternScheduler::planBlock(const SchedulerTransport& transport,
     std::int32_t cursor = 0;
     double phase = phaseQuarterNotes_;
     const auto appendSegment = [&](std::int32_t start, std::int32_t end,
-                                   std::size_t pattern, double startPhase) {
+                                   PatternId pattern, double startPhase) {
         if (end <= start || segmentCount >= destination.size())
             return;
         destination[segmentCount++] = { start, end - start, pattern, startPhase };
@@ -206,7 +217,7 @@ std::size_t PatternScheduler::planBlock(const SchedulerTransport& transport,
         const auto offset = changes[index].sampleOffset;
         appendSegment(cursor, offset, activePattern_, phase);
         phase += static_cast<double>(offset - cursor) / samplesPerQuarter;
-        activePattern_ = changes[index].patternIndex;
+        activePattern_ = changes[index].patternId;
         phase = 0.0;
         cursor = offset;
     }

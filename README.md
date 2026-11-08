@@ -61,24 +61,21 @@ settings and restart recall.
 
 ## Where it stands
 
-The latest candidate passed eight available CTest suites on Modal, including an
-actual VST3 host smoke test, and pluginval at strictness 10. Its matching local
-checker passed initial-pattern playback for three presets at 44.1, 48, and
-96 kHz. The previous candidate passed the full 129-preset check at 48 kHz.
+This is a development snapshot, not a release. The latest recorded staged
+candidate is batch 58; later work includes a focused pattern-trigger check and
+corrections to the native Init investigation. The working source may include
+changes beyond that candidate.
 
-Recent repairs cover sample assignments, pie-slice geometry, dense-pattern
-timing, MIDI note releases, Undo, muted effect tails, keyboard pad mapping,
-arrangement and zoom controls, clipped labels, and malformed imports. The latest
-fixes give standalone playback its own clock and keep multi-output presets
-audible through the app's stereo output. The VST3 keeps host timing and multiple
-outputs.
+Batch 58 passed ten runnable suites, pluginval at strictness 10, fifteen
+actual-VST MIDI cases, and standalone checks. Private factory playback was
+skipped in that run. Those results apply to that staged candidate, not every
+subsequent source change.
 
-Sound matching is still open. Some presets produce samples at or above full
-scale; passing the playback checks does not establish original sound or effect
-identity. Whole-interface visual matching also remains open. Standalone settings
-and project recall after restart pass locally on an isolated display with null
-audio. Real audio-device use has not been checked in this pass, and the cloud
-window check still fails.
+Recent work covers circular slice editing, pattern triggers, Main and Kit Init,
+sample playback, effects, state handling, and standalone operation. Exact native
+Init samples and hidden defaults remain unresolved. Sound and whole-interface
+visual matching are still in progress; passing regressions does not establish
+complete compatibility.
 
 See [current status](docs/STATUS.md) for the measurements and limits.
 

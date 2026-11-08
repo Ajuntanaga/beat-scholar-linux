@@ -327,6 +327,8 @@ std::vector<MidiTickEvent> Sequencer::exportPattern(const ProjectState& state,
     if (!state.isValid() || patternIndex >= state.patterns.size() || ticksPerQuarter <= 0)
         return result;
     const auto& pattern = state.patterns[patternIndex];
+    const double duration = pattern.durationInQuarterNotes();
+    const auto loopTicks = std::max<std::int64_t>(1, std::llround(duration * ticksPerQuarter));
     const bool hasSolo = std::any_of(pattern.lanes.begin(), pattern.lanes.end(),
                                      [](const LaneState& lane) { return lane.solo; });
     double beatStart = 0.0;
@@ -350,10 +352,18 @@ std::vector<MidiTickEvent> Sequencer::exportPattern(const ProjectState& state,
                     const double straight = beatStart + static_cast<double>(sliceIndex) * subdivisionLength;
                     const double swung = applySwing(straight, state.global.swingPercent,
                                                     state.global.swingReference);
-                    result.push_back({ static_cast<std::int64_t>(std::llround(
-                                           swung * static_cast<double>(ticksPerQuarter))),
-                                       state.kit.pads[slice.padIndex].midiNote,
-                                       midiVelocity(slice.velocity) });
+                    // Playback carries swung tails across the pattern boundary.
+                    // A one-loop MIDI clip must put them at their cyclic phase;
+                    // quantization can also round a final hit onto the boundary.
+                    const double local = std::fmod(swung, duration);
+                    const auto unwrappedTick = std::llround(local * ticksPerQuarter);
+                    const auto tick = unwrappedTick % loopTicks;
+                    const double swungEnd = applySwing(straight + subdivisionLength,
+                        state.global.swingPercent, state.global.swingReference);
+                    const auto gateTicks = std::max<std::int64_t>(1,
+                        std::llround((local + swungEnd - swung) * ticksPerQuarter) - unwrappedTick);
+                    result.push_back({ tick, state.kit.pads[slice.padIndex].midiNote,
+                                       midiVelocity(slice.velocity), gateTicks });
                 }
             }
             beatStart += beatLength;

@@ -118,10 +118,31 @@ void testDefaultProjectMatchesDocumentedLimits()
     check(state.patterns.front().lanes.size() == 4, "default pattern has four lanes");
     check(state.kit.pads.size() == 16, "kit has sixteen pads");
     check(state.global.swingPercent == 0.0, "swing defaults to zero");
+    check(state.global.swingReference == bsl::SwingReference::quarter,
+          "The Swing Slider tutorial defaults to a quarter-note reference");
+    check(bsl::Sequencer::applySwing(0.5, 100.0, state.global.swingReference) > 0.5
+              && bsl::Sequencer::applySwing(1.0, 100.0, state.global.swingReference) == 1.0,
+          "default swing delays eighth notes while leaving quarter notes fixed");
     check(std::abs(state.global.defaultVelocity - 0.8f) < 1.0e-7f,
           "velocity brush defaults to the documented 80 percent");
     check(state.global.auditionDuringPlayback, "pad audition during playback defaults on");
     check(!state.global.kitLocked, "kit selection defaults unlocked");
+}
+
+void testRandomizerInitPreset()
+{
+    const auto settings = bsl::RandomizerSettings::makeInitPreset();
+    check(settings.isValid(), "named Randomizer Init is valid");
+    check(settings.selectedPads.empty(), "Randomizer Init has no selected note filter");
+    check(settings.selectedSubdivisions == std::vector<std::size_t> { 2, 4, 8 },
+          "Randomizer Init selects subdivisions 2, 4 and 8");
+    check(settings.noteSelectionEnabled && settings.slicingEnabled
+              && settings.triggeringEnabled && settings.velocityEnabled,
+          "Randomizer Init enables all four modules");
+    check(!settings.fillEmptyOnly && settings.triggerChance == 0.5f && settings.spacing == 0.5f,
+          "Randomizer Init replaces notes with 50 percent trigger chance and spacing");
+    check(settings.minimumVelocity == 0.0f && settings.maximumVelocity == 1.0f,
+          "Randomizer Init uses the full velocity range");
 }
 
 void testSubdivisionRemembersDisabledVelocity()
@@ -186,6 +207,7 @@ void testRealtimeSequencerRenderUsesCallerOwnedBoundedStorage()
 void testNegativeSwingAdvancesOffGridEvents()
 {
     auto state = bsl::ProjectState::makeDefault();
+    state.global.swingReference = bsl::SwingReference::eighth; // This regression targets eighth-note swing.
     auto& pattern = state.patterns.front();
     pattern.bars = { bsl::BarState::make(4, 4) };
     pattern.lanes = { bsl::LaneState::make(4) };
@@ -344,6 +366,85 @@ void testRandomizerIsDeterministicAndRespectsFillEmpty()
         }
 }
 
+void testFillEmptySpacingFollowsPreservedHits()
+{
+    bsl::RandomizerSettings settings;
+    settings.slicingEnabled = false;
+    settings.noteSelectionEnabled = false;
+    settings.velocityEnabled = false;
+    settings.triggeringEnabled = true;
+    settings.fillEmptyOnly = true;
+    settings.triggerChance = 0.0f;
+    settings.spacing = 0.0f;
+
+    auto beat = bsl::BeatState::withSubdivision(2, 11, 0.25f);
+    beat.slices[1].enabled = false;
+    const auto preserved = beat.slices[0];
+    bsl::Randomizer::apply(beat, settings, 7u);
+    check(beat.slices[0] == preserved, "Fill Empty leaves the existing hit untouched");
+    check(beat.slices[1].enabled, "Spacing follows a preserved hit in Fill Empty mode");
+
+    settings.spacing = 1.0f;
+    settings.triggerChance = 0.9f;
+    auto separated = bsl::BeatState::withSubdivision(2, 11, 0.25f);
+    separated.slices[1].enabled = false;
+    bsl::Randomizer::apply(separated, settings, 7u);
+    check(separated.slices[0] == preserved && !separated.slices[1].enabled,
+          "high Spacing separates hits even with 90 percent Trigger Chance");
+    settings.triggerChance = 1.0f;
+    bsl::Randomizer::apply(separated, settings, 7u);
+    check(separated.slices[1].enabled,
+          "100 percent Trigger Chance still enables every candidate at high Spacing");
+    settings.triggerChance = 0.0f;
+    settings.spacing = 0.0f;
+
+    auto state = bsl::ProjectState::makeDefault();
+    state.patterns[0].bars = { bsl::BarState::make(2, 4) };
+    state.patterns[0].lanes = { bsl::LaneState::make(2) };
+    state.patterns[0].lanes[0].beats[0].slices[0] = preserved;
+    state.randomizer = settings;
+    check(state.isValid(), "Fill Empty lane fixture is a valid project");
+    bsl::ProjectEditor editor(state);
+    check(editor.randomizeLane(0, 0, 7u), "Fill Empty lane edit succeeds");
+    const auto& lane = editor.state().patterns[0].lanes[0];
+    check(lane.beats[0].slices[0] == preserved,
+          "lane Fill Empty keeps the existing hit's pad and velocity");
+    check(lane.beats[1].slices[0].enabled,
+          "Spacing follows a preserved hit across the beat boundary");
+}
+
+void testLaneRandomizerSpacingCrossesBeatBoundaries()
+{
+    auto state = bsl::ProjectState::makeDefault();
+    state.patterns[0].bars = { bsl::BarState::make(2, 4) };
+    state.patterns[0].lanes = { bsl::LaneState::make(2) };
+    check(state.isValid(), "lane spacing fixture is a valid project");
+    auto& settings = state.randomizer;
+    settings.slicingEnabled = false;
+    settings.noteSelectionEnabled = false;
+    settings.velocityEnabled = false;
+    settings.triggeringEnabled = true;
+    settings.fillEmptyOnly = false;
+    settings.triggerChance = 0.5f;
+    settings.spacing = 0.0f;
+    for (const auto seed : { 1u, 5u })
+    {
+        auto lane = state.patterns[0].lanes[0];
+        bsl::Randomizer::apply(lane, settings, seed);
+        check(lane.beats[0].slices[0].enabled,
+              "spacing fixture starts with a triggered step");
+        check(lane.beats[1].slices[0].enabled,
+              "low spacing clusters into the following beat");
+        bsl::ProjectEditor editor(state);
+        check(editor.randomizeLane(0, 0, seed), "lane spacing edit succeeds");
+        const auto& edited = editor.state().patterns[0].lanes[0];
+        check(edited.beats[0].slices[0].enabled && edited.beats[1].slices[0].enabled,
+              "lane randomizer control preserves clusters across beats");
+        check(edited.beats == lane.beats,
+              "lane randomizer control uses the lane randomizer semantics");
+    }
+}
+
 void testRandomizerUsesDefaultVelocityWhenVelocityModuleIsOff()
 {
     bsl::RandomizerSettings settings;
@@ -391,6 +492,21 @@ void testPatternLifecycleKeepsTriggerNotesUnique()
     check(!invalid.isValid(), "model rejects unreachable duplicate pattern triggers");
 }
 
+
+void testRemovingEarlierPatternPreservesSelection()
+{
+    bsl::ProjectEditor editor(bsl::ProjectState::makeDefault());
+    editor.addPattern();
+    editor.addPattern();
+    editor.state().patterns[1].name = "Keep selected";
+    editor.state().activePattern = 1;
+    check(editor.removePattern(0), "remove pattern before selection");
+    check(editor.state().patterns[editor.state().activePattern].name == "Keep selected",
+          "removing an earlier pattern preserves the selected pattern");
+    check(editor.undo() && editor.state().activePattern == 1,
+          "undo restores the selected pattern's original position");
+}
+
 void testPatternTriggerNotesSelectPatterns()
 {
     auto state = bsl::ProjectState::makeDefault();
@@ -419,7 +535,55 @@ void testPatternMidiExportPreservesTripletTimingAndVelocity()
               "MIDI export keeps exact triplet PPQ positions");
         check(events[0].note == 42 && events[0].velocity == 64,
               "MIDI export keeps note mapping and rounded velocity");
+        check(std::all_of(events.begin(), events.end(), [](const auto& event) {
+            return event.gateTicks == 320;
+        }), "MIDI export gates span the triplet subdivision");
     }
+}
+
+void testSwungMidiExportKeepsThePlaybackLoopPhase()
+{
+    auto state = bsl::ProjectState::makeDefault();
+    state.global.swingReference = bsl::SwingReference::eighth; // This regression targets eighth-note swing.
+    auto& pattern = state.patterns.front();
+    pattern.bars = { bsl::BarState::make(1, 16) };
+    pattern.lanes = { bsl::LaneState::make(1) };
+    auto& beat = pattern.lanes.front().beats.front();
+    beat = bsl::BeatState::withSubdivision(3, 0, 0.8f);
+    beat.slices[0].enabled = beat.slices[1].enabled = false;
+    state.global.swingPercent = 200.0;
+    const auto tail = bsl::Sequencer::exportPattern(state, 0, 960);
+    check(tail.size() == 1 && tail[0].tick == 27,
+          "swung tail wraps into the MIDI clip at the same phase as looped playback");
+
+    for (const auto reference : { bsl::SwingReference::eighth, bsl::SwingReference::quarter,
+                                   bsl::SwingReference::half })
+        for (const double swing : { -200.0, 0.0, 200.0 })
+            for (const int subdivisions : { 3, 7, 45 })
+            {
+                state.global.swingReference = reference;
+                state.global.swingPercent = swing;
+                beat = bsl::BeatState::withSubdivision(subdivisions, 0, 0.8f);
+                const auto exported = bsl::Sequencer::exportPattern(state, 0, 960);
+                bsl::TransportFrame frame;
+                frame.sampleRate = 1920.0; // One sample per MIDI tick at 120 BPM.
+                frame.bpm = 120.0;
+                frame.absoluteSampleStart = 240;
+                frame.blockSize = 240;
+                frame.playing = true;
+                const auto played = bsl::Sequencer::render(state, frame);
+                check(exported.size() == played.size(), "export retains every swung playback hit");
+                for (std::size_t index = 0; index < std::min(exported.size(), played.size()); ++index)
+                {
+                    check(exported[index].tick == played[index].sampleOffset,
+                          "exported short-meter swing agrees with the playback loop");
+                    check(exported[index].gateTicks == played[index].gateFrames,
+                          "exported short-meter gates agree with swung playback");
+                }
+                check(std::all_of(exported.begin(), exported.end(), [](const auto& event) {
+                    return event.tick >= 0 && event.tick < 240;
+                }), "every swung export note starts inside the meter-defined clip");
+            }
 }
 
 void testPadIdentityIsIndependentOfMidiMapping()
@@ -587,6 +751,7 @@ int main()
     testHistorySharesImmutableSamplePayloadsAndTracksParameterOwnership();
     testQuantizedEventsBelongToExactlyOneAudioBlock();
     testDefaultProjectMatchesDocumentedLimits();
+    testRandomizerInitPreset();
     testSubdivisionRemembersDisabledVelocity();
     testSequencerProducesSampleAccurateTripletEvents();
     testRealtimeSequencerRenderUsesCallerOwnedBoundedStorage();
@@ -598,10 +763,14 @@ int main()
     testUndoRedoRestoresCanonicalProjectState();
     testBeatTransformsPreserveNotesAndVelocities();
     testRandomizerIsDeterministicAndRespectsFillEmpty();
+    testFillEmptySpacingFollowsPreservedHits();
+    testLaneRandomizerSpacingCrossesBeatBoundaries();
     testRandomizerUsesDefaultVelocityWhenVelocityModuleIsOff();
     testPatternLifecycleKeepsTriggerNotesUnique();
+    testRemovingEarlierPatternPreservesSelection();
     testPatternTriggerNotesSelectPatterns();
     testPatternMidiExportPreservesTripletTimingAndVelocity();
+    testSwungMidiExportKeepsThePlaybackLoopPhase();
     testPadIdentityIsIndependentOfMidiMapping();
     testLaneRandomizationUsesOneUndoCheckpointAndStableBeatSeeds();
     testLaneDefaultsContainValidPadIndices();

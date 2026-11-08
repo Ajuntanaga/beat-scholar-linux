@@ -15,6 +15,7 @@ import json
 import math
 import os
 import subprocess
+import struct
 import tempfile
 import wave
 from pathlib import Path
@@ -85,13 +86,41 @@ def write_pcm24(path: Path, samples: np.ndarray, sample_rate: int) -> None:
         target.writeframes(packed.tobytes())
 
 
+NATIVE_PAD_OUTPUT_TRIM = 0.30000001192092896
+
+
+def write_reference_replay_wav(path: Path, samples: np.ndarray, sample_rate: int) -> None:
+    # Reference WAVs already contain the original pad output trim. Undo it
+    # before replay so the candidate applies it once. Float WAV preserves
+    # values above unity without changing the level into nonlinear master FX.
+    scaled = (samples / NATIVE_PAD_OUTPUT_TRIM).astype("<f4")
+    if not np.all(np.isfinite(scaled)):
+        raise ValueError("reference replay requires finite samples")
+    channels = scaled.shape[1]
+    pcm = scaled.tobytes()
+    fmt = struct.pack("<HHIIHH", 3, channels, sample_rate,
+                      sample_rate * channels * 4, channels * 4, 32)
+    body = (b"WAVEfmt " + struct.pack("<I", len(fmt)) + fmt
+            + b"fact" + struct.pack("<II", 4, len(scaled))
+            + b"data" + struct.pack("<I", len(pcm)) + pcm)
+    path.write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
+
+
+def validate_replay_pad(pad: dict[str, Any] | None) -> None:
+    settings = default_pad(0) | (pad or {})
+    if (settings["driveEnabled"] or settings["compression"] != 0.0
+            or settings["crush"] != 0.0 or settings["distortionMix"] != 0.0):
+        raise ValueError("reference replay requires a linear pad path")
+
+
 def metrics(samples: np.ndarray, sample_rate: int) -> dict[str, float]:
-    mono = samples.mean(axis=1)
     rms = float(np.sqrt(np.mean(np.square(samples))))
     peak = float(np.max(np.abs(samples)))
-    window = np.hanning(len(mono))
-    spectrum = np.abs(np.fft.rfft(mono * window))
-    frequencies = np.fft.rfftfreq(len(mono), 1.0 / sample_rate)
+    window = np.hanning(len(samples))[:, None]
+    # Combine channel energies; summing waveforms can erase opposite polarity.
+    channel_spectra = np.fft.rfft(samples * window, axis=0)
+    spectrum = np.sqrt(np.mean(np.abs(channel_spectra) ** 2, axis=1))
+    frequencies = np.fft.rfftfreq(len(samples), 1.0 / sample_rate)
     total = float(np.sum(spectrum))
     centroid = float(np.sum(frequencies * spectrum) / total) if total else 0.0
     high_energy = float(np.sum(np.square(spectrum[frequencies >= 4000.0])))
@@ -120,8 +149,8 @@ def delta(effect: dict[str, float], dry: dict[str, float]) -> dict[str, float]:
 
 def align(reference: np.ndarray, candidate: np.ndarray, radius: int = 512) -> dict[str, float | int]:
     length = min(len(reference), len(candidate))
-    left = reference[:length].mean(axis=1)
-    right = candidate[:length].mean(axis=1)
+    left = reference[:length]
+    right = candidate[:length]
     if length < 2:
         return {"lag_samples": 0, "correlation": 0.0}
     # This is the same normalized-overlap correlation as the former per-lag
@@ -130,14 +159,16 @@ def align(reference: np.ndarray, candidate: np.ndarray, radius: int = 512) -> di
     # actual-host diagnostics.
     fft_length = 1 << (2 * length - 1).bit_length()
     dots = np.fft.irfft(
-        np.fft.rfft(right, fft_length) * np.fft.rfft(left[::-1], fft_length),
+        np.sum(np.fft.rfft(right, fft_length, axis=0)
+               * np.fft.rfft(left[::-1], fft_length, axis=0), axis=1),
         fft_length)[:2 * length - 1]
-    squared_left = np.concatenate(([0.0], np.cumsum(np.square(left))))
-    squared_right = np.concatenate(([0.0], np.cumsum(np.square(right))))
+    squared_left = np.concatenate(([0.0], np.cumsum(np.sum(np.square(left), axis=1))))
+    squared_right = np.concatenate(([0.0], np.cumsum(np.sum(np.square(right), axis=1))))
     max_lag = min(radius, length - 1)
     lags = np.arange(-max_lag, max_lag + 1)
-    start_left = np.maximum(lags, 0)
-    start_right = np.maximum(-lags, 0)
+    # Positive lag means the candidate is delayed, as in aligned_samples().
+    start_left = np.maximum(-lags, 0)
+    start_right = np.maximum(lags, 0)
     overlap = length - np.abs(lags)
     left_energy = squared_left[start_left + overlap] - squared_left[start_left]
     right_energy = squared_right[start_right + overlap] - squared_right[start_right]
@@ -183,37 +214,39 @@ def waveform_comparison(reference: np.ndarray, candidate: np.ndarray) -> dict[st
 
 
 def onset_and_duration(samples: np.ndarray) -> tuple[int, int]:
-    mono = np.abs(samples.mean(axis=1))
-    threshold = float(np.max(mono)) * 1.0e-3
-    active = np.flatnonzero(mono >= threshold)
+    envelope = np.max(np.abs(samples), axis=1)
+    peak = float(np.max(envelope))
+    if peak == 0.0:
+        return 0, 0
+    threshold = peak * 1.0e-3
+    active = np.flatnonzero(envelope >= threshold)
     if not len(active):
         return 0, 0
     return int(active[0]), int(active[-1] - active[0] + 1)
 
 
 def dominant_frequency_hz(samples: np.ndarray, sample_rate: int) -> float:
-    mono = samples.mean(axis=1)
-    if not np.any(mono):
+    if not np.any(samples):
         return 0.0
-    spectrum = np.abs(np.fft.rfft(mono * np.hanning(len(mono))))
+    spectrum = np.sum(np.abs(np.fft.rfft(
+        samples * np.hanning(len(samples))[:, None], axis=0)) ** 2, axis=1)
     if len(spectrum) < 3:
         return 0.0
     bin_index = int(np.argmax(spectrum[1:]) + 1)
-    return float(np.fft.rfftfreq(len(mono), 1.0 / sample_rate)[bin_index])
+    return float(np.fft.rfftfreq(len(samples), 1.0 / sample_rate)[bin_index])
 
 
 def resampling_pitch_ratio(source: np.ndarray, effected: np.ndarray) -> float:
-    source_mono = source.mean(axis=1)
-    effected_mono = effected.mean(axis=1)
-    source_positions = np.arange(len(source_mono), dtype=np.float64)
+    source_positions = np.arange(len(source), dtype=np.float64)
 
     def score(ratio: float) -> float:
-        positions = np.arange(len(effected_mono), dtype=np.float64) * ratio
-        positions = positions[positions < len(source_mono) - 1]
-        candidate = effected_mono[:len(positions)]
-        resampled = np.interp(positions, source_positions, source_mono)
+        positions = np.arange(len(effected), dtype=np.float64) * ratio
+        positions = positions[positions < len(source) - 1]
+        candidate = effected[:len(positions)]
+        resampled = np.column_stack([
+            np.interp(positions, source_positions, channel) for channel in source.T])
         denominator = float(np.linalg.norm(resampled) * np.linalg.norm(candidate))
-        return float(np.dot(resampled, candidate) / denominator) if denominator else -1.0
+        return float(np.sum(resampled * candidate) / denominator) if denominator else -1.0
 
     ratios = np.linspace(0.9, 1.25, 701)
     scores = np.asarray([score(float(ratio)) for ratio in ratios])
@@ -231,14 +264,15 @@ def resampling_pitch_ratio(source: np.ndarray, effected: np.ndarray) -> float:
 
 
 def ambience_measurement(samples: np.ndarray, sample_rate: int) -> dict[str, float]:
-    mono = samples.mean(axis=1)
     window_frames = max(1, int(round(sample_rate * 0.050)))
-    window_count = len(mono) // window_frames
+    window_count = len(samples) // window_frames
     if window_count < 2:
         return {"windowed_decay_db": 0.0, "rt60_seconds": 0.0,
                 "spectral_centroid_hz": metrics(samples, sample_rate)["spectral_centroid_hz"]}
-    windows = mono[:window_count * window_frames].reshape(window_count, window_frames)
-    db = 20.0 * np.log10(np.maximum(np.sqrt(np.mean(np.square(windows), axis=1)), 1.0e-15))
+    windows = samples[:window_count * window_frames].reshape(
+        window_count, window_frames, samples.shape[1])
+    db = 20.0 * np.log10(np.maximum(
+        np.sqrt(np.mean(np.square(windows), axis=(1, 2))), 1.0e-15))
     times = np.arange(window_count, dtype=np.float64) * window_frames / sample_rate
     # Compare the same early and 500-ms windows, rather than allowing trailing
     # digital silence to turn an otherwise useful decay measure into -300 dB.
@@ -254,7 +288,37 @@ def ambience_measurement(samples: np.ndarray, sample_rate: int) -> dict[str, flo
     }
 
 
+def ambience_return_measurement(affected: np.ndarray, neutral: np.ndarray,
+                                sample_rate: int) -> dict[str, float]:
+    if affected.shape != neutral.shape:
+        raise ValueError("ambience return requires matching affected and neutral shapes")
+    return ambience_measurement(affected - neutral, sample_rate)
+
+
+def ambience_tap_shape(tap_energies: dict[str, dict[str, float]],
+                       residual_rms: dict[str, float]) -> dict[str, Any]:
+    # These fixed windows fingerprint the return envelopes, not native DSP parity.
+    # Normalize each effect by its own RMS so return gain cannot change the verdict.
+    normalized = {
+        effect: {tap: energy / max(residual_rms[effect], 1.0e-15)
+                 for tap, energy in taps.items()}
+        for effect, taps in tap_energies.items()
+    }
+    return {
+        "normalized_tap_energy": normalized,
+        "checks": {
+            "reverb_is_longer_than_room": (
+                normalized["reverb"]["reverb"] > normalized["room"]["reverb"] * 2.0),
+            "room_is_earlier_than_reverb": (
+                normalized["room"]["room"] > normalized["reverb"]["room"] * 2.0),
+        },
+    }
+
+
 def default_pad(index: int) -> dict[str, Any]:
+    # These fixtures replay an already rendered original. Its neutral
+    # captures disable both LPFs, and replay must not apply the HPF twice.
+    # Filter sweeps explicitly enable only the filter they measure.
     return {
         "name": PAD_NAMES[index], "factorySampleIds": ["", ""],
         "customSampleName": "", "customSampleSha256": "", "customSampleBase64": "",
@@ -262,13 +326,13 @@ def default_pad(index: int) -> dict[str, Any]:
         "gain": math.sqrt(2.0) if index == 0 else 1.0, "pan": 0.0,
         "attackSeconds": 0.0, "attackNormalized": 0.0, "damp": 0.0,
         "pitchSemitones": 0.0, "fineCents": 0.0, "highPass": 0.0,
-        "filterEnabled": True, "cutoff": 1.0, "resonance": 0.0,
+        "filterEnabled": False, "cutoff": 1.0, "resonance": 0.0,
         "driveEnabled": False, "driveGainDb": 0.0, "distortionMix": 0.0,
-        "independentDistortion": False, "distortionDrive": 0.5,
+        "nativeDriveInsert": True, "independentDistortion": True, "distortionDrive": 0.5,
         "compression": 0.0, "crush": 0.0, "reverb": 0.0, "room": 0.0,
-        "delay": 0.0,
-        "oneShot": True, "muted": False, "solo": False,
-        "lpfBypass": False, "hpfBypass": False, "driveBypass": False, "crushBypass": False,
+        "delay": 0.0, "auxGain": 0.0,
+        "oneShot": True, "mono": False, "muted": False, "solo": False,
+        "lpfBypass": False, "hpfBypass": True, "driveBypass": False, "crushBypass": False,
     }
 
 
@@ -287,8 +351,8 @@ def native_state(input_wav: Path, *, pad: dict[str, Any] | None = None,
         if pad:
             pads[index].update(pad)
     master_state: dict[str, Any] = {
-        "filterEnabled": True, "cutoff": 1.0, "resonance": 0.0,
-        "delay": 0.0, "distortion": 0.0, "reverb": 0.0, "room": 0.0,
+        "filterEnabled": False, "cutoff": 1.0, "resonance": 0.0,
+        "delay": 0.0, "distortionReturn": 1.0, "distortion": 0.0, "reverb": 0.0, "room": 0.0,
         "crush": 0.0, "compression": 0.0, "gain": 1.0,
     }
     if master:
@@ -305,6 +369,7 @@ def native_state(input_wav: Path, *, pad: dict[str, Any] | None = None,
             "swingPercent": 0.0, "swingReference": 0, "beatsPerMinute": 120.0,
             "defaultVelocity": 0.8, "sequencerEnabled": False, "samplerEnabled": True,
             "auditionDuringPlayback": True, "kitLocked": False, "multiOutput": False,
+            "auxEnabled": True, "masterEnabled": True,
         },
         "master": master_state,
         "randomizer": {
@@ -407,14 +472,18 @@ REFERENCE_CASES: dict[str, dict[str, Any]] = {
                         "pad": {"pitchSemitones": 2.0}},
     "master_crush_080": {"category": "nonlinear", "master": {"crush": 0.8}},
     "master_compression_080": {"category": "nonlinear", "master": {"compression": 0.8}},
-    "master_filter_035": {"category": "filter", "master": {"cutoff": 0.35, "resonance": 0.5}},
+    "master_filter_035": {"category": "filter", "master": {
+        "filterEnabled": True, "cutoff": 0.35, "resonance": 0.5}},
     "master_delay_050": {"category": "ambience", "input": "neutral",
                          "pad": {"delay": 0.5}, "master": {"delay": 0.5},
                          "informational": True},
-    # These captures are preserved and measured, but the original did not
-    # audibly change in them.  They cannot manufacture an ambience pass.
-    "master_reverb_050": {"category": "ambience", "input": "neutral", "master": {"reverb": 0.5}, "informational": True},
-    "master_room_050": {"category": "ambience", "input": "neutral", "master": {"room": 0.5}, "informational": True},
+    # Match both the pad send and master return used in the original captures.
+    "master_reverb_050": {"category": "ambience", "input": "neutral",
+                          "pad": {"reverb": 0.5}, "master": {"reverb": 0.5},
+                          "informational": True},
+    "master_room_050": {"category": "ambience", "input": "neutral",
+                        "pad": {"room": 0.5}, "master": {"room": 0.5},
+                        "informational": True},
 }
 LIMITS = {
     "master_compression_080": {
@@ -460,7 +529,13 @@ ACTUAL_ALIGNMENT_LIMITS = {
 REQUIRED_REFERENCE_CATEGORIES = (
     "dry", "mapping", "timing-pitch", "filter", "nonlinear", "ambience",
 )
-AVAILABLE_REFERENCE_CATEGORIES = REQUIRED_REFERENCE_CATEGORIES
+# Functional return checks do not establish original-effect parity. The current
+# four-trigger captures also cannot supply a single-decay RT60 measurement.
+AVAILABLE_REFERENCE_CATEGORIES = tuple(
+    category for category in REQUIRED_REFERENCE_CATEGORIES
+    if any(case["category"] == category and not case.get("informational", False)
+           for case in REFERENCE_CASES.values())
+)
 MAPPING_LIMITS = {
     "maximum_absolute_lag_samples": 0,
     "maximum_sample_absolute_error": PCM24_LSB,
@@ -635,6 +710,8 @@ def evaluate_reference_acceptance(
 def run_references(validation_root: Path, artifacts: Path, *, host: Path,
                    bundle: Path, plugin_sha256: str, block_size: int,
                    suite_mode: str = "full") -> dict[str, Any]:
+    for case in REFERENCE_CASES.values():
+        validate_replay_pad(case.get("pad"))
     original_audio: dict[str, np.ndarray] = {}
     original_metrics: dict[str, dict[str, float]] = {}
     original_hashes: dict[str, str] = {}
@@ -663,21 +740,23 @@ def run_references(validation_root: Path, artifacts: Path, *, host: Path,
     base_sources: list[Path] = []
     for index in range(2):
         path = artifacts / f"isolated-pad-neutral-{index}.wav"
-        write_pcm24(path, original_audio["pad_neutral"][
+        write_reference_replay_wav(path, original_audio["pad_neutral"][
             index * loop_frames:(index + 1) * loop_frames], sample_rate)
         base_sources.append(path)
     ambience_sources: list[Path] = []
     for index in range(len(ambience_neutral) // loop_frames):
         path = artifacts / f"isolated-pad-ambience-{index}.wav"
-        write_pcm24(path, ambience_neutral[
+        write_reference_replay_wav(path, ambience_neutral[
             index * loop_frames:(index + 1) * loop_frames], sample_rate)
         ambience_sources.append(path)
+    replay_dry = artifacts / "replay-dry.wav"
+    write_reference_replay_wav(replay_dry, original_audio["dry"], sample_rate)
     for name, case in REFERENCE_CASES.items():
         uses_neutral = case.get("input") == "neutral"
         target_frames = len(original_audio[name])
         sources = (ambience_sources
                    if uses_neutral and target_frames > base_frames else base_sources)
-        input_wav = sources[0] if uses_neutral else validation_root / REFERENCE_FILES["dry"]
+        input_wav = sources[0] if uses_neutral else replay_dry
         output = artifacts / f"actual-{name}.wav"
         renders[name] = render_case(
             host=host, bundle=bundle, plugin_sha256=plugin_sha256,
@@ -754,8 +833,10 @@ def run_references(validation_root: Path, artifacts: Path, *, host: Path,
                 "pitch_error_cents": pitch_error_cents,
             }
         if REFERENCE_CASES[name]["category"] == "ambience":
-            original_ambience = ambience_measurement(original_audio[name], sample_rate)
-            reconstructed_ambience = ambience_measurement(reconstructed_audio[name], sample_rate)
+            original_ambience = ambience_return_measurement(
+                original_audio[name], ambience_neutral, sample_rate)
+            reconstructed_ambience = ambience_return_measurement(
+                reconstructed_audio[name], ambience_render, sample_rate)
             original_rt60 = original_ambience["rt60_seconds"]
             reconstructed_rt60 = reconstructed_ambience["rt60_seconds"]
             if math.isinf(original_rt60) and math.isinf(reconstructed_rt60):
@@ -764,6 +845,7 @@ def run_references(validation_root: Path, artifacts: Path, *, host: Path,
                 rt60_relative_error = abs(reconstructed_rt60 - original_rt60) / max(
                     abs(original_rt60), 1.0e-15)
             comparison["ambience"] = {
+                "measurement": "effect-minus-matching-neutral",
                 "original": original_ambience,
                 "reconstruction": reconstructed_ambience,
                 "windowed_decay_error_db": abs(
@@ -806,8 +888,10 @@ def run_references(validation_root: Path, artifacts: Path, *, host: Path,
         effect: float(np.sqrt(np.mean(np.square(residual))))
         for effect, residual in ambience_residuals.items()
     }
+    tap_shape = ambience_tap_shape(tap_energies, residual_rms)
     comparisons["_ambience_functional"] = {
-        "authority": "manual-semantics-actual-vst3",
+        "authority": "actual-vst3-functional-and-envelope-regression",
+        "normalized_tap_energy": tap_shape["normalized_tap_energy"],
         "residual_rms": residual_rms,
         "tap_energy": tap_energies,
         "checks": {
@@ -815,12 +899,7 @@ def run_references(validation_root: Path, artifacts: Path, *, host: Path,
             "reverb_changes_output": residual_rms["reverb"] > 1.0e-5,
             "room_changes_output": residual_rms["room"] > 1.0e-5,
             "delay_quarter_second_return": tap_energies["delay"]["delay"] > 1.0e-4,
-            "reverb_is_longer_than_room": (
-                tap_energies["reverb"]["reverb"]
-                > tap_energies["room"]["reverb"] * 2.0),
-            "room_is_earlier_than_reverb": (
-                tap_energies["room"]["room"]
-                > tap_energies["reverb"]["room"] * 2.0),
+            **tap_shape["checks"],
         },
     }
     dry_alignment = align(original_audio["dry"], reconstructed_audio["dry"])
@@ -846,19 +925,23 @@ def run_references(validation_root: Path, artifacts: Path, *, host: Path,
         "authority": "licensed-original-reference",
         "method": (
             "The licensed original dry WAV, or one isolated period of the licensed neutral pad "
-            "render with its two-trigger schedule restored, is embedded as a private native-v2 "
-            "custom sample; "
+            "render with its trigger schedule restored, is embedded as a private native-v2 "
+            "custom sample. Ambience measurements subtract the matching four-trigger "
+            "neutral render from each affected render; "
             "every reconstruction WAV is rendered by the exact built VST3 through "
             "actual_vst3_host. Python computes measurements only."),
         "sample_rate": sample_rate, "block_size": block_size,
         "active_frames": {name: len(audio) for name, audio in original_audio.items()},
+        "replay_input_scale": 1.0 / NATIVE_PAD_OUTPUT_TRIM,
         "input_alignment": dry_alignment,
         "dry_comparison": dry_comparison,
         "original_hashes": original_hashes, "original_metrics": original_metrics,
         "reconstruction_metrics": reconstructed_metrics, "renders": renders,
         "comparisons": comparisons,
         "informational_references": {
-            name: "The licensed capture did not change audibly; retained as a diagnostic only."
+            name: ("The return is measured after subtracting the matching neutral render. "
+                   "Its repeated triggers prevent a single-decay RT60 comparison, so "
+                   "these aggregate measurements remain diagnostic.")
             for name, case in REFERENCE_CASES.items() if case.get("informational", False)
         },
         "acceptance": acceptance,
@@ -880,15 +963,16 @@ COVERAGE_CONTROLS: tuple[Control, ...] = (
     ("pad", "highPass", lambda x: x), ("pad", "filterEnabled", bool_level),
     ("pad", "cutoff", lambda x: x), ("pad", "resonance", lambda x: x),
     ("pad", "driveEnabled", bool_level),
-    ("pad", "driveGainDb", lambda x: -60.0 + 120.0 * x),
+    ("pad", "driveGainDb", lambda x: 24.0 * x),
     ("pad", "distortionMix", lambda x: x),
     ("pad", "compression", lambda x: x), ("pad", "crush", lambda x: x),
     ("pad", "reverb", lambda x: x), ("pad", "room", lambda x: x),
-    ("pad", "delay", lambda x: x),
+    ("pad", "delay", lambda x: x), ("pad", "auxGain", lambda x: x),
     ("pad", "oneShot", bool_level), ("pad", "muted", bool_level),
     ("pad", "solo", bool_level), ("master", "filterEnabled", bool_level),
     ("master", "cutoff", lambda x: x), ("master", "resonance", lambda x: x),
     ("master", "delay", lambda x: x), ("master", "distortion", lambda x: x),
+    ("master", "distortionReturn", lambda x: x),
     ("master", "reverb", lambda x: x), ("master", "room", lambda x: x),
     ("master", "crush", lambda x: x), ("master", "compression", lambda x: x),
     ("master", "gain", lambda x: x),
@@ -922,17 +1006,25 @@ def run_coverage(input_wav: Path, artifacts: Path, *, host: Path, bundle: Path,
                     if scope == "pad" and control == "filterEnabled":
                         pad.update({"cutoff": 0.35, "resonance": 0.5})
                     elif scope == "pad" and control == "resonance":
-                        pad["cutoff"] = 0.35
+                        pad.update({"filterEnabled": True, "cutoff": 0.35})
+                    elif scope == "pad" and control == "cutoff":
+                        pad["filterEnabled"] = True
+                    elif scope == "pad" and control == "highPass":
+                        pad["hpfBypass"] = False
                     elif scope == "pad" and control == "driveEnabled":
-                        pad.update({"driveGainDb": 12.0, "distortionMix": 1.0})
+                        pad.update({"driveGainDb": 12.0, "distortionMix": 0.0})
                     elif scope == "pad" and control == "driveGainDb":
-                        pad.update({"driveEnabled": True, "distortionMix": 1.0})
+                        pad.update({"driveEnabled": True, "distortionMix": 0.0})
                     elif scope == "pad" and control == "distortionMix":
-                        pad.update({"driveEnabled": True, "driveGainDb": 12.0})
+                        pad.update({"driveEnabled": False, "driveGainDb": 0.0})
+                    elif scope == "master" and control == "distortionReturn":
+                        pad = {"distortionMix": 1.0, "distortionDrive": 0.5}
                     elif scope == "master" and control == "filterEnabled":
                         master.update({"cutoff": 0.35, "resonance": 0.5})
                     elif scope == "master" and control == "resonance":
-                        master["cutoff"] = 0.35
+                        master.update({"filterEnabled": True, "cutoff": 0.35})
+                    elif scope == "master" and control == "cutoff":
+                        master["filterEnabled"] = True
                     midi = (("0:36:127", f"{max(1, active_frames // 4)}:36:0")
                             if scope == "pad" and control == "oneShot"
                             else ("0:36:127",))

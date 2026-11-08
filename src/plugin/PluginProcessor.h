@@ -1,6 +1,7 @@
 #pragma once
 
 #include "audio/AudioEngine.h"
+#include "plugin/AmbienceConvolution.h"
 #include "core/Model.h"
 #include "core/PatternScheduler.h"
 #include "core/ProjectEditor.h"
@@ -22,6 +23,8 @@ public:
     using juce::AudioProcessor::processBlock;
     void prepareToPlay(double sampleRate, int maximumExpectedSamplesPerBlock) override;
     void releaseResources() override;
+    // Read while processing is stopped, after prepareToPlay has loaded local assets.
+    [[nodiscard]] bool hasFactoryAmbience() const noexcept { return ambience_.isAvailable(); }
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
@@ -49,6 +52,7 @@ public:
     void stopStandalone() noexcept;
     [[nodiscard]] bool isStandalonePlaying() const noexcept { return standalonePlaying_.load(); }
     [[nodiscard]] bool isTransportPlaying() const noexcept { return transportPlaying_.load(); }
+    [[nodiscard]] double effectiveBpm() const noexcept { return effectiveBpm_.load(std::memory_order_relaxed); }
     static constexpr std::size_t maximumDecodedSampleBytes = 128u * 1024u * 1024u;
     [[nodiscard]] static bool supportsDecodedSample(std::int64_t frames, unsigned int channels) noexcept;
     juce::Result loadCustomSample(std::size_t pad, const juce::File& file);
@@ -58,12 +62,16 @@ public:
     bool savePresetFile(const juce::File& file);
     bool loadKitFile(const juce::File& file);
     bool saveKitFile(const juce::File& file);
+    void resetPresetToInit();
+    void resetKitToInit();
+    void resetRandomizerToInit();
     bool loadRandomizerFile(const juce::File& file);
     bool saveRandomizerFile(const juce::File& file);
     void markProjectDirty() noexcept { explicitRevision_.fetch_add(1, std::memory_order_relaxed); }
     void publishProjectStateIfNeeded();
     bool restoreProjectHistory(bool redo);
-    int takeRequestedPatternForUi() noexcept { return requestedPatternForUi_.exchange(-1); }
+    int takeRequestedPatternForUi() noexcept;
+    void selectPatternFromUi(std::size_t index);
     std::uint64_t restoredStateRevision() const noexcept
     {
         return restoredStateRevision_.load(std::memory_order_acquire);
@@ -76,6 +84,7 @@ public:
     juce::AudioProcessorValueTreeState& parameters() noexcept { return parameters_; }
 
 private:
+    friend struct BeatScholarLinuxProcessorTestAccess;
     static constexpr std::size_t maximumSequencerEvents = 4096;
     static BusesProperties makeBuses();
     static juce::AudioProcessorValueTreeState::ParameterLayout makeParameterLayout();
@@ -87,13 +96,18 @@ private:
     bool installSampleBytes(std::size_t pad, const void* data, std::size_t size);
 
     bsl::ProjectEditor projectEditor_ { bsl::ProjectState::makeDefault() };
+    bsl::AmbienceConvolution ambience_;
     bsl::AudioEngine audioEngine_;
     std::array<std::atomic<float>, bsl::padCount> padPeaks_ {};
     std::array<std::atomic<float>, 2> outputPeaks_ {};
     bsl::AudioBlock scratch_;
     juce::AudioProcessorValueTreeState parameters_;
     std::array<std::array<std::atomic<float>*, 4>, bsl::padCount> padBypassParameters_ {};
-    std::array<std::atomic<float>, bsl::padCount> pendingTriggers_ {};
+    struct PadAudition { std::uint8_t pad; float velocity; };
+    // The editor produces auditions on the message thread; audio consumes them.
+    static constexpr int auditionQueueSize = 256;
+    juce::AbstractFifo auditionFifo_ { auditionQueueSize };
+    std::array<PadAudition, auditionQueueSize> pendingTriggers_ {};
     juce::MidiBuffer incomingMidi_;
     std::array<bsl::SequencerBatchEvent, maximumSequencerEvents> sequencerEvents_ {};
     bsl::PatternTriggerCollector patternTriggerCollector_;
@@ -102,22 +116,25 @@ private:
     std::array<bsl::ProjectState, 3> stateSnapshots_;
     std::atomic<int> publishedStateIndex_ { 0 };
     std::atomic<int> readingStateIndex_ { -1 };
-    std::atomic<std::size_t> audioPattern_ { 0 };
-    std::atomic<int> requestedPatternForUi_ { -1 };
+    std::atomic<bsl::PatternId> audioPattern_ { 0 };
+    std::atomic<bsl::PatternId> requestedPatternForUi_ { 0 };
+    std::atomic<bsl::PatternId> pendingUiPattern_ { 0 };
     std::atomic<std::uint64_t> explicitRevision_ { 1 };
     std::atomic<std::uint64_t> restoredStateRevision_ { 0 };
     std::mutex statePublishMutex_;
     std::uint64_t lastPublishedEditorRevision_ = 0;
     std::uint64_t lastPublishedExplicitRevision_ = 0;
-    std::size_t lastPublishedActivePattern_ = 0;
+    bsl::PatternId lastPublishedActivePattern_ = 0;
     std::atomic<std::int64_t> fallbackSamplePosition_ { 0 };
     std::atomic<bool> standalonePlaying_ { true };
     std::atomic<bool> transportPlaying_ { false };
+    std::atomic<double> effectiveBpm_ { 120.0 };
     // Audio-thread-only pending MIDI gates, relative to the next callback.
     std::array<std::int64_t, 128> pendingMidiOffFrames_;
     std::int64_t midiExpectedSample_ = 0;
     double midiExpectedPpq_ = std::numeric_limits<double>::quiet_NaN();
     bool midiWasPlaying_ = false;
+    bool samplerWasEnabled_ = true;
     bsl::PatternScheduler patternScheduler_;
     bsl::AudioThreadResetRequest resetRequest_;
 

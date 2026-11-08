@@ -2,13 +2,26 @@
 #include "core/Randomizer.h"
 
 #include <algorithm>
+#include <atomic>
 #include <string>
 
 namespace bsl {
+namespace {
+
+PatternId newPatternId() noexcept
+{
+    static std::atomic<PatternId> next { 1 };
+    return next.fetch_add(1, std::memory_order_relaxed);
+}
+
+} // namespace
 
 ProjectEditor::ProjectEditor(ProjectState initialState)
     : state_(initialState.isValid() ? std::move(initialState) : ProjectState::makeDefault())
 {
+    // A loaded/replaced project must not inherit queued triggers from its predecessor.
+    for (auto& pattern : state_.patterns)
+        pattern.runtimeId = newPatternId();
 }
 
 void ProjectEditor::beginEdit(HistoryParameters parameters)
@@ -89,26 +102,34 @@ bool ProjectEditor::randomizeLane(std::size_t patternIndex, std::size_t laneInde
         || !state_.randomizer.isValid())
         return false;
     beginEdit();
-    auto& beats = state_.patterns[patternIndex].lanes[laneIndex].beats;
-    for (std::size_t beatIndex = 0; beatIndex < beats.size(); ++beatIndex)
-        Randomizer::apply(beats[beatIndex], state_.randomizer,
-                          seed + static_cast<std::uint32_t>(beatIndex),
-                          state_.global.defaultVelocity);
+    Randomizer::apply(state_.patterns[patternIndex].lanes[laneIndex], state_.randomizer,
+                      seed, state_.global.defaultVelocity);
     return true;
 }
 
 bool ProjectEditor::addBar(std::size_t patternIndex, BarState bar)
 {
+    if (patternIndex >= state_.patterns.size())
+        return false;
+    return insertBar(patternIndex, state_.patterns[patternIndex].bars.size(), bar);
+}
+
+bool ProjectEditor::insertBar(std::size_t patternIndex, std::size_t barIndex, BarState bar)
+{
     if (patternIndex >= state_.patterns.size() || !bar.isValid())
         return false;
     auto& pattern = state_.patterns[patternIndex];
+    if (barIndex > pattern.bars.size())
+        return false;
+    const auto start = firstBeatOfBar(pattern, barIndex);
     beginEdit();
-    pattern.bars.push_back(bar);
+    pattern.bars.insert(pattern.bars.begin() + static_cast<std::ptrdiff_t>(barIndex), bar);
     for (std::size_t laneIndex = 0; laneIndex < pattern.lanes.size(); ++laneIndex)
     {
         auto& lane = pattern.lanes[laneIndex];
         const auto padIndex = static_cast<std::uint8_t>(std::min(laneIndex, padCount - 1));
-        lane.beats.insert(lane.beats.end(), static_cast<std::size_t>(bar.numerator), emptyBeat(padIndex));
+        lane.beats.insert(lane.beats.begin() + static_cast<std::ptrdiff_t>(start),
+                          static_cast<std::size_t>(bar.numerator), emptyBeat(padIndex));
     }
     return true;
 }
@@ -189,7 +210,12 @@ bool ProjectEditor::setBarMeter(std::size_t patternIndex, std::size_t barIndex,
 
 bool ProjectEditor::addPattern()
 {
-    if (state_.patterns.size() >= 116)
+    return insertPattern(state_.patterns.size());
+}
+
+bool ProjectEditor::insertPattern(std::size_t patternIndex)
+{
+    if (patternIndex > state_.patterns.size() || state_.patterns.size() >= 116)
         return false;
     const auto trigger = state_.unusedPatternTriggerNote(12 + static_cast<int>(state_.patterns.size()));
     if (!trigger) return false;
@@ -197,8 +223,10 @@ bool ProjectEditor::addPattern()
     auto pattern = ProjectState::makeDefault().patterns.front();
     pattern.name = "Pattern " + std::to_string(state_.patterns.size() + 1);
     pattern.triggerNote = *trigger;
-    state_.patterns.push_back(std::move(pattern));
-    state_.activePattern = state_.patterns.size() - 1;
+    pattern.runtimeId = newPatternId();
+    state_.patterns.insert(state_.patterns.begin() + static_cast<std::ptrdiff_t>(patternIndex),
+                           std::move(pattern));
+    state_.activePattern = patternIndex;
     return true;
 }
 
@@ -212,6 +240,7 @@ bool ProjectEditor::duplicatePattern(std::size_t patternIndex)
     auto copy = state_.patterns[patternIndex];
     copy.name += " Copy";
     copy.triggerNote = *trigger;
+    copy.runtimeId = newPatternId();
     state_.patterns.insert(state_.patterns.begin() + static_cast<std::ptrdiff_t>(patternIndex + 1),
                            std::move(copy));
     state_.activePattern = patternIndex + 1;
@@ -243,7 +272,10 @@ bool ProjectEditor::removePattern(std::size_t patternIndex)
         return false;
     beginEdit();
     state_.patterns.erase(state_.patterns.begin() + static_cast<std::ptrdiff_t>(patternIndex));
-    state_.activePattern = std::min(state_.activePattern, state_.patterns.size() - 1);
+    if (patternIndex < state_.activePattern)
+        --state_.activePattern;
+    else
+        state_.activePattern = std::min(state_.activePattern, state_.patterns.size() - 1);
     return true;
 }
 

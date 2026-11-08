@@ -26,6 +26,36 @@ bool isValidSubdivision(std::size_t subdivision)
 
 } // namespace
 
+float padHighPassCutoffHz(float normalized) noexcept
+{
+    // Native Hipass FreqParameter: 1..3000 Hz, with 400 Hz at the centre.
+    constexpr float skew = 0.343640147081788f;
+    const float position = std::clamp(normalized, 0.0f, 1.0f);
+    return 1.0f + 2999.0f * (position > 0.0f ? std::exp(std::log(position) / skew) : 0.0f);
+}
+
+float normalizedPadHighPassCutoff(float frequencyHz) noexcept
+{
+    constexpr float skew = 0.343640147081788f;
+    const float position = (std::clamp(frequencyHz, 1.0f, 3000.0f) - 1.0f) / 2999.0f;
+    return position > 0.0f ? std::exp(std::log(position) * skew) : 0.0f;
+}
+
+float filterCutoffHz(float normalized) noexcept
+{
+    // Native FreqParameter: 10 Hz..20 kHz, with 2 kHz at the centre.
+    constexpr float skew = 0.30044121569325083f;
+    const float position = std::clamp(normalized, 0.0f, 1.0f);
+    return 10.0f + 19990.0f * (position > 0.0f ? std::exp(std::log(position) / skew) : 0.0f);
+}
+
+float normalizedFilterCutoff(float frequencyHz) noexcept
+{
+    constexpr float skew = 0.30044121569325083f;
+    const float position = (std::clamp(frequencyHz, 10.0f, 20000.0f) - 10.0f) / 19990.0f;
+    return position > 0.0f ? std::exp(std::log(position) * skew) : 0.0f;
+}
+
 BeatState BeatState::withSubdivision(std::size_t subdivision,
                                      std::uint8_t padIndex,
                                      float velocity)
@@ -112,20 +142,35 @@ double PatternState::durationInQuarterNotes() const
     return result;
 }
 
+RandomizerSettings RandomizerSettings::makeInitPreset()
+{
+    RandomizerSettings settings;
+    settings.selectedSubdivisions = { 2, 4, 8 };
+    settings.minimumVelocity = 0.0f;
+    return settings;
+}
+
 bool RandomizerSettings::isValid() const noexcept
 {
+    std::array<bool, padCount> padsSeen {};
+    for (const auto pad : selectedPads)
+    {
+        if (pad >= padCount || padsSeen[pad])
+            return false;
+        padsSeen[pad] = true;
+    }
+    std::array<bool, maximumSubdivision + 1> subdivisionsSeen {};
+    for (const auto subdivision : selectedSubdivisions)
+    {
+        if (subdivision < 1 || subdivision > maximumSubdivision || subdivisionsSeen[subdivision])
+            return false;
+        subdivisionsSeen[subdivision] = true;
+    }
     return std::isfinite(triggerChance) && triggerChance >= 0.0f && triggerChance <= 1.0f
            && std::isfinite(spacing) && spacing >= 0.0f && spacing <= 1.0f
            && std::isfinite(minimumVelocity) && std::isfinite(maximumVelocity)
            && minimumVelocity >= 0.0f && maximumVelocity <= 1.0f
-           && minimumVelocity <= maximumVelocity
-           && std::all_of(selectedPads.begin(), selectedPads.end(), [](std::uint8_t pad) {
-                  return pad < padCount;
-              })
-           && std::all_of(selectedSubdivisions.begin(), selectedSubdivisions.end(),
-                          [](std::size_t value) {
-                              return value >= 1 && value <= maximumSubdivision;
-                          });
+           && minimumVelocity <= maximumVelocity;
 }
 
 ProjectState ProjectState::makeDefault()
@@ -152,6 +197,19 @@ ProjectState ProjectState::makeDefault()
     return state;
 }
 
+ProjectState ProjectState::makeMainInit()
+{
+    // Public native references establish the musical structure below, but not
+    // a distinct hidden sample set. Keep the reconstruction's deterministic
+    // default kit/master values rather than inventing unavailable native data.
+    auto state = makeDefault();
+    auto& pattern = state.patterns.front();
+    pattern.name = "A";
+    pattern.triggerNote = 60; // JUCE's middle-C-3 display labels MIDI 60 as C3.
+    pattern.lanes.resize(3);
+    return state;
+}
+
 bool ProjectState::isValid() const
 {
     if (schemaVersion != 2 || patterns.empty() || activePattern >= patterns.size()
@@ -170,7 +228,7 @@ bool ProjectState::isValid() const
     };
     if (!unit(master.cutoff)
         || !std::isfinite(master.resonance) || master.resonance < 0.0f || master.resonance > 1.0f
-        || !unit(master.delay) || !unit(master.distortion) || !unit(master.reverb)
+        || !unit(master.delay) || !unit(master.distortionReturn) || !unit(master.distortion) || !unit(master.reverb)
         || !unit(master.room)
         || !std::isfinite(master.crush) || master.crush < 0.0f || master.crush > 1.0f
         || !std::isfinite(master.compression) || master.compression < 0.0f
@@ -201,7 +259,7 @@ bool ProjectState::isValid() const
             || pad.driveGainDb < -60.0f || pad.driveGainDb > 60.0f
             || !unit(pad.distortionMix) || !unit(pad.distortionDrive)
             || !unit(pad.compression) || !unit(pad.crush)
-            || !unit(pad.reverb) || !unit(pad.room) || !unit(pad.delay))
+            || !unit(pad.reverb) || !unit(pad.room) || !unit(pad.delay) || !unit(pad.auxGain))
             return false;
         const bool hasAnyCustom = !pad.customSampleName.empty()
                                   || !pad.customSampleSha256.empty()

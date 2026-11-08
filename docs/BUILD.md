@@ -62,8 +62,9 @@ build/plugin/BeatScholarLinux_artefacts/Release/Standalone/Beat Scholar Linux
 The build does not install them automatically. Test a new bundle in a separate
 host session before replacing one used by an open project.
 
-The full configuration registers nine CTest suites. The private factory playback
-suite returns skip code 77 when its content is absent. The remaining tests need
+The full configuration registers core, processor, editor and actual-VST checks;
+the available suites depend on the enabled targets and installed tools. The
+private factory playback suite returns skip code 77 when its content is absent. The remaining tests need
 no original samples or presets. GUI tests use Xvfb and avoid the desktop session.
 
 ## Using and checking the standalone app

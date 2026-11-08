@@ -15,7 +15,7 @@ const T& choose(const std::vector<T>& values, std::mt19937& engine)
 }
 
 void applyWithEngine(BeatState& beat, const RandomizerSettings& settings,
-                     std::mt19937& engine, float defaultVelocity)
+                     std::mt19937& engine, float defaultVelocity, bool& previousTriggered)
 {
     if (!settings.isValid())
         return;
@@ -26,24 +26,22 @@ void applyWithEngine(BeatState& beat, const RandomizerSettings& settings,
     std::uniform_real_distribution<float> unit(0.0f, 1.0f);
     std::uniform_real_distribution<float> velocity(settings.minimumVelocity,
                                                    settings.maximumVelocity);
-    bool previousTriggered = false;
     for (auto& slice : beat.slices)
     {
         if (settings.fillEmptyOnly && slice.enabled)
         {
-            previousTriggered = false;
+            previousTriggered = true;
             continue;
         }
 
         bool triggered = slice.enabled;
         if (settings.triggeringEnabled)
         {
-            const float chance = std::clamp(settings.triggerChance
-                                                + (previousTriggered
-                                                       ? settings.spacing * (1.0f - settings.triggerChance)
-                                                       : 0.0f),
-                                            0.0f, 1.0f);
-            triggered = unit(engine) <= chance;
+            // Low Spacing continues a phrase; high Spacing leaves gaps.
+            // Trigger Chance starts phrases, with 100% always enabling all slices.
+            const float chance = previousTriggered && settings.triggerChance < 1.0f
+                                     ? 1.0f - settings.spacing : settings.triggerChance;
+            triggered = unit(engine) < chance;
         }
         slice.enabled = triggered;
         previousTriggered = triggered;
@@ -70,15 +68,17 @@ void Randomizer::apply(BeatState& beat, const RandomizerSettings& settings,
                        std::uint32_t seed, float defaultVelocity)
 {
     std::mt19937 engine(seed);
-    applyWithEngine(beat, settings, engine, defaultVelocity);
+    bool previousTriggered = false;
+    applyWithEngine(beat, settings, engine, defaultVelocity, previousTriggered);
 }
 
 void Randomizer::apply(LaneState& lane, const RandomizerSettings& settings,
                        std::uint32_t seed, float defaultVelocity)
 {
     std::mt19937 engine(seed);
+    bool previousTriggered = false;
     for (auto& beat : lane.beats)
-        applyWithEngine(beat, settings, engine, defaultVelocity);
+        applyWithEngine(beat, settings, engine, defaultVelocity, previousTriggered);
 }
 
 } // namespace bsl

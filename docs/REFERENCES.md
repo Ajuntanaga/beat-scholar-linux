@@ -22,3 +22,12 @@ This repository links to the references rather than redistributing the manual,
 official images, commercial presets, or original audio. JUCE is fetched from
 [its upstream repository](https://github.com/juce-framework/JUCE) and retains its
 own licensing terms.
+
+## SoundForMore Getting Started walkthrough
+
+[Modalics Beat Scholar - Demo / Tutorial 1: Getting Started](https://www.youtube.com/watch?v=qOY2oMsUEMs)
+shows the iPad AUv3 version in Logic Pro. The context menu at 8:35 supplies a
+useful shared-workflow reference: Copy, Paste, Clear, Fill, Mirror, Shift Right,
+Shift Left and grouped subdivisions. Desktop keeps the manual's 45-slice limit;
+the video shows 42. Its touch-only toolbar and host chrome are platform-specific.
+The batch-55 audit records timestamped comparisons and validation separately.

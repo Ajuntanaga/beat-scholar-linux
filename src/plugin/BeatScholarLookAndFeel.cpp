@@ -21,6 +21,127 @@ juce::Font font(float height, bool heavy)
     return juce::Font(juce::FontOptions("Lato", heavy ? "Heavy" : "Regular", height));
 }
 
+void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad,
+                         juce::Colour tint, float stroke)
+{
+    g.setColour(tint);
+    const auto drawDrum = [&g, stroke](juce::Rectangle<float> box, bool sticks) {
+        auto body = box.withSizeKeepingCentre(box.getWidth() * 0.68f, box.getHeight() * 0.50f);
+        g.drawEllipse(body.removeFromTop(body.getHeight() * 0.33f), stroke);
+        g.drawLine(body.getX(), body.getY(), body.getX(), body.getBottom(), stroke);
+        g.drawLine(body.getRight(), body.getY(), body.getRight(), body.getBottom(), stroke);
+        g.drawLine(body.getX(), body.getBottom(), body.getRight(), body.getBottom(), stroke);
+        if (sticks)
+        {
+            g.drawLine(box.getCentreX() - box.getWidth() * 0.22f, box.getY(),
+                       box.getCentreX() + box.getWidth() * 0.10f, box.getCentreY(), stroke);
+            g.drawLine(box.getCentreX() + box.getWidth() * 0.22f, box.getY(),
+                       box.getCentreX() - box.getWidth() * 0.10f, box.getCentreY(), stroke);
+        }
+    };
+    const auto drawCymbal = [&g, stroke](juce::Rectangle<float> box, float tilt) {
+        const auto centre = box.getCentre();
+        g.drawLine(centre.x, centre.y, centre.x, box.getBottom(), stroke);
+        g.drawLine(centre.x - box.getWidth() * 0.18f, box.getBottom(),
+                   centre.x + box.getWidth() * 0.18f, box.getBottom(), stroke);
+        g.drawLine(box.getX(), centre.y + tilt, box.getRight(), centre.y - tilt, stroke * 1.2f);
+        g.drawEllipse(box.withSizeKeepingCentre(box.getWidth() * 0.12f,
+                                                box.getHeight() * 0.10f)
+                          .translated(0.0f, -box.getHeight() * 0.11f), stroke);
+    };
+    switch (pad)
+    {
+        case 0:
+        {
+            const auto drum = icon.withSizeKeepingCentre(std::min(icon.getWidth(), icon.getHeight()) * 0.72f,
+                                                         std::min(icon.getWidth(), icon.getHeight()) * 0.72f);
+            g.drawEllipse(drum, stroke);
+            g.drawEllipse(drum.withSizeKeepingCentre(drum.getWidth() * 0.26f,
+                                                     drum.getHeight() * 0.26f), stroke);
+            const auto beater = drum.withSizeKeepingCentre(drum.getWidth() * 0.13f,
+                                                            drum.getHeight() * 0.13f)
+                                    .translated(0.0f, drum.getHeight() * 0.32f);
+            g.drawEllipse(beater, stroke);
+            juce::Path pedal;
+            pedal.startNewSubPath(drum.getCentreX() - drum.getWidth() * 0.08f, beater.getBottom());
+            pedal.lineTo(drum.getCentreX() + drum.getWidth() * 0.08f, beater.getBottom());
+            pedal.lineTo(drum.getCentreX() + drum.getWidth() * 0.05f,
+                         drum.getBottom() + drum.getHeight() * 0.18f);
+            pedal.lineTo(drum.getCentreX() - drum.getWidth() * 0.05f,
+                         drum.getBottom() + drum.getHeight() * 0.18f);
+            pedal.closeSubPath();
+            g.strokePath(pedal, juce::PathStrokeType(stroke));
+            break;
+        }
+        case 1: drawDrum(icon, true); break;
+        case 2: drawDrum(icon, false); break;
+        case 3:
+        {
+            for (int finger = 0; finger < 4; ++finger)
+            {
+                const float x = icon.getX() + icon.getWidth() * (0.30f + finger * 0.11f);
+                g.drawLine(x, icon.getY() + icon.getHeight() * (0.12f + finger * 0.03f),
+                           x + icon.getWidth() * 0.10f, icon.getCentreY(), stroke);
+            }
+            juce::Path palm;
+            palm.addArc(icon.getX() + icon.getWidth() * 0.24f,
+                        icon.getCentreY() - icon.getHeight() * 0.08f,
+                        icon.getWidth() * 0.55f, icon.getHeight() * 0.55f,
+                        -0.4f, juce::MathConstants<float>::pi + 0.55f, true);
+            g.strokePath(palm, juce::PathStrokeType(stroke));
+            break;
+        }
+        case 4: drawCymbal(icon, 0.0f); break;
+        case 5:
+            drawCymbal(icon.translated(0.0f, -icon.getHeight() * 0.08f), 0.0f);
+            g.drawLine(icon.getX(), icon.getCentreY() + icon.getHeight() * 0.10f,
+                       icon.getRight(), icon.getCentreY() + icon.getHeight() * 0.10f, stroke);
+            break;
+        case 6: drawCymbal(icon, icon.getHeight() * 0.11f); break;
+        case 7: drawCymbal(icon, -icon.getHeight() * 0.04f); break;
+        case 8: drawCymbal(icon, icon.getHeight() * 0.14f); break;
+        case 9: drawDrum(icon.translated(-icon.getWidth() * 0.11f, 0.0f), false); break;
+        case 10: drawDrum(icon, false); break;
+        case 11: drawDrum(icon.translated(icon.getWidth() * 0.11f, 0.0f), false); break;
+        case 12:
+            g.drawEllipse(icon.withSizeKeepingCentre(icon.getWidth() * 0.25f, icon.getHeight() * 0.34f)
+                              .translated(-icon.getWidth() * 0.14f, -icon.getHeight() * 0.10f), stroke);
+            g.drawEllipse(icon.withSizeKeepingCentre(icon.getWidth() * 0.25f, icon.getHeight() * 0.34f)
+                              .translated(icon.getWidth() * 0.14f, icon.getHeight() * 0.08f), stroke);
+            g.drawLine(icon.getCentreX() - icon.getWidth() * 0.07f, icon.getCentreY(),
+                       icon.getX() + icon.getWidth() * 0.16f, icon.getBottom(), stroke);
+            g.drawLine(icon.getCentreX() + icon.getWidth() * 0.08f, icon.getCentreY(),
+                       icon.getRight() - icon.getWidth() * 0.10f, icon.getY(), stroke);
+            break;
+        case 13:
+        {
+            juce::Path triangle;
+            triangle.startNewSubPath(icon.getCentreX(), icon.getY() + icon.getHeight() * 0.12f);
+            triangle.lineTo(icon.getX() + icon.getWidth() * 0.18f, icon.getBottom() - icon.getHeight() * 0.12f);
+            triangle.lineTo(icon.getRight() - icon.getWidth() * 0.18f, icon.getBottom() - icon.getHeight() * 0.12f);
+            triangle.closeSubPath();
+            g.strokePath(triangle, juce::PathStrokeType(stroke));
+            g.drawLine(icon.getRight() - icon.getWidth() * 0.12f, icon.getY(),
+                       icon.getCentreX() + icon.getWidth() * 0.12f, icon.getCentreY(), stroke);
+            break;
+        }
+        case 14:
+            for (float factor : { 0.82f, 0.58f, 0.32f })
+                g.drawEllipse(icon.withSizeKeepingCentre(icon.getWidth() * factor,
+                                                         icon.getHeight() * factor), stroke);
+            break;
+        default:
+            for (int star = 0; star < 5; ++star)
+            {
+                const float x = icon.getX() + icon.getWidth() * (0.18f + (star % 3) * 0.31f);
+                const float y = icon.getY() + icon.getHeight() * (0.25f + (star / 3) * 0.42f);
+                g.drawLine(x - 3.0f, y, x + 3.0f, y, stroke);
+                g.drawLine(x, y - 3.0f, x, y + 3.0f, stroke);
+            }
+            break;
+    }
+}
+
 BeatScholarLookAndFeel::BeatScholarLookAndFeel()
 {
     setDarkMode(false);
@@ -157,6 +278,16 @@ void BeatScholarLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Butto
         return;
     }
 
+    if (id == "routing.mode")
+    {
+        if (isMouseOver || isDown)
+        {
+            g.setColour(juce::Colour(palette_.text).withAlpha(isDown ? 0.16f : 0.07f));
+            g.fillRect(area.reduced(1.0f));
+        }
+        return;
+    }
+
     if (id.startsWith("toolbar.") || id.startsWith("brush."))
     {
         if (button.getToggleState() || isMouseOver || isDown)
@@ -168,8 +299,48 @@ void BeatScholarLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Butto
         return;
     }
 
-    if (id.startsWith("sample.") || id.startsWith("random.module.")
-        || id == "kit.audition" || id == "kit.lock"
+    if (id == "sample.mono")
+    {
+        g.setColour(juce::Colour(button.getToggleState() ? palette_.text : palette_.borderBright));
+        g.drawRect(area.reduced(1.0f), std::max(1.0f, area.getHeight() / 26.0f));
+        if (isMouseOver || isDown)
+        {
+            g.setColour(juce::Colour(palette_.text).withAlpha(isDown ? 0.16f : 0.07f));
+            g.fillRect(area.reduced(2.0f));
+        }
+        return;
+    }
+
+    if (id.startsWith("random.module.") || id == "random.fillEmpty")
+    {
+        if (isMouseOver || isDown)
+        {
+            const auto diameter = std::min(area.getWidth(), area.getHeight()) * 0.85f;
+            g.setColour(juce::Colour(palette_.text).withAlpha(isDown ? 0.18f : 0.07f));
+            g.fillEllipse(area.withSizeKeepingCentre(diameter, diameter));
+        }
+        return;
+    }
+
+    if (id == "sample.layer")
+    {
+        g.setColour(juce::Colour(palette_.panel));
+        g.fillRect(area);
+        if (isMouseOver || isDown)
+        {
+            g.setColour(juce::Colour(palette_.text).withAlpha(isDown ? 0.18f : 0.07f));
+            g.fillRect(area.reduced(1.0f));
+        }
+        g.setColour(juce::Colour(palette_.border));
+        const auto stroke = std::max(1.0f, area.getHeight() / 26.0f);
+        g.drawRect(area.reduced(stroke * 0.5f), stroke);
+        const auto gutter = area.getHeight() * 0.72f;
+        g.fillRect(area.getX() + gutter, area.getY(), stroke, area.getHeight());
+        g.fillRect(area.getRight() - gutter - stroke, area.getY(), stroke, area.getHeight());
+        return;
+    }
+
+    if (id.startsWith("sample.") || id == "kit.audition" || id == "kit.lock"
         || id == "master.settings")
     {
         if (isMouseOver || isDown || button.getToggleState())
@@ -210,6 +381,14 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
     const auto area = button.getLocalBounds().toFloat();
     auto tint = button.isEnabled() ? juce::Colour(palette_.text)
                                    : juce::Colour(palette_.textMuted).withAlpha(0.55f);
+    if (id == "routing.mode")
+    {
+        g.setColour(tint);
+        g.setFont(font(std::max(8.0f, area.getHeight() * 0.56f), false));
+        g.drawFittedText(button.getButtonText(), button.getLocalBounds().reduced(2, 1),
+                         juce::Justification::centred, 1);
+        return;
+    }
     if (id == "arrangement.toggle")
     {
         g.setColour(juce::Colour(palette_.panel));
@@ -224,111 +403,7 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
         auto icon = area.reduced(std::max(5.0f, area.getWidth() * 0.13f),
                                  std::max(6.0f, area.getHeight() * 0.14f));
         const float stroke = std::max(1.0f, std::min(area.getWidth(), area.getHeight()) * 0.035f);
-        g.setColour(tint.withAlpha(0.90f));
-        const auto drawDrum = [&g, stroke](juce::Rectangle<float> box, bool sticks) {
-            auto body = box.withSizeKeepingCentre(box.getWidth() * 0.68f, box.getHeight() * 0.50f);
-            g.drawEllipse(body.removeFromTop(body.getHeight() * 0.33f), stroke);
-            g.drawLine(body.getX(), body.getY(), body.getX(), body.getBottom(), stroke);
-            g.drawLine(body.getRight(), body.getY(), body.getRight(), body.getBottom(), stroke);
-            g.drawLine(body.getX(), body.getBottom(), body.getRight(), body.getBottom(), stroke);
-            if (sticks)
-            {
-                g.drawLine(box.getCentreX() - box.getWidth() * 0.22f, box.getY(),
-                           box.getCentreX() + box.getWidth() * 0.10f, box.getCentreY(), stroke);
-                g.drawLine(box.getCentreX() + box.getWidth() * 0.22f, box.getY(),
-                           box.getCentreX() - box.getWidth() * 0.10f, box.getCentreY(), stroke);
-            }
-        };
-        const auto drawCymbal = [&g, stroke](juce::Rectangle<float> box, float tilt) {
-            const auto centre = box.getCentre();
-            g.drawLine(centre.x, centre.y, centre.x, box.getBottom(), stroke);
-            g.drawLine(centre.x - box.getWidth() * 0.18f, box.getBottom(),
-                       centre.x + box.getWidth() * 0.18f, box.getBottom(), stroke);
-            g.drawLine(box.getX(), centre.y + tilt, box.getRight(), centre.y - tilt, stroke * 1.2f);
-            g.drawEllipse(box.withSizeKeepingCentre(box.getWidth() * 0.12f,
-                                                    box.getHeight() * 0.10f)
-                              .translated(0.0f, -box.getHeight() * 0.11f), stroke);
-        };
-        switch (pad)
-        {
-            case 0:
-            {
-                const auto drum = icon.withSizeKeepingCentre(std::min(icon.getWidth(), icon.getHeight()) * 0.72f,
-                                                             std::min(icon.getWidth(), icon.getHeight()) * 0.72f);
-                g.drawEllipse(drum, stroke);
-                g.drawEllipse(drum.withSizeKeepingCentre(drum.getWidth() * 0.13f,
-                                                         drum.getHeight() * 0.13f), stroke);
-                g.drawLine(drum.getCentreX(), drum.getCentreY() + drum.getHeight() * 0.08f,
-                           drum.getCentreX(), drum.getBottom() + icon.getHeight() * 0.14f, stroke);
-                break;
-            }
-            case 1: drawDrum(icon, true); break;
-            case 2: drawDrum(icon, false); break;
-            case 3:
-            {
-                for (int finger = 0; finger < 4; ++finger)
-                {
-                    const float x = icon.getX() + icon.getWidth() * (0.30f + finger * 0.11f);
-                    g.drawLine(x, icon.getY() + icon.getHeight() * (0.12f + finger * 0.03f),
-                               x + icon.getWidth() * 0.10f, icon.getCentreY(), stroke);
-                }
-                juce::Path palm;
-                palm.addArc(icon.getX() + icon.getWidth() * 0.24f,
-                            icon.getCentreY() - icon.getHeight() * 0.08f,
-                            icon.getWidth() * 0.55f, icon.getHeight() * 0.55f,
-                            -0.4f, juce::MathConstants<float>::pi + 0.55f, true);
-                g.strokePath(palm, juce::PathStrokeType(stroke));
-                break;
-            }
-            case 4: drawCymbal(icon, 0.0f); break;
-            case 5:
-                drawCymbal(icon.translated(0.0f, -icon.getHeight() * 0.08f), 0.0f);
-                g.drawLine(icon.getX(), icon.getCentreY() + icon.getHeight() * 0.10f,
-                           icon.getRight(), icon.getCentreY() + icon.getHeight() * 0.10f, stroke);
-                break;
-            case 6: drawCymbal(icon, icon.getHeight() * 0.11f); break;
-            case 7: drawCymbal(icon, -icon.getHeight() * 0.04f); break;
-            case 8: drawCymbal(icon, icon.getHeight() * 0.14f); break;
-            case 9: drawDrum(icon.translated(-icon.getWidth() * 0.11f, 0.0f), false); break;
-            case 10: drawDrum(icon, false); break;
-            case 11: drawDrum(icon.translated(icon.getWidth() * 0.11f, 0.0f), false); break;
-            case 12:
-                g.drawEllipse(icon.withSizeKeepingCentre(icon.getWidth() * 0.25f, icon.getHeight() * 0.34f)
-                                  .translated(-icon.getWidth() * 0.14f, -icon.getHeight() * 0.10f), stroke);
-                g.drawEllipse(icon.withSizeKeepingCentre(icon.getWidth() * 0.25f, icon.getHeight() * 0.34f)
-                                  .translated(icon.getWidth() * 0.14f, icon.getHeight() * 0.08f), stroke);
-                g.drawLine(icon.getCentreX() - icon.getWidth() * 0.07f, icon.getCentreY(),
-                           icon.getX() + icon.getWidth() * 0.16f, icon.getBottom(), stroke);
-                g.drawLine(icon.getCentreX() + icon.getWidth() * 0.08f, icon.getCentreY(),
-                           icon.getRight() - icon.getWidth() * 0.10f, icon.getY(), stroke);
-                break;
-            case 13:
-            {
-                juce::Path triangle;
-                triangle.startNewSubPath(icon.getCentreX(), icon.getY() + icon.getHeight() * 0.12f);
-                triangle.lineTo(icon.getX() + icon.getWidth() * 0.18f, icon.getBottom() - icon.getHeight() * 0.12f);
-                triangle.lineTo(icon.getRight() - icon.getWidth() * 0.18f, icon.getBottom() - icon.getHeight() * 0.12f);
-                triangle.closeSubPath();
-                g.strokePath(triangle, juce::PathStrokeType(stroke));
-                g.drawLine(icon.getRight() - icon.getWidth() * 0.12f, icon.getY(),
-                           icon.getCentreX() + icon.getWidth() * 0.12f, icon.getCentreY(), stroke);
-                break;
-            }
-            case 14:
-                for (float factor : { 0.82f, 0.58f, 0.32f })
-                    g.drawEllipse(icon.withSizeKeepingCentre(icon.getWidth() * factor,
-                                                             icon.getHeight() * factor), stroke);
-                break;
-            default:
-                for (int star = 0; star < 5; ++star)
-                {
-                    const float x = icon.getX() + icon.getWidth() * (0.18f + (star % 3) * 0.31f);
-                    const float y = icon.getY() + icon.getHeight() * (0.25f + (star / 3) * 0.42f);
-                    g.drawLine(x - 3.0f, y, x + 3.0f, y, stroke);
-                    g.drawLine(x, y - 3.0f, x, y + 3.0f, stroke);
-                }
-                break;
-        }
+        drawInstrumentGlyph(g, icon, pad, tint.withAlpha(0.90f), stroke);
         return;
     }
     if (id == "toolbar.play")
@@ -368,7 +443,7 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
     {
         const float side = std::min(area.getWidth(), area.getHeight()) * 0.62f;
         const auto circle = juce::Rectangle<float>(side, side).withCentre(area.getCentre());
-        g.setColour(juce::Colour(palette_.magenta));
+        g.setColour(button.findColour(juce::TextButton::buttonOnColourId));
         g.fillEllipse(circle);
         g.setColour(juce::Colour(palette_.textMuted));
         g.drawEllipse(circle, 1.5f);
@@ -400,7 +475,7 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
     }
     if (id == "brush.dice")
         return drawDice(g, area, tint);
-    if (id.startsWith("random.module."))
+    if ((id.startsWith("random.module.") || id == "random.fillEmpty"))
     {
         const auto diameter = std::min(area.getWidth(), area.getHeight()) * 0.65f;
         const auto dot = area.withSizeKeepingCentre(diameter, diameter);
@@ -445,6 +520,22 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
         const float stroke = std::max(1.5f, area.getWidth() * 0.08f);
         g.drawLine(juce::Line<float>(clear.getTopLeft(), clear.getBottomRight()), stroke);
         g.drawLine(juce::Line<float>(clear.getTopRight(), clear.getBottomLeft()), stroke);
+        return;
+    }
+    if (id == "sample.mono")
+    {
+        const float diameter = area.getHeight() * 0.55f;
+        const auto left = juce::Rectangle<float>(diameter, diameter)
+            .withCentre({ area.getX() + diameter * 0.85f, area.getCentreY() });
+        const auto right = left.translated(diameter * 0.50f, 0.0f);
+        g.setColour(juce::Colour(button.getToggleState() ? palette_.accentBright : palette_.borderBright));
+        g.fillEllipse(left);
+        g.setColour(tint);
+        if (button.getToggleState()) g.fillEllipse(right);
+        g.drawEllipse(right, std::max(1.0f, diameter * 0.08f));
+        g.setFont(font(std::max(8.0f, area.getHeight() * 0.43f)));
+        g.drawFittedText("MONO", area.withTrimmedLeft(diameter * 1.95f).reduced(2.0f, 0.0f).toNearestInt(),
+                         juce::Justification::centred, 1);
         return;
     }
     if (id == "sample.oneshot")
@@ -523,13 +614,23 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
         auto logo = content.removeFromLeft(logoSide).reduced(2.0f);
         g.setColour(tint);
         g.drawEllipse(logo, 1.2f);
-        g.drawEllipse(logo.reduced(logoSide * 0.18f), 1.0f);
-        for (int spoke = 0; spoke < 8; ++spoke)
+        const auto mesh = logo.reduced(2.0f);
+        g.drawEllipse(mesh, 0.8f);
         {
-            const float angle = juce::MathConstants<float>::twoPi * static_cast<float>(spoke) / 8.0f;
-            g.drawLine(logo.getCentreX(), logo.getCentreY(),
-                       logo.getCentreX() + std::cos(angle) * logo.getWidth() * 0.44f,
-                       logo.getCentreY() + std::sin(angle) * logo.getHeight() * 0.44f, 0.8f);
+            juce::Graphics::ScopedSaveState saved(g);
+            juce::Path clip;
+            clip.addEllipse(mesh);
+            g.reduceClipRegion(clip);
+            const auto centre = mesh.getCentre();
+            const float radius = mesh.getWidth() * 0.5f;
+            for (int line = -3; line <= 3; ++line)
+            {
+                const float offset = static_cast<float>(line) * radius * 0.45f;
+                g.drawLine(centre.x - radius, centre.y - radius + offset,
+                           centre.x + radius, centre.y + radius + offset, 0.7f);
+                g.drawLine(centre.x - radius, centre.y + radius + offset,
+                           centre.x + radius, centre.y - radius + offset, 0.7f);
+            }
         }
         g.setFont(font(std::max(9.0f, area.getHeight() * 0.33f), true));
         g.drawFittedText("MODALICS", content.toNearestInt(), juce::Justification::centred, 1);
@@ -559,23 +660,45 @@ void BeatScholarLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, i
 
     const auto id = slider.getComponentID();
     const bool percentage = id == "effect.6" || id == "effect.7" || id == "effect.8";
-    if (darkMode_ && !percentage)
+    const bool randomizerLevel = id == "random.0" || id == "random.2" || id == "random.3";
+    const bool levelFill = percentage || randomizerLevel;
+    const bool masterDial = id == "master.0" || id == "master.1"
+                            || id == "master.2" || id == "master.3";
+    if (darkMode_ && !levelFill)
         g.setGradientFill(juce::ColourGradient(juce::Colour(0xff232323), centre.x, knob.getY(),
                                               juce::Colour(0xff141414), centre.x, knob.getBottom(), false));
     else
-        g.setColour(juce::Colour(palette_.panelRaised));
+        g.setColour(juce::Colour(randomizerLevel ? 0xff1f2043U
+                                                : masterDial ? 0xff222349U : palette_.panelRaised));
     g.fillEllipse(knob);
-    if (!darkMode_ || percentage)
+    if (levelFill && sliderPos > 0.0f)
     {
-        g.setColour(juce::Colour(palette_.borderBright));
-        g.drawEllipse(knob, std::max(1.5f, diameter * 0.055f));
+        // Send and Randomizer level dials fill from the bottom with a
+        // horizontal surface, clipped to the circular control.
+        const juce::Graphics::ScopedSaveState saved(g);
+        juce::Path circle;
+        circle.addEllipse(knob);
+        g.reduceClipRegion(circle);
+        const float surface = knob.getBottom() - diameter * std::clamp(sliderPos, 0.0f, 1.0f);
+        // The tutorial's Min/Max dials have the same shade at the same height,
+        // regardless of level: only the filled region moves, not its gradient.
+        g.setGradientFill(juce::ColourGradient(
+            juce::Colour(randomizerLevel ? 0xff6060f8U : 0xff454090U),
+            centre.x, randomizerLevel ? knob.getY() : surface,
+            juce::Colour(randomizerLevel ? 0xff21224cU : 0xff2c295cU),
+            centre.x, knob.getBottom(), false));
+        g.fillRect(knob.withTop(surface));
+    }
+    if (!darkMode_ || levelFill)
+    {
+        g.setColour(juce::Colour(randomizerLevel ? 0xff6566a1U : palette_.borderBright));
+        g.drawEllipse(knob, std::max(1.5f, diameter * (randomizerLevel ? 0.045f : 0.055f)));
     }
     if (slider.isEnabled())
     {
         const float valueAngle = startAngle + sliderPos * (endAngle - startAngle);
-        // Insert controls use the manual's simple dot indicator. Send knobs
-        // expose the current percentage instead of a filled value arc.
-        if (!percentage)
+        // Insert controls use a dot; level dials show their value over the fill.
+        if (!levelFill)
         {
             const auto pointer = juce::Point<float>(centre.x + std::sin(valueAngle) * radius * 0.68f,
                                                     centre.y - std::cos(valueAngle) * radius * 0.68f);
@@ -585,14 +708,29 @@ void BeatScholarLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, i
         }
     }
 
-    if (percentage || id == "random.0" || id == "random.2" || id == "random.3")
+    if (levelFill)
     {
-        const int value = static_cast<int>(std::lround(slider.getValue() * 100.0));
+        const auto text = percentage
+                              ? juce::String(static_cast<int>(std::lround(slider.getValue() * 100.0))) + "%"
+                              : slider.getTextFromValue(slider.getValue());
         g.setColour(juce::Colour(palette_.text));
-        g.setFont(font(std::max(8.0f, diameter * 0.22f), true));
-        g.drawText(juce::String(value) + (percentage || id == "random.0" ? "%" : ""),
-                   knob.toNearestInt(), juce::Justification::centred);
+        g.setFont(font(randomizerLevel ? diameter * 0.15f : std::max(8.0f, diameter * 0.22f),
+                       !percentage && !randomizerLevel));
+        g.drawText(text, knob.toNearestInt(), juce::Justification::centred);
     }
+}
+
+juce::Slider::SliderLayout BeatScholarLookAndFeel::getSliderLayout(juce::Slider& slider)
+{
+    auto layout = juce::LookAndFeel_V4::getSliderLayout(slider);
+    if (slider.getComponentID() == "master.4")
+    {
+        // Keep the gain gesture range aligned with the painted stereo meters
+        // at every editor size, rather than JUCE's fixed 12-pixel thumb inset.
+        const int inset = juce::roundToInt(static_cast<float>(slider.getHeight()) * 12.0f / 116.0f);
+        layout.sliderBounds = slider.getLocalBounds().reduced(0, inset);
+    }
+    return layout;
 }
 
 void BeatScholarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, int width,
@@ -607,9 +745,20 @@ void BeatScholarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, i
     {
         g.setColour(juce::Colour(palette_.text));
         g.setFont(font(std::max(10.0f, area.getHeight() * 0.46f), true));
-        const auto suffix = id == "toolbar.bpm" ? " BPM" : "%";
+        const auto suffix = id == "toolbar.bpm" ? " BPM" : "";
         g.drawFittedText(juce::String(static_cast<int>(std::lround(slider.getValue()))) + suffix,
                          area.toNearestInt(), juce::Justification::centred, 1);
+        return;
+    }
+    if (id == "master.4")
+    {
+        // The editor paints the live left/right meter rails behind this thumb.
+        // Repainting opaque rails here would hide their output levels.
+        g.setColour(juce::Colour(palette_.text));
+        g.fillRoundedRectangle(area.withSizeKeepingCentre(area.getWidth() * 0.56f,
+                                                           area.getHeight() * (8.0f / 92.0f))
+                                   .withCentre({ area.getCentreX(), sliderPos }),
+                               area.getWidth() * 0.04f);
         return;
     }
     if (style == juce::Slider::LinearVertical || style == juce::Slider::LinearBarVertical)
@@ -617,15 +766,7 @@ void BeatScholarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, i
         const auto track = area.withSizeKeepingCentre(std::max(3.0f, area.getWidth() * 0.16f),
                                                       area.getHeight() * 0.82f);
         g.setColour(juce::Colour(palette_.border));
-        if (id == "master.4")
-        {
-            const auto rail = track.withSizeKeepingCentre(std::max(2.0f, track.getWidth() * 0.45f), track.getHeight());
-            const float offset = std::max(4.0f, area.getWidth() * 0.1f);
-            g.fillRoundedRectangle(rail.translated(-offset, 0), 2.0f);
-            g.fillRoundedRectangle(rail.translated(offset, 0), 2.0f);
-        }
-        else
-            g.fillRoundedRectangle(track, track.getWidth() * 0.5f);
+        g.fillRoundedRectangle(track, track.getWidth() * 0.5f);
         g.setColour(juce::Colour(palette_.text));
         g.fillRoundedRectangle(track.withSizeKeepingCentre(area.getWidth() * 0.56f,
                                                            std::max(5.0f, area.getHeight() * 0.08f))

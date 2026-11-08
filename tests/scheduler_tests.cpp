@@ -58,9 +58,9 @@ void testAllQuantizationModesUseTheNextBoundary()
         check(count == 2, "quantized change splits the block once");
         if (count == 2)
         {
-            check(segments[0].patternIndex == 0 && segments[0].sampleOffset == 0,
+            check(segments[0].patternId == 0 && segments[0].sampleOffset == 0,
                   "old pattern renders before its boundary");
-            check(segments[1].patternIndex == 1
+            check(segments[1].patternId == 1
                       && segments[1].sampleOffset == test.expectedOffset,
                   "new pattern starts at the selected quantization boundary");
             check(std::abs(segments[1].phaseQuarterNotes) < 1.0e-12,
@@ -103,7 +103,7 @@ void testLatestTriggerForOneBoundaryWins()
     std::array<bsl::PatternRenderSegment, 4> segments {};
     const auto count = scheduler.planBlock(transport(0, 30000, 0.0), triggers, segments);
     check(count == 2, "same-boundary triggers produce one change");
-    check(count == 2 && segments[1].sampleOffset == 24000 && segments[1].patternIndex == 2,
+    check(count == 2 && segments[1].sampleOffset == 24000 && segments[1].patternId == 2,
           "last trigger targeting the boundary wins");
 }
 
@@ -119,7 +119,7 @@ void testBoundedCollectorRetainsTheLatestSameBoundaryTrigger()
     const auto count = scheduler.planBlock(
         transport(0, 30000, 0.0), collector.triggers(), segments);
     check(count == 2 && segments[1].sampleOffset == 24000
-              && segments[1].patternIndex == 65,
+              && segments[1].patternId == 65,
           "bounded process-block collection retains the 65th and latest same-boundary trigger");
 }
 
@@ -138,12 +138,12 @@ void testMidBlockSplitAdvancesOldPhaseAndZerosNewPhase()
     check(count == 2, "mid-block boundary splits old and new patterns");
     if (count == 2)
     {
-        check(segments[0].patternIndex == 3
+        check(segments[0].patternId == 3
                   && std::abs(segments[0].phaseQuarterNotes - 0.25) < 1.0e-12,
               "old pattern resumes at its accumulated phase");
         check(segments[0].sampleCount == 6000,
               "old pattern stops exactly at the half-quarter boundary");
-        check(segments[1].patternIndex == 4 && segments[1].sampleOffset == 6000
+        check(segments[1].patternId == 4 && segments[1].sampleOffset == 6000
                   && std::abs(segments[1].phaseQuarterNotes) < 1.0e-12,
               "new pattern starts at phase zero without pre-boundary emission");
     }
@@ -179,7 +179,7 @@ void testSegmentedRenderingEmitsNewPatternOnlyAtBoundary()
         frame.playing = true;
         frame.patternPhaseQuarterNotes = segments[index].phaseQuarterNotes;
         const auto count = bsl::Sequencer::renderInto(
-            state, frame, segments[index].patternIndex,
+            state, frame, segments[index].patternId,
             std::span<bsl::MidiEvent>(events).subspan(eventCount));
         for (std::size_t event = 0; event < count; ++event)
             events[eventCount + event].sampleOffset += segments[index].sampleOffset;
@@ -197,11 +197,11 @@ void testPendingTriggerSurvivesUntilFutureBlock()
         bsl::PatternTrigger { 1, 1, bsl::PatternQuantization::quarter }
     };
     auto count = scheduler.planBlock(transport(0, 12000, 0.0), trigger, segments);
-    check(count == 1 && segments[0].patternIndex == 0,
+    check(count == 1 && segments[0].patternId == 0,
           "future boundary does not activate in an earlier block");
     const std::array noTriggers = std::array<bsl::PatternTrigger, 0> {};
     count = scheduler.planBlock(transport(12000, 16000, 0.5), noTriggers, segments);
-    check(count == 2 && segments[1].sampleOffset == 12000 && segments[1].patternIndex == 1,
+    check(count == 2 && segments[1].sampleOffset == 12000 && segments[1].patternId == 1,
           "queued trigger activates in the block containing its boundary");
 }
 
@@ -218,7 +218,7 @@ void testStopClearsPendingAndPhaseState()
     check(scheduler.planBlock(stopped, {}, segments) == 0,
           "stopped transport renders no pattern segments");
     const auto count = scheduler.planBlock(transport(0, 1000, 0.0), {}, segments);
-    check(count == 1 && segments[0].patternIndex == 0
+    check(count == 1 && segments[0].patternId == 0
               && std::abs(segments[0].phaseQuarterNotes) < 1.0e-12,
           "restart clears the pending trigger and restarts phase at zero");
 }
@@ -232,7 +232,7 @@ void testTransportDiscontinuityClearsPendingAndPhaseState()
     };
     scheduler.planBlock(transport(0, 1000, 0.0), trigger, segments);
     const auto count = scheduler.planBlock(transport(50000, 1000, 8.0), {}, segments);
-    check(count == 1 && segments[0].patternIndex == 0
+    check(count == 1 && segments[0].patternId == 0
               && std::abs(segments[0].phaseQuarterNotes - 8.0) < 1.0e-12,
           "sample-position discontinuity drops pending work and aligns to the host phase");
 }
@@ -290,7 +290,7 @@ void testHostStartAndSeekPhaseLockThePattern()
     // restarts the newly selected pattern at phase zero.
     const std::array trigger { bsl::PatternTrigger { 0, 1, bsl::PatternQuantization::off } };
     count = scheduler.planBlock(transport(48000, 64, 2.0), trigger, segments);
-    check(count == 1 && segments[0].patternIndex == 1
+    check(count == 1 && segments[0].patternId == 1
               && std::abs(segments[0].phaseQuarterNotes) < 1.0e-12,
           "explicit pattern trigger restarts its pattern at phase zero");
 }

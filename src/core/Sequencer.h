@@ -56,6 +56,7 @@ struct MidiTickEvent
     std::int64_t tick = 0;
     std::uint8_t note = 0;
     std::uint8_t velocity = 0;
+    std::int64_t gateTicks = 1;
 
     auto operator<=>(const MidiTickEvent&) const = default;
 };

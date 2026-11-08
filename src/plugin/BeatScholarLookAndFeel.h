@@ -40,6 +40,8 @@ struct Palette
 };
 
 [[nodiscard]] juce::Font font(float height, bool heavy = false);
+void drawInstrumentGlyph(juce::Graphics&, juce::Rectangle<float> icon, int pad,
+                         juce::Colour tint, float stroke);
 
 class BeatScholarLookAndFeel final : public juce::LookAndFeel_V4
 {
@@ -59,6 +61,7 @@ public:
     void drawRotarySlider(juce::Graphics&, int x, int y, int width, int height,
                           float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
                           juce::Slider&) override;
+    juce::Slider::SliderLayout getSliderLayout(juce::Slider&) override;
     void drawLinearSlider(juce::Graphics&, int x, int y, int width, int height,
                           float sliderPos, float minSliderPos, float maxSliderPos,
                           juce::Slider::SliderStyle, juce::Slider&) override;

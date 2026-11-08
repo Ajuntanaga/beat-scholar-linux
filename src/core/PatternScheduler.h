@@ -24,7 +24,7 @@ struct SchedulerTransport
 struct PatternTrigger
 {
     std::int32_t sampleOffset = 0;
-    std::size_t patternIndex = 0;
+    PatternId patternId = 0;
     PatternQuantization quantization = PatternQuantization::whole;
 };
 
@@ -32,7 +32,7 @@ struct PatternRenderSegment
 {
     std::int32_t sampleOffset = 0;
     std::int32_t sampleCount = 0;
-    std::size_t patternIndex = 0;
+    PatternId patternId = 0;
     double phaseQuarterNotes = 0.0;
 };
 
@@ -54,10 +54,11 @@ class PatternScheduler
 public:
     static constexpr std::size_t maximumPendingTriggers = 64;
 
-    explicit PatternScheduler(std::size_t activePattern = 0) noexcept;
+    explicit PatternScheduler(PatternId activePattern = 0) noexcept;
 
-    void reset(std::size_t activePattern) noexcept;
-    [[nodiscard]] std::size_t activePattern() const noexcept { return activePattern_; }
+    void reset(PatternId activePattern) noexcept;
+    void removeMissingPatterns(std::span<const PatternState> patterns) noexcept;
+    [[nodiscard]] PatternId activePattern() const noexcept { return activePattern_; }
 
     std::size_t planBlock(const SchedulerTransport& transport,
                           std::span<const PatternTrigger> triggers,
@@ -68,7 +69,7 @@ private:
     {
         double targetQuarterNote = 0.0;
         std::int64_t targetSample = 0;
-        std::size_t patternIndex = 0;
+        PatternId patternId = 0;
         std::uint64_t sequence = 0;
         bool usesHostPpq = false;
     };
@@ -76,7 +77,7 @@ private:
     struct DueTrigger
     {
         std::int32_t sampleOffset = 0;
-        std::size_t patternIndex = 0;
+        PatternId patternId = 0;
         std::uint64_t sequence = 0;
     };
 
@@ -85,7 +86,7 @@ private:
 
     std::array<PendingTrigger, maximumPendingTriggers> pending_ {};
     std::size_t pendingCount_ = 0;
-    std::size_t activePattern_ = 0;
+    PatternId activePattern_ = 0;
     std::uint64_t nextSequence_ = 0;
     std::int64_t expectedSampleStart_ = 0;
     double expectedQuarterNote_ = 0.0;

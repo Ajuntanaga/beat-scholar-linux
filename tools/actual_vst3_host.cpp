@@ -38,9 +38,11 @@ struct Options
     juce::String expectedName { expectedDefaultName };
     juce::String expectedVendor { expectedDefaultVendor };
     double sampleRate = 48000.0;
+    double tempo = 120.0;
     int blockSize = 64;
     std::int64_t activeFrames = 0;
     bool playSequencer = false;
+    bool floatOutput = false;
     std::vector<MidiEvent> midi;
 };
 
@@ -104,16 +106,18 @@ Options parseOptions(int argc, char** argv)
         else if (argument == "--expect-name") options.expectedName = next(index, "--expect-name");
         else if (argument == "--expect-vendor") options.expectedVendor = next(index, "--expect-vendor");
         else if (argument == "--sample-rate") options.sampleRate = parseDouble(next(index, "--sample-rate"), "--sample-rate");
+        else if (argument == "--tempo") options.tempo = parseDouble(next(index, "--tempo"), "--tempo");
         else if (argument == "--block-size") options.blockSize = static_cast<int>(parseInt64(next(index, "--block-size"), "--block-size"));
         else if (argument == "--active-frames") options.activeFrames = parseInt64(next(index, "--active-frames"), "--active-frames");
         else if (argument == "--midi") options.midi.push_back(parseMidi(next(index, "--midi")));
         else if (argument == "--play-sequencer") options.playSequencer = true;
+        else if (argument == "--float-output") options.floatOutput = true;
         else if (argument == "--help")
         {
             std::cout
                 << "Usage: actual_vst3_host --plugin BUNDLE --state PRESET_OR_BSLX --output WAV\\n"
                 << "       --expect-sha256 HEX --sample-rate HZ --block-size N --active-frames N\\n"
-                << "       [--midi SAMPLE:NOTE:VELOCITY] [--expect-cid CID] [--play-sequencer]\\n";
+                << "       [--midi SAMPLE:NOTE:VELOCITY] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output]\\n";
             std::exit(0);
         }
         else fail("unknown option: " + argument);
@@ -124,6 +128,7 @@ Options parseOptions(int argc, char** argv)
     if (options.output == juce::File {}) fail("--output is required");
     if (options.expectedSha256.length() != 64) fail("--expect-sha256 must be a 64-character digest");
     if (options.sampleRate < 8000.0 || options.sampleRate > 384000.0) fail("--sample-rate is outside 8000..384000");
+    if (options.tempo <= 0.0 || options.tempo > 1000.0) fail("--tempo is outside (0,1000]");
     if (options.blockSize < 1 || options.blockSize > 65536) fail("--block-size is outside 1..65536");
     if (options.activeFrames < 1) fail("--active-frames must be positive");
     if (options.midi.empty() && !options.playSequencer)
@@ -278,7 +283,7 @@ juce::MemoryBlock extractVst3ComponentState(const juce::MemoryBlock& wrapped)
 }
 
 void writeWave(const juce::File& output, double sampleRate,
-               const juce::AudioBuffer<float>& audio)
+               const juce::AudioBuffer<float>& audio, bool floatOutput)
 {
     if (!output.getParentDirectory().createDirectory())
         fail("failed to create output directory");
@@ -293,9 +298,12 @@ void writeWave(const juce::File& output, double sampleRate,
         juce::AudioFormatWriter::Options {}
             .withSampleRate(sampleRate)
             .withNumChannels(2)
-            .withBitsPerSample(24));
+            .withBitsPerSample(floatOutput ? 32 : 24)
+            .withSampleFormat(floatOutput
+                ? juce::AudioFormatWriterOptions::SampleFormat::floatingPoint
+                : juce::AudioFormatWriterOptions::SampleFormat::integral));
     if (writer == nullptr)
-        fail("failed to create 24-bit WAV writer");
+        fail("failed to create WAV writer");
     if (!writer->writeFromAudioSampleBuffer(audio, 0, audio.getNumSamples()))
         fail("failed while writing WAV samples");
 }
@@ -380,12 +388,15 @@ int run(const Options& options)
     const auto totalFrames = options.activeFrames + tailFrames;
     juce::AudioBuffer<float> rendered(2, static_cast<int>(totalFrames));
     rendered.clear();
+    juce::Array<juce::var> outputMidi;
     std::size_t midiIndex = 0;
     std::int64_t cursor = 0;
     while (cursor < totalFrames)
     {
+        // Stop at the requested sample even when it falls inside a host block.
+        const auto boundary = cursor < options.activeFrames ? options.activeFrames : totalFrames;
         const auto currentBlock = static_cast<int>(std::min<std::int64_t>(options.blockSize,
-                                                                          totalFrames - cursor));
+                                                                          boundary - cursor));
         juce::AudioBuffer<float> block(2, currentBlock);
         block.clear();
         juce::MidiBuffer midi;
@@ -406,17 +417,38 @@ int run(const Options& options)
         if (options.playSequencer)
         {
             transport.position.setIsPlaying(cursor < options.activeFrames);
-            transport.position.setBpm(120.0);
+            transport.position.setBpm(options.tempo);
             transport.position.setTimeInSamples(cursor);
-            transport.position.setPpqPosition(static_cast<double>(cursor) * 2.0 / options.sampleRate);
+            transport.position.setPpqPosition(static_cast<double>(cursor) * options.tempo / (60.0 * options.sampleRate));
         }
         plugin->processBlock(block, midi);
+        for (const auto metadata : midi)
+        {
+            if (metadata.samplePosition < 0 || metadata.samplePosition >= currentBlock)
+                fail("VST3 returned a MIDI event outside the processed block");
+            const auto message = metadata.getMessage();
+            juce::DynamicObject::Ptr event = new juce::DynamicObject();
+            event->setProperty("sample", static_cast<juce::int64>(cursor + metadata.samplePosition));
+            event->setProperty("channel", message.getChannel());
+            juce::Array<juce::var> bytes;
+            for (int index = 0; index < message.getRawDataSize(); ++index)
+                bytes.add(static_cast<int>(message.getRawData()[index]));
+            event->setProperty("bytes", bytes);
+            event->setProperty("type", message.isNoteOn() ? "note_on"
+                                       : message.isNoteOff() ? "note_off" : "other");
+            if (message.isNoteOnOrOff())
+            {
+                event->setProperty("note", message.getNoteNumber());
+                event->setProperty("velocity", static_cast<int>(message.getVelocity()));
+            }
+            outputMidi.add(juce::var(event.get()));
+        }
         rendered.copyFrom(0, static_cast<int>(cursor), block, 0, 0, currentBlock);
         rendered.copyFrom(1, static_cast<int>(cursor), block, 1, 0, currentBlock);
         cursor += currentBlock;
     }
     plugin->releaseResources();
-    writeWave(options.output, options.sampleRate, rendered);
+    writeWave(options.output, options.sampleRate, rendered, options.floatOutput);
 
     const auto outputSha256 = juce::SHA256(options.output).toHexString();
     juce::DynamicObject::Ptr reportObject = new juce::DynamicObject();
@@ -432,6 +464,8 @@ int run(const Options& options)
     reportObject->setProperty("plugin_unique_id", description.uniqueId);
     reportObject->setProperty("sample_rate", options.sampleRate);
     reportObject->setProperty("block_size", options.blockSize);
+    reportObject->setProperty("tempo", options.tempo);
+    reportObject->setProperty("output_midi_events", outputMidi);
     reportObject->setProperty("active_frames", static_cast<juce::int64>(options.activeFrames));
     reportObject->setProperty("play_sequencer", options.playSequencer);
     reportObject->setProperty("declared_tail_seconds", tailSeconds);
@@ -451,6 +485,7 @@ int run(const Options& options)
     reportObject->setProperty("state_path", options.state.getFullPathName());
     reportObject->setProperty("state_component_sha256", juce::SHA256(state).toHexString());
     reportObject->setProperty("output_sha256", outputSha256);
+    reportObject->setProperty("output_sample_format", options.floatOutput ? "float32" : "pcm24");
     std::cout << juce::JSON::toString(juce::var(reportObject.get()), true) << '\n';
     return 0;
 }

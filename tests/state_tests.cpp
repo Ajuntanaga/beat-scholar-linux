@@ -21,6 +21,141 @@ void check(bool condition, std::string_view message)
 }
 
 
+
+
+void testModuleEnablesRoundTripIndependentlyOfRouting()
+{
+    for (const bool aux : { false, true })
+        for (const bool master : { false, true })
+            for (const bool multi : { false, true })
+            {
+                auto source = bsl::ProjectState::makeDefault();
+                source.global.auxEnabled = aux;
+                source.global.masterEnabled = master;
+                source.global.multiOutput = multi;
+                auto restored = bsl::ProjectState::makeDefault();
+                const auto matches = [&] {
+                    return restored.global.auxEnabled == aux
+                        && restored.global.masterEnabled == master
+                        && restored.global.multiOutput == multi;
+                };
+                const auto host = bsl::statecodec::encode(source);
+                check(bsl::statecodec::decode(host.getData(), host.getSize(), restored) && matches(),
+                      "host recall preserves independent AUX, Master and output routing");
+                check(bsl::statecodec::decodePresetJson(bsl::statecodec::encodePresetJson(source), restored)
+                          && matches(), "preset recall preserves independent AUX, Master and routing");
+            }
+    auto old = juce::JSON::parse(bsl::statecodec::encodePresetJson(bsl::ProjectState::makeDefault()));
+    auto* global = old.getProperty("global", {}).getDynamicObject();
+    global->removeProperty("auxEnabled");
+    global->removeProperty("masterEnabled");
+    auto restored = bsl::ProjectState::makeDefault();
+    restored.global.auxEnabled = restored.global.masterEnabled = false;
+    check(bsl::statecodec::decodePresetJson(juce::JSON::toString(old), restored)
+              && restored.global.auxEnabled && restored.global.masterEnabled,
+          "older states without module flags retain enabled processing");
+}
+
+void testSwingReferenceDefaultsAndExplicitRecall()
+{
+    auto source = bsl::ProjectState::makeDefault();
+    auto restored = source;
+    for (const auto reference : { bsl::SwingReference::eighth, bsl::SwingReference::quarter,
+                                  bsl::SwingReference::half })
+    {
+        source.global.swingReference = reference;
+        const auto host = bsl::statecodec::encode(source);
+        check(bsl::statecodec::decode(host.getData(), host.getSize(), restored)
+                  && restored.global.swingReference == reference,
+              "host recall preserves every explicitly saved swing reference");
+        check(bsl::statecodec::decodePresetJson(bsl::statecodec::encodePresetJson(source), restored)
+                  && restored.global.swingReference == reference,
+              "native presets preserve every explicitly saved swing reference");
+    }
+    auto missing = juce::JSON::parse(bsl::statecodec::encodePresetJson(source));
+    missing.getProperty("global", {}).getDynamicObject()->removeProperty("swingReference");
+    check(bsl::statecodec::decodePresetJson(juce::JSON::toString(missing), restored)
+              && restored.global.swingReference == bsl::SwingReference::quarter,
+          "a missing swing reference uses the tutorial's quarter-note default");
+}
+
+void testMonoStateRoundTripsAndOldStateDefaults()
+{
+    auto source = bsl::ProjectState::makeDefault();
+    source.kit.pads[3].mono = true;
+    auto restored = bsl::ProjectState::makeDefault();
+    const auto host = bsl::statecodec::encode(source);
+    check(bsl::statecodec::decode(host.getData(), host.getSize(), restored)
+              && restored.kit.pads[3].mono && !restored.kit.pads[2].mono,
+          "host recall preserves Mono independently for each pad");
+    const auto preset = bsl::statecodec::encodePresetJson(source);
+    check(bsl::statecodec::decodePresetJson(preset, restored) && restored.kit.pads[3].mono,
+          "native presets preserve Mono");
+    bsl::KitState kit;
+    bsl::MasterState master;
+    const auto kitJson = bsl::statecodec::encodeKitJson(source.kit, source.master);
+    check(bsl::statecodec::decodeKitJson(kitJson, kit, master)
+              && kit.pads[3].mono && !kit.pads[2].mono,
+          "native kits preserve Mono independently for each pad");
+    auto oldKit = juce::JSON::parse(kitJson);
+    auto* pads = oldKit.getProperty("pads", {}).getArray();
+    check(pads != nullptr, "native kit exposes pad objects for old-state migration");
+    if (pads != nullptr)
+    {
+        for (auto& pad : *pads) pad.getDynamicObject()->removeProperty("mono");
+        for (auto& pad : kit.pads) pad.mono = true;
+        check(bsl::statecodec::decodeKitJson(juce::JSON::toString(oldKit), kit, master)
+                  && std::none_of(kit.pads.begin(), kit.pads.end(), [](const auto& pad) { return pad.mono; }),
+              "older kits without Mono retain the previous polyphonic behavior");
+    }
+}
+
+
+void testAuxiliaryReturnRecallAndCompatibility()
+{
+    auto source = bsl::ProjectState::makeDefault();
+    source.kit.pads[0].auxGain = 0.5f;
+    source.kit.pads[0].delay = 0.3f; // Preserve older own-format echo controls.
+    source.master.distortionReturn = 0.25f;
+    source.master.delay = 0.4f;
+    bsl::KitState kit;
+    bsl::MasterState master;
+    const auto kitJson = bsl::statecodec::encodeKitJson(source.kit, source.master);
+    check(bsl::statecodec::decodeKitJson(kitJson, kit, master)
+              && kit.pads[0].auxGain == 0.5f && master.distortionReturn == 0.25f
+              && kit.pads[0].delay == 0.3f && master.delay == 0.4f,
+          "kit recall preserves native auxiliary controls independently of older own-format echo");
+    for (const bool isKit : { false, true })
+    {
+        auto old = juce::JSON::parse(isKit ? kitJson : bsl::statecodec::encodePresetJson(source));
+        auto* pads = old.getProperty("pads", {}).getArray();
+        check(pads != nullptr, "own-format migration fixture exposes pad objects");
+        if (pads == nullptr) continue;
+        for (auto& pad : *pads) pad.getDynamicObject()->removeProperty("auxGain");
+        old.getProperty("master", {}).getDynamicObject()->removeProperty("distortionReturn");
+        auto restored = source;
+        const auto json = juce::JSON::toString(old);
+        const bool decoded = isKit
+            ? bsl::statecodec::decodeKitJson(json, restored.kit, restored.master)
+            : bsl::statecodec::decodePresetJson(json, restored);
+        check(decoded && restored.kit.pads[0].auxGain == 0.0f
+                  && restored.master.distortionReturn == 1.0f
+                  && restored.kit.pads[0].delay == 0.3f && restored.master.delay == 0.4f,
+              "missing new controls preserve older own-format playback defaults");
+    }
+    for (const float value : { -0.1f, 1.1f, std::numeric_limits<float>::quiet_NaN() })
+    {
+        auto invalid = source;
+        invalid.kit.pads[0].auxGain = value;
+        check(!invalid.isValid() && bsl::statecodec::encodePresetJson(invalid).isEmpty(),
+              "invalid Aux4 levels are rejected before publication");
+        invalid = source;
+        invalid.master.distortionReturn = value;
+        check(!invalid.isValid() && bsl::statecodec::encodePresetJson(invalid).isEmpty(),
+              "invalid Aux3 return levels are rejected before publication");
+    }
+}
+
 void testEmbeddedSampleBudgetMatchesLoaderReplacementSemantics()
 {
     using namespace bsl::statecodec;
@@ -66,6 +201,8 @@ void testNativeStateRoundTripIncludesProjectAndEmbeddedSample()
     source.kit.pads[2].independentDistortion = true;
     source.kit.pads[2].distortionDrive = 0.73f;
     source.kit.pads[2].delay = 0.42f;
+    source.kit.pads[2].auxGain = 0.33f;
+    source.master.distortionReturn = 0.6f;
     source.master.compression = 0.63f;
     source.master.delay = 0.2f;
     source.master.distortion = 0.3f;
@@ -119,9 +256,11 @@ void testNativeStateRoundTripIncludesProjectAndEmbeddedSample()
               && std::abs(restored.kit.pads[2].distortionDrive - 0.73f) < 1.0e-6f
               && std::abs(restored.kit.pads[2].driveGainDb - 8.0f) < 1.0e-6f
               && std::abs(restored.kit.pads[2].distortionMix - 0.27f) < 1.0e-6f
-              && std::abs(restored.kit.pads[2].delay - 0.42f) < 1.0e-6f,
+              && std::abs(restored.kit.pads[2].delay - 0.42f) < 1.0e-6f
+              && std::abs(restored.kit.pads[2].auxGain - 0.33f) < 1.0e-6f,
           "expanded pad processing state round trips");
     check(std::abs(restored.master.delay - 0.2f) < 1.0e-6f
+              && std::abs(restored.master.distortionReturn - 0.6f) < 1.0e-6f
               && std::abs(restored.master.room - 0.5f) < 1.0e-6f,
           "expanded master processing state round trips");
     check(restored.randomizer.selectedSubdivisions == std::vector<std::size_t>({ 3, 11, 17 }),
@@ -423,9 +562,16 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
 {
     const juce::String json = R"json({
       "Params":{"Swing":-21.5},
-      "Sampler":{"Pads":{"Pads":[
+      "Randomize": {
+        "noteNumbers": false, "noteOnOff": false, "onlyFillEmpty": true,
+        "possibleNotes": [{"value":1},{"value":4}],
+        "possibleSlices": [{"value":3},{"value":7}],
+        "slice": false, "spacing": 0.44, "triggerChance": 0.38,
+        "velocity": false, "velocityRange": {"start":0.2,"end":0.7}
+      },
+      "Sampler":{"LiveEnable":{"sampler":false,"aux":false,"master":false},"Pads":{"Pads":[
         {"name":"Kick","Layers":[{"Sample":{"Binary":{"name":"kick.flac"}}}],
-         "Params":{"LayerMix":0.25,"OneShot":"On","Pan":0.5,"Length":0.8,
+         "Params":{"LayerMix":0.25,"OneShot":"On","Mono":"On","Pan":0.5,"Length":0.8,
                    "Volume":"0.00 dB","Hipass":"120 Hz",
                    "ADSR":{"Attack":"35%"},"Note":"C4",
                    "Pitch":{"Root":"E3","Tune":"-2","Fine":"7"},
@@ -454,6 +600,39 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
     auto state = bsl::ProjectState::makeDefault();
     check(bsl::statecodec::importLegacyPresetJson(json, state), "legacy preset JSON imports");
     check(state.isValid(), "legacy preset is validated before publication");
+    check(!state.global.samplerEnabled && !state.global.auxEnabled && !state.global.masterEnabled,
+          "legacy LiveEnable restores the sampler, AUX and Master independently");
+    auto old = juce::JSON::parse(json);
+    old.getProperty("Sampler", {}).getDynamicObject()->removeProperty("LiveEnable");
+    auto oldState = state;
+    check(bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(old), oldState)
+              && oldState.global.samplerEnabled && oldState.global.auxEnabled && oldState.global.masterEnabled,
+          "legacy presets without LiveEnable enable all sampler modules");
+
+    check(state.kit.pads[0].mono && !state.kit.pads[1].mono,
+          "legacy preset imports Mono and defaults missing Mono to Poly");
+    check(state.randomizer.selectedPads == std::vector<std::uint8_t>({ 1, 4 })
+              && state.randomizer.selectedSubdivisions == std::vector<std::size_t>({ 3, 7 }),
+          "legacy full preset restores randomizer pad and slice selections");
+    check(!state.randomizer.noteSelectionEnabled && !state.randomizer.triggeringEnabled
+              && !state.randomizer.slicingEnabled && !state.randomizer.velocityEnabled
+              && state.randomizer.fillEmptyOnly,
+          "legacy full preset restores randomizer module switches and Fill Empty");
+    check(std::abs(state.randomizer.spacing - 0.44f) < 1e-6f
+              && std::abs(state.randomizer.triggerChance - 0.38f) < 1e-6f
+              && std::abs(state.randomizer.minimumVelocity - 0.2f) < 1e-6f
+              && std::abs(state.randomizer.maximumVelocity - 0.7f) < 1e-6f,
+          "legacy full preset restores randomizer triggering and velocity ranges");
+    const auto beforeInvalidRandomizer = bsl::statecodec::encodePresetJson(state);
+    auto invalidRandomizer = juce::JSON::parse(json);
+    invalidRandomizer.getProperty("Randomize", {}).getDynamicObject()->setProperty("spacing", 2.0);
+    check(!bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(invalidRandomizer), state)
+              && bsl::statecodec::encodePresetJson(state) == beforeInvalidRandomizer,
+          "legacy full preset rejects invalid randomizer settings without changing the destination");
+    invalidRandomizer.getDynamicObject()->setProperty("Randomize", "not an object");
+    check(!bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(invalidRandomizer), state)
+              && bsl::statecodec::encodePresetJson(state) == beforeInvalidRandomizer,
+          "legacy full preset rejects malformed supplied randomizer state atomically");
     check(state.patterns.front().name == "Imported 3/8", "legacy pattern name imports");
     check(state.patterns.front().bars.front().numerator == 3
               && state.patterns.front().bars.front().denominator == 8,
@@ -472,23 +651,34 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
               && std::abs(state.kit.pads.front().attackNormalized - 0.35f) < 1.0e-6f
               && std::abs(state.kit.pads.front().driveGainDb - 9.5f) < 1.0e-6f
               && std::abs(state.kit.pads.front().distortionMix - 0.55f) < 1.0e-6f
-              && std::abs(state.kit.pads.front().delay - 0.5f) < 1.0e-6f
+              && state.kit.pads.front().delay == 0.0f
+              && std::abs(state.kit.pads.front().auxGain - 0.5f) < 1.0e-6f
               && std::abs(state.kit.pads.front().gain - 1.0f) < 1.0e-6f
-              && state.kit.pads.front().highPass > 0.06f
-              && state.kit.pads.front().highPass < 0.08f
-              && state.kit.pads.front().cutoff > 0.67f
-              && state.kit.pads.front().cutoff < 0.69f,
+              && std::abs(state.kit.pads.front().highPass - 0.3299229744f) < 1.0e-6f
+              && std::abs(state.kit.pads.front().cutoff - 0.696230881f) < 1.0e-6f
+              && std::abs(state.kit.pads.front().resonance - 7.0f / 12.0f) < 1.0e-6f,
           "legacy pad Params retain nested controls, note names, and frequency units");
-    check(!state.master.filterEnabled && std::abs(state.master.delay - 0.1f) < 1.0e-6f
+    check(!state.master.filterEnabled && state.master.delay == 0.0f
+              && std::abs(state.master.distortionReturn - 0.1f) < 1.0e-6f
               && state.master.distortion == 0.0f && state.master.reverb == 0.0f
               && state.master.room == 0.0f
               && std::abs(state.master.gain - std::pow(10.0f, -6.0206f / 20.0f)) < 1.0e-6f
-              && state.master.cutoff > 0.80f && state.master.cutoff < 0.82f,
-          "legacy master Params retain send-bus delay and master filter/gain, without auxiliary inserts");
-    check(std::abs(state.kit.pads[0].reverb - 0.12f) < 1e-6f
-              && std::abs(state.kit.pads[0].room - 0.08f) < 1e-6f
+              && std::abs(state.master.cutoff - 0.8118819632f) < 1.0e-6f
+              && std::abs(state.master.resonance - 7.0f / 12.0f) < 1.0e-6f,
+          "legacy Delay sets the Aux3 return while native Aux4 creates no echo");
+    check(std::abs(state.kit.pads[0].reverb - 0.06f) < 1e-6f
+              && std::abs(state.kit.pads[0].room - 0.16f) < 1e-6f
               && std::abs(state.kit.pads[0].distortionDrive - 0.2f) < 1e-6f,
-          "legacy auxiliary return levels and drive configure the pad effects");
+          "legacy Aux1 is Room and Aux2 is Reverb, with their respective return levels");
+    auto nativeRecall = bsl::ProjectState::makeDefault();
+    check(bsl::statecodec::decodePresetJson(bsl::statecodec::encodePresetJson(state), nativeRecall)
+              && nativeRecall.kit.pads[0].room == state.kit.pads[0].room
+              && nativeRecall.kit.pads[0].reverb == state.kit.pads[0].reverb
+              && nativeRecall.kit.pads[0].auxGain == state.kit.pads[0].auxGain
+              && nativeRecall.master.distortionReturn == state.master.distortionReturn,
+          "native preset roundtrip preserves all four auxiliary mappings");
+    check(std::abs(state.kit.pads[1].resonance - 7.0f / 24.0f) < 1.0e-6f,
+          "missing legacy filter preserves native default resonance Q 0.8");
     check(std::abs(state.kit.pads[1].gain - 0.5f) < 1.0e-5f,
           "legacy negative-dB pad volume converts to linear gain");
     check(state.kit.pads[1].driveEnabled
@@ -498,13 +688,23 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
     const auto renderImportedPad = [&state](bool driveEnabled) {
         bsl::AudioEngine engine;
         engine.prepare(48000.0);
+        engine.setDistortionResponse({ std::vector<float>{1.0f}, std::vector<float>{1.0f} });
+        auto master = bsl::makeMasterPlaybackSettings(state.master, 1.0f);
+        master.distortionDrive = state.kit.pads.front().distortionDrive;
+        engine.setMasterSettings(master);
         auto settings = bsl::makePadPlaybackSettings(state.kit.pads.front());
         settings.driveEnabled = driveEnabled;
-        settings.highPass = 0.0f;
+        settings.gain = 1.0f; // Isolate imported Drive from the native pad trim.
+        settings.pan = -1.0f;
+        settings.compression = 0.0f; // Isolate imported Drive/Aux routing.
+        settings.crush = 0.0f;
+        settings.highPassEnabled = false;
         settings.attackSeconds = 0.0f;
         settings.attackNormalized = 0.0f;
         engine.setPadSettings(0, settings);
-        engine.setPadSample(0, { 48000.0, { { 0.7f } } });
+        engine.setPadSample(0, { 48000.0, { { 0.2f } } });
+        bsl::AudioBlock silence(34, std::vector<float>(4800));
+        engine.process(silence, 4800);
         engine.noteOn(36, 1.0f);
         bsl::AudioBlock output(34, std::vector<float>(1));
         engine.process(output, 1);
@@ -514,19 +714,119 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
           "sanitized legacy Drive gain and Aux3 mix produce audible rendered distortion");
 }
 
+
+void testDriveStateCompatibilityAndOriginalEnable()
+{
+    auto source = bsl::ProjectState::makeDefault();
+    auto& pad = source.kit.pads[0];
+    pad.driveEnabled = true;
+    pad.driveGainDb = 12.0f;
+    pad.filterEnabled = false;
+    pad.hpfBypass = true;
+    pad.pan = -1.0f;
+    auto encoded = juce::JSON::parse(bsl::statecodec::encodeKitJson(source.kit, source.master));
+    auto* pads = encoded.getProperty("pads", {}).getArray();
+    check(pads != nullptr, "Drive compatibility fixture exposes kit pads");
+    if (pads == nullptr) return;
+    check(static_cast<bool>(pads->getReference(0).getProperty("nativeDriveInsert", false)),
+          "new kits explicitly persist the corrected native Drive route");
+    for (auto& item : *pads) item.getDynamicObject()->removeProperty("nativeDriveInsert");
+    bsl::KitState restored;
+    bsl::MasterState master;
+    check(bsl::statecodec::decodeKitJson(juce::JSON::toString(encoded), restored, master),
+          "older own-format kits without a Drive marker remain readable");
+    bsl::AudioEngine engine;
+    engine.prepare(48000.0);
+    auto settings = bsl::makePadPlaybackSettings(restored.pads[0]);
+    settings.gain = 1.0f; // Isolate Drive migration from the separately tested native output trim.
+    engine.setPadSettings(0, settings);
+    engine.setPadSample(0, { 48000.0, { { 0.1f } } });
+    bsl::AudioBlock silence(34, std::vector<float>(4800));
+    engine.process(silence, 4800);
+    engine.noteOn(36, 1.0f);
+    bsl::AudioBlock output(34, std::vector<float>(1));
+    engine.process(output, 1);
+    check(std::abs(output[0][0] - 0.1f) < 1e-7f,
+          "old saved zero-send Drive preserves dry routing at unity test gain");
+
+    struct Fixture { const char* params; bool enabled; float db; };
+    const std::array<Fixture, 6> fixtures {{
+        { R"json({"Drive":{"Enable":"Off","Gain":"12 dB"},"Enable":{"DriveEnable":"On"}})json", true, 12.0f },
+        { R"json({"Drive":{"Enable":"On","Gain":"12 dB"},"Enable":{"DriveEnable":"Off"}})json", false, 12.0f },
+        { R"json({"Drive":{"Gain":"6 dB"}})json", true, 6.0f },
+        { R"json({"Drive":{"Enable":"Off","Gain":"12 dB"}})json", false, 12.0f },
+        { R"json({"Drive":{"Gain":"-12 dB"}})json", true, 0.0f },
+        { R"json({"Drive":{"Gain":"60 dB"}})json", true, 24.0f }
+    }};
+    for (const auto& fixture : fixtures)
+    {
+        const auto original = juce::String("{\"Pads\":{\"Pads\":[{\"Params\":")
+            + fixture.params + "}]}}";
+        check(bsl::statecodec::importLegacyKitJson(original, restored, master), "original Drive fixture imports");
+        check(restored.pads[0].driveEnabled == fixture.enabled
+                  && restored.pads[0].driveGainDb == fixture.db,
+              "original Drive uses outer enable precedence and native 0..24 dB range");
+        const auto roundTrip = juce::JSON::parse(bsl::statecodec::encodeKitJson(restored, master));
+        const auto* importedPads = roundTrip.getProperty("pads", {}).getArray();
+        check(importedPads != nullptr
+                  && static_cast<bool>(importedPads->getReference(0).getProperty("nativeDriveInsert", false)),
+              "original kits select corrected Drive independently of own-state migration");
+    }
+}
+
+void testLegacyHighPassFrequencyAndEnable()
+{
+    struct Fixture { const char* value; float normalized; };
+    const std::array<Fixture,7> fixtures {{
+        { "1 Hz", 0.0000000000f },
+        { "120 Hz", 0.3299229744f },
+        { "400 Hz", 0.5000000000f },
+        { "1.50 kHz", 0.7879601172f },
+        { "3.00 kHz", 1.0000000000f },
+        { "50%", 0.5000000000f },
+        { "0.25", 0.2500000000f }
+    }};
+    for (const auto& fixture : fixtures)
+    {
+        const auto json=juce::String(R"json({"Pads":{"Pads":[{"Params":{"Hipass":")json")
+            + fixture.value + R"json(","Enable":{"HipassEnable":"Off"},"Filter":{"Enable":"On"}}}]}})json";
+        auto state=bsl::ProjectState::makeDefault();
+        check(bsl::statecodec::importLegacyKitJson(json,state.kit,state.master), "HPF fixture imports");
+        check(std::abs(state.kit.pads[0].highPass-fixture.normalized)<1e-6f,
+              "legacy Hipass frequency uses its own 1..3000 Hz scale with centre400");
+        check(state.kit.pads[0].hpfBypass && state.kit.pads[0].filterEnabled,
+              "legacy HPF enable imports independently of LPF enable");
+    }
+    auto state=bsl::ProjectState::makeDefault();
+    state.kit.pads[0].hpfBypass=true;
+    check(bsl::statecodec::importLegacyKitJson(
+        R"json({"Pads":{"Pads":[{"Params":{"Hipass":"1 Hz","Filter":{"Enable":"Off"}}}]}})json",
+        state.kit,state.master) && !state.kit.pads[0].hpfBypass && !state.kit.pads[0].filterEnabled,
+        "missing legacy HPF enable uses native enabled default independently of LPF");
+}
+
 void testLegacyAuxSettingsDoNotProcessUnsentMasterAudio()
 {
     const juce::String json = R"json({"Pads":{"Pads":[{"Params":{
       "Volume":"0 dB","Drive":{"Enable":"Off"},
       "Aux":{"Aux1":"0%","Aux2":"0%","Aux3":"0%","Aux4":"0%"}}}]},
-      "Params":{"Master":"0 dB","DistDrive":"78%","Reverb":"100%","Room":"100%"}})json";
+      "Params":{"Master":"0 dB","DistDrive":"78%","Delay":"100%","Reverb":"100%","Room":"100%"}})json";
     auto state = bsl::ProjectState::makeDefault();
     check(bsl::statecodec::importLegacyKitJson(json, state.kit, state.master), "aux regression kit imports");
     bsl::AudioEngine engine;
     engine.prepare(48000.0);
+    engine.setDistortionResponse({ std::vector<float>{1.0f}, std::vector<float>{1.0f} });
     engine.setPadSample(0, { 48000.0, { { 0.1f } } });
-    engine.setPadSettings(0, bsl::makePadPlaybackSettings(state.kit.pads[0]));
-    engine.setMasterSettings(bsl::makeMasterPlaybackSettings(state.master, state.master.gain));
+    auto settings = bsl::makePadPlaybackSettings(state.kit.pads[0]);
+    settings.filterEnabled = false; // This fixture isolates Aux/Drive routing.
+    settings.highPassEnabled = false;
+    settings.gain = 1.0f; // Native output trim has a dedicated audio regression.
+    engine.setPadSettings(0, settings);
+    auto master = bsl::makeMasterPlaybackSettings(state.master, state.master.gain);
+    master.distortionDrive = state.kit.pads[0].distortionDrive;
+    engine.setMasterSettings(master);
+    bsl::AudioBlock silence(34, std::vector<float>(4800));
+    engine.process(silence, 4800);
     engine.noteOn(36, 1.0f);
     bsl::AudioBlock output(34, std::vector<float>(24000));
     engine.process(output, 24000);
@@ -536,10 +836,10 @@ void testLegacyAuxSettingsDoNotProcessUnsentMasterAudio()
     for (std::size_t i = 1; i < output[0].size(); ++i) tailPeak = std::max(tailPeak, std::abs(output[0][i]));
     check(tailPeak == 0.0f, "zero auxiliary sends cannot create a master ambience tail");
 
-    auto settings = bsl::makePadPlaybackSettings(state.kit.pads[0]);
     settings.distortionMix = 0.5f;
     engine.reset();
     engine.setPadSettings(0, settings);
+    engine.process(silence, 4800); // Reset starts the shared send and return ramps.
     engine.noteOn(36, 1.0f);
     engine.process(output, 1);
     check(output[0][0] > 0.1f, "Aux3 distortion works even with the separate Drive insert off");
@@ -549,6 +849,7 @@ void testLegacyAuxSettingsDoNotProcessUnsentMasterAudio()
     settings.driveGainDb = 12.0f;
     engine.reset();
     engine.setPadSettings(0, settings);
+    engine.process(silence, 4800); // Reset starts the shared send and return ramps.
     engine.noteOn(36, 1.0f);
     engine.process(output, 1);
     check(output[0][0] > 0.1f, "Drive insert works independently of a zero Aux3 send");
@@ -561,7 +862,7 @@ void testLegacyKitAdapterImportsLayersAndProcessing()
         {"name":"Layered Kick","Layers":[
            {"Sample":{"Binary":{"name":"kick-a.flac"}}},
            {"Sample":{"Binary":{"name":"kick-b.flac"}}}],
-         "Params":{"LayerMix":0.75,"OneShot":"Off","Pan":0.25,"Length":0.6,
+         "Params":{"LayerMix":0.75,"OneShot":"Off","Mono":"On","Pan":0.25,"Length":0.6,
                    "Pitch":{"Tune":"3","Fine":"-12"},"Compressor":0.4,"BitCrush":0.2,
                    "Aux":{"Aux1":"30%","Aux2":"10%"}}}
       ]},
@@ -576,10 +877,24 @@ void testLegacyKitAdapterImportsLayersAndProcessing()
           "legacy kit imports both sample layers");
     check(std::abs(kit.pads[0].layerMix - 0.75f) < 1.0e-6f,
           "legacy kit imports layer mix");
+    check(kit.pads[0].mono, "legacy kit imports Mono");
+    check(std::abs(kit.pads[0].room - 0.3f) < 1e-6f
+              && std::abs(kit.pads[0].reverb - 0.1f) < 1e-6f,
+          "legacy kit shares the tutorial Room/Reverb send order");
     check(!kit.pads[0].oneShot && std::abs(kit.pads[0].damp - 0.6f) < 1.0e-6f,
           "legacy kit imports gated length behavior");
     check(std::abs(master.compression - 0.55f) < 1.0e-6f,
           "legacy kit imports master processing");
+    check(std::abs(master.resonance - 19.0f / 24.0f) < 1.0e-6f,
+          "legacy master Q 2.0 imports on the native 0.1..2.5 scale");
+    bsl::MasterState percentMaster;
+    check(bsl::statecodec::importLegacyKitJson(json.replace("\"2.0\"", "\"50%\""), kit, percentMaster)
+              && percentMaster.resonance == 0.5f,
+          "percentage master resonance remains a normalized knob position");
+    bsl::MasterState missingMaster;
+    check(bsl::statecodec::importLegacyKitJson(json.replace("\"Reso\":\"2.0\"", ""), kit, missingMaster)
+              && std::abs(missingMaster.resonance - 7.0f / 24.0f) < 1.0e-6f,
+          "missing legacy master resonance retains native Q 0.8");
     const float expectedMasterGain = std::pow(10.0f, -3.41f / 20.0f);
     check(std::abs(master.gain - expectedMasterGain) < 1.0e-6f,
           "scalar legacy Params.Master dB value converts exactly to linear gain");
@@ -634,6 +949,36 @@ void testRandomizerIndicesRejectNarrowingAndNonIntegers()
         check(!bsl::statecodec::importLegacyRandomizerJson(juce::JSON::toString(legacy), candidate),
               "legacy randomizer rejects invalid pad index before narrowing");
         check(candidate.selectedPads == original.selectedPads, "legacy index rejection preserves destination");
+    }
+}
+
+
+void testRandomizerSelectionsRejectDuplicatesAtomically()
+{
+    for (const bool pads : { true, false })
+    {
+        bsl::RandomizerSettings original;
+        original.selectedPads = { 7 };
+        original.selectedSubdivisions = { 13 };
+        const auto before = bsl::statecodec::encodeRandomizerJson(original);
+        auto candidate = original;
+        auto native = juce::JSON::parse(before);
+        native.getDynamicObject()->getProperty("randomizer").getDynamicObject()
+            ->setProperty(pads ? "selectedPads" : "selectedSubdivisions",
+                          juce::Array<juce::var> { 1, 1, 2 });
+        check(!bsl::statecodec::decodeRandomizerJson(juce::JSON::toString(native), candidate),
+              "native randomizer rejects duplicate selected values");
+        check(bsl::statecodec::encodeRandomizerJson(candidate) == before,
+              "native duplicate rejection preserves all destination settings");
+
+        candidate = original;
+        const auto legacy = pads
+            ? R"({"Randomize":{"possibleNotes":[{"value":1},{"value":1},{"value":2}]}})"
+            : R"({"Randomize":{"possibleSlices":[{"value":1},{"value":1},{"value":2}]}})";
+        check(!bsl::statecodec::importLegacyRandomizerJson(legacy, candidate),
+              "legacy randomizer rejects duplicate selected values");
+        check(bsl::statecodec::encodeRandomizerJson(candidate) == before,
+              "legacy duplicate rejection preserves all destination settings");
     }
 }
 
@@ -715,6 +1060,10 @@ void testCompressedStateExpansionIsBounded()
 
 int main()
 {
+    testModuleEnablesRoundTripIndependentlyOfRouting();
+    testSwingReferenceDefaultsAndExplicitRecall();
+    testMonoStateRoundTripsAndOldStateDefaults();
+    testAuxiliaryReturnRecallAndCompatibility();
     testEmbeddedSampleBudgetMatchesLoaderReplacementSemantics();
     testNativeStateRoundTripIncludesProjectAndEmbeddedSample();
     testDuplicateNativePatternTriggersAreNormalizedOnLoad();
@@ -727,9 +1076,12 @@ int main()
     testLegacyRandomizerAdapterUsesInstalledSchema();
     testLegacyDeclaredLoopAndStandaloneTempo();
     testLegacyPresetAdapterPublishesOnlyValidatedProject();
+    testDriveStateCompatibilityAndOriginalEnable();
+    testLegacyHighPassFrequencyAndEnable();
     testLegacyAuxSettingsDoNotProcessUnsentMasterAudio();
     testLegacyKitAdapterImportsLayersAndProcessing();
     testRandomizerIndicesRejectNarrowingAndNonIntegers();
+    testRandomizerSelectionsRejectDuplicatesAtomically();
     testNativeBarMetersRejectInvalidRawValuesAtomically();
     testSliceVelocityAssignmentRoundTripAndMigration();
     testCompressedStateExpansionIsBounded();
