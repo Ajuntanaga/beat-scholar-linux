@@ -1,6 +1,6 @@
 name: Linux validation
 
-# Manual until the account's included allowance and zero-spend budget are verified.
+# Public repositories use free standard runners; private runs require billing confirmation.
 on:
   workflow_dispatch:
     inputs:
@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   validate:
-    if: ${{ inputs.free_tier_confirmed }}
+    if: ${{ github.event.repository.private == false || inputs.free_tier_confirmed }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
