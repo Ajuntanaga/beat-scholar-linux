@@ -768,7 +768,10 @@ void BeatScholarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, i
         g.setColour(juce::Colour(palette_.border));
         g.fillRoundedRectangle(track, track.getWidth() * 0.5f);
         g.setColour(juce::Colour(palette_.text));
-        g.fillRoundedRectangle(track.withSizeKeepingCentre(area.getWidth() * 0.56f,
+        // Official Samples & Sounds 2:35: Gain thumb is 14 px across a 216 px
+        // sound stripe (146 px in our design). Keep the full slider hit area.
+        const auto thumbWidth = area.getWidth() * (id == "effect.9" ? 9.46f / 54.0f : 0.56f);
+        g.fillRoundedRectangle(track.withSizeKeepingCentre(thumbWidth,
                                                            std::max(5.0f, area.getHeight() * 0.08f))
                                      .withCentre({ track.getCentreX(), sliderPos }), 2.0f);
         return;

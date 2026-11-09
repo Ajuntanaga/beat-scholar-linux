@@ -381,6 +381,29 @@ void AudioEngine::noteOff(std::uint8_t midiNote, std::uint8_t midiChannel) noexc
                 voice.active = false;
 }
 
+void AudioEngine::stopMidiChannel(std::uint8_t midiChannel, bool allSoundOff) noexcept
+{
+    if (midiChannel < 1 || midiChannel > 16)
+        return;
+    bool anyActive = false;
+    for (std::size_t pad = 0; pad < padCount; ++pad)
+    {
+        const auto index = pad * 16 + midiChannel - 1;
+        hostNotesReleased_[index] = hostNotesStarted_[index];
+        for (auto& voice : voices_[pad])
+        {
+            if (voice.hostMidiChannel == midiChannel
+                && (allSoundOff || (voice.hostNoteId != 0 && !settings_[pad].oneShot)))
+                voice.active = false;
+            anyActive = anyActive || voice.active;
+        }
+    }
+    // Shared effects cannot be separated by MIDI channel. Clear residual tails
+    // when the last voice is silenced, without resetting other channels' voices.
+    if (allSoundOff && !anyActive)
+        reset();
+}
+
 void AudioEngine::process(AudioBlock& output, std::size_t sampleCount) noexcept
 {
     process(output, sampleCount, {});

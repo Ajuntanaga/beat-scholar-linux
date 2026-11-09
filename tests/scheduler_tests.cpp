@@ -93,6 +93,47 @@ void testAbsoluteSampleAndBpmFallbackChoosesBoundary()
           "absolute samples and BPM provide the grid when host PPQ is absent");
 }
 
+void testTempoChangesPreserveTheQuantizationGrid()
+{
+    for (const bool hostPpq : { false, true })
+        for (const bool queuedBeforeChange : { false, true })
+            for (const double nextBpm : { 60.0, 240.0 })
+            {
+                bsl::PatternScheduler scheduler(0);
+                std::array<bsl::PatternRenderSegment, 4> segments {};
+                // Restart a pattern halfway through the first block. The
+                // quantization grid must keep transport phase, not pattern phase.
+                const std::array initialTriggers {
+                    bsl::PatternTrigger { 6000, 3, bsl::PatternQuantization::off },
+                    bsl::PatternTrigger { 6001, 1, bsl::PatternQuantization::quarter },
+                };
+                auto first = transport(0, 12000);
+                if (hostPpq)
+                    first.quarterNotePosition = 0.0;
+                scheduler.planBlock(first,
+                    std::span(initialTriggers).first(queuedBeforeChange ? 2 : 1), segments);
+                check(scheduler.activePattern() == 3,
+                      "quantized trigger remains queued during the initial half beat");
+
+                auto second = transport(12000, 40000);
+                second.bpm = nextBpm;
+                if (hostPpq)
+                    second.quarterNotePosition = 0.5;
+                const std::array trigger {
+                    bsl::PatternTrigger { 0, 1, bsl::PatternQuantization::quarter }
+                };
+                const auto count = scheduler.planBlock(second,
+                    std::span(trigger).first(queuedBeforeChange ? 0 : 1), segments);
+                const auto expectedOffset = static_cast<int>(48000.0 * 60.0 / nextBpm * 0.5);
+                check(count == 2 && segments[1].patternId == 1
+                          && segments[1].sampleOffset == expectedOffset,
+                      "new and queued triggers retain the next beat across a tempo change");
+                check(count == 2 && std::abs(segments[0].phaseQuarterNotes - 0.25) < 1.0e-12
+                          && std::abs(segments[1].phaseQuarterNotes) < 1.0e-12,
+                      "pattern-relative phase stays separate from the transport grid");
+            }
+}
+
 void testLatestTriggerForOneBoundaryWins()
 {
     bsl::PatternScheduler scheduler(0);
@@ -311,6 +352,7 @@ int main()
     testAllQuantizationModesUseTheNextBoundary();
     testHostPpqOverridesSampleTimeline();
     testAbsoluteSampleAndBpmFallbackChoosesBoundary();
+    testTempoChangesPreserveTheQuantizationGrid();
     testLatestTriggerForOneBoundaryWins();
     testBoundedCollectorRetainsTheLatestSameBoundaryTrigger();
     testMidBlockSplitAdvancesOldPhaseAndZerosNewPhase();

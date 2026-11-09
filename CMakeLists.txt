@@ -115,7 +115,7 @@ if(BSL_BUILD_PLUGIN)
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
-        JUCE_VST3_EMULATE_MIDI_CC_WITH_PARAMETERS=0
+        JUCE_VST3_EMULATE_MIDI_CC_WITH_PARAMETERS=1
     )
 
     if(BSL_ENABLE_TSAN AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -131,7 +131,7 @@ if(BSL_BUILD_PLUGIN)
             JUCE_WEB_BROWSER=0
             JUCE_USE_CURL=0
             JUCE_VST3_CAN_REPLACE_VST2=0
-            JUCE_VST3_EMULATE_MIDI_CC_WITH_PARAMETERS=0
+            JUCE_VST3_EMULATE_MIDI_CC_WITH_PARAMETERS=1
         )
         add_test(NAME beat_scholar_processor_tsan_tests COMMAND beat_scholar_processor_tsan_tests)
         set_tests_properties(beat_scholar_processor_tsan_tests PROPERTIES
@@ -243,7 +243,14 @@ if(BSL_BUILD_PLUGIN)
                 --host $<TARGET_FILE:actual_vst3_host>
                 --artifacts-dir "${CMAKE_BINARY_DIR}/actual-vst3-midi"
         )
-        set_tests_properties(beat_scholar_actual_vst3_smoke beat_scholar_actual_vst3_midi PROPERTIES
+        add_test(NAME beat_scholar_actual_vst3_panic
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_vst3_panic.py
+                --plugin "${CMAKE_BINARY_DIR}/BeatScholarLinux_artefacts/$<CONFIG>/VST3/Beat Scholar Linux.vst3"
+                --host $<TARGET_FILE:actual_vst3_host>
+                --artifacts-dir "${CMAKE_BINARY_DIR}/actual-vst3-panic"
+        )
+        set_tests_properties(beat_scholar_actual_vst3_smoke beat_scholar_actual_vst3_midi beat_scholar_actual_vst3_panic PROPERTIES
             ENVIRONMENT "DISPLAY=;WAYLAND_DISPLAY=")
     endif()
 endif()

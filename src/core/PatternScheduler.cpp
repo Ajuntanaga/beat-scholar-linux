@@ -40,7 +40,6 @@ void PatternScheduler::clearTimelineState() noexcept
 {
     pendingCount_ = 0;
     phaseQuarterNotes_ = 0.0;
-    expectedPpqValid_ = false;
 }
 
 void PatternScheduler::reset(PatternId activePattern) noexcept
@@ -65,11 +64,8 @@ void PatternScheduler::addOrReplace(PendingTrigger trigger) noexcept
 {
     for (std::size_t index = 0; index < pendingCount_; ++index)
     {
-        const bool same = pending_[index].usesHostPpq == trigger.usesHostPpq
-                          && (trigger.usesHostPpq
-                                  ? std::abs(pending_[index].targetQuarterNote
-                                             - trigger.targetQuarterNote) < 1.0e-10
-                                  : pending_[index].targetSample == trigger.targetSample);
+        const bool same = std::abs(pending_[index].targetQuarterNote
+                                   - trigger.targetQuarterNote) < 1.0e-10;
         if (same)
         {
             pending_[index] = trigger;
@@ -107,15 +103,20 @@ std::size_t PatternScheduler::planBlock(const SchedulerTransport& transport,
     const double samplesPerQuarter = transport.sampleRate * 60.0 / transport.bpm;
     const bool hasHostPpq = std::isfinite(transport.quarterNotePosition);
     bool discontinuity = wasPlaying_ && transport.absoluteSampleStart != expectedSampleStart_;
-    if (!discontinuity && wasPlaying_ && hasHostPpq && expectedPpqValid_)
+    if (!discontinuity && wasPlaying_ && hasHostPpq)
         discontinuity = std::abs(transport.quarterNotePosition - expectedQuarterNote_) > 1.0e-4;
+    // Integrate contiguous fallback blocks at their own tempos. Recomputing
+    // the entire sample timeline at today's BPM moves the musical grid.
+    const double blockQuarterNote = hasHostPpq ? transport.quarterNotePosition
+        : (!wasPlaying_ || discontinuity
+               ? static_cast<double>(transport.absoluteSampleStart) / samplesPerQuarter
+               : expectedQuarterNote_);
     if (!wasPlaying_ || discontinuity)
     {
         clearTimelineState();
         // Starting/seeking the DAW follows its timeline. A MIDI-triggered
         // switch below still deliberately starts the new pattern at zero.
-        phaseQuarterNotes_ = hasHostPpq ? transport.quarterNotePosition
-                                       : static_cast<double>(transport.absoluteSampleStart) / samplesPerQuarter;
+        phaseQuarterNotes_ = blockQuarterNote;
     }
 
     wasPlaying_ = true;
@@ -127,30 +128,9 @@ std::size_t PatternScheduler::planBlock(const SchedulerTransport& transport,
         PendingTrigger trigger;
         trigger.patternId = source.patternId;
         trigger.sequence = ++nextSequence_;
-        trigger.usesHostPpq = hasHostPpq;
-
-        if (hasHostPpq)
-        {
-            const double eventPpq = transport.quarterNotePosition
-                                    + static_cast<double>(offset) / samplesPerQuarter;
-            trigger.targetQuarterNote = boundaryAtOrAfter(eventPpq, grid);
-            trigger.targetSample = transport.absoluteSampleStart + offset
-                                   + static_cast<std::int64_t>(std::llround(
-                                       (trigger.targetQuarterNote - eventPpq)
-                                       * samplesPerQuarter));
-        }
-        else
-        {
-            const auto eventSample = transport.absoluteSampleStart + offset;
-            if (grid <= 0.0)
-                trigger.targetSample = eventSample;
-            else
-            {
-                const double eventPpq = static_cast<double>(eventSample) / samplesPerQuarter;
-                trigger.targetSample = static_cast<std::int64_t>(std::llround(
-                    boundaryAtOrAfter(eventPpq, grid) * samplesPerQuarter));
-            }
-        }
+        const double eventPpq = blockQuarterNote
+                                + static_cast<double>(offset) / samplesPerQuarter;
+        trigger.targetQuarterNote = boundaryAtOrAfter(eventPpq, grid);
         addOrReplace(trigger);
     }
 
@@ -161,12 +141,8 @@ std::size_t PatternScheduler::planBlock(const SchedulerTransport& transport,
     for (std::size_t index = 0; index < pendingCount_; ++index)
     {
         const auto& pending = pending_[index];
-        const auto relative = pending.usesHostPpq && hasHostPpq
-                                  ? static_cast<std::int64_t>(std::llround(
-                                      (pending.targetQuarterNote
-                                       - transport.quarterNotePosition)
-                                      * samplesPerQuarter))
-                                  : pending.targetSample - transport.absoluteSampleStart;
+        const auto relative = static_cast<std::int64_t>(std::llround(
+            (pending.targetQuarterNote - blockQuarterNote) * samplesPerQuarter));
         if (relative < static_cast<std::int64_t>(transport.blockSize))
         {
             due[dueCount++] = {
@@ -226,11 +202,8 @@ std::size_t PatternScheduler::planBlock(const SchedulerTransport& transport,
                          + static_cast<double>(transport.blockSize - cursor) / samplesPerQuarter;
 
     expectedSampleStart_ = transport.absoluteSampleStart + transport.blockSize;
-    expectedQuarterNote_ = hasHostPpq
-                               ? transport.quarterNotePosition
-                                     + static_cast<double>(transport.blockSize) / samplesPerQuarter
-                               : 0.0;
-    expectedPpqValid_ = hasHostPpq;
+    expectedQuarterNote_ = blockQuarterNote
+                           + static_cast<double>(transport.blockSize) / samplesPerQuarter;
     return segmentCount;
 }
 

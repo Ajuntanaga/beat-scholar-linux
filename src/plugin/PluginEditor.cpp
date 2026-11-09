@@ -381,7 +381,8 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     pause_.setTooltip(standaloneTransport ? "Pause standalone playback" : "Playback follows the host timeline");
     stop_.setTooltip(standaloneTransport ? "Stop standalone playback" : "Playback follows the host timeline");
     configureButton(drumBrush_, "", [this] {
-        previousBrush_ = brush_;
+        if (brush_ != Brush::drum)
+            previousBrush_ = brush_;
         brush_ = Brush::drum;
         module_ = Module::soundCharacter;
         processor_.projectState().ui.randomizerVisible = false;
@@ -2246,6 +2247,8 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
     }
     if (designRect(getWidth(), getHeight(), 8.0f, 60.0f, 50.0f, 42.0f).contains(position))
     {
+        if (event.mods.isPopupMenu())
+            return;
         processor_.projectEditor().addLane(processor_.projectState().activePattern);
         updateControlsFromState();
         return;
@@ -2398,7 +2401,9 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
         for (std::size_t index = 0; index < *bar; ++index)
             start += static_cast<std::size_t>(pattern.bars[index].numerator);
         const auto count = static_cast<std::size_t>(pattern.bars[*bar].numerator);
-        if (juce::KeyPress::isKeyCurrentlyDown('c'))
+        if (event.mods.isPopupMenu())
+            showBarMenu(*bar);
+        else if (juce::KeyPress::isKeyCurrentlyDown('c'))
             copyBar(*bar);
         else if (juce::KeyPress::isKeyCurrentlyDown('v') && barClipboard_)
             pasteBar(*bar);
@@ -2409,8 +2414,6 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
                 for (std::size_t beat = start; beat < start + count; ++beat)
                     lane.beats[beat].reset();
         }
-        else if (event.mods.isPopupMenu())
-            showBarMenu(*bar);
         else
         {
             draggingBarMeter_ = true;
@@ -2471,7 +2474,12 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
                 return;
             }
         }
-        if (juce::KeyPress::isKeyCurrentlyDown('c'))
+        if (event.mods.isPopupMenu())
+        {
+            processor_.selectPatternFromUi(*pattern);
+            showPatternMenu(*pattern);
+        }
+        else if (juce::KeyPress::isKeyCurrentlyDown('c'))
             copyPattern(*pattern);
         else if (juce::KeyPress::isKeyCurrentlyDown('v') && patternClipboard_)
             pastePattern(*pattern);
@@ -2481,11 +2489,7 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
             midiDragPattern_ = *pattern;
         }
         else
-        {
             processor_.selectPatternFromUi(*pattern);
-            if (event.mods.isPopupMenu())
-                showPatternMenu(*pattern);
-        }
         repaint();
         return;
     }
@@ -2944,6 +2948,23 @@ void BeatScholarLinuxEditor::selectPad(std::size_t pad, bool audition)
 {
     if (pad >= bsl::padCount)
         return;
+    // Pad selection primes Drum/Sounds. A held shortcut still overrides the tool
+    // until release, then returns to this newly selected placement mode.
+    const auto persistentBrush = momentaryBrushActive_ ? momentaryBrushPrevious_ : brush_;
+    if (persistentBrush != Brush::drum)
+        previousBrush_ = persistentBrush;
+    if (momentaryBrushActive_)
+    {
+        momentaryBrushPrevious_ = Brush::drum;
+        momentaryModulePrevious_ = Module::soundCharacter;
+        updateMomentaryBrush();
+    }
+    else
+    {
+        brush_ = Brush::drum;
+        module_ = Module::soundCharacter;
+        processor_.projectState().ui.randomizerVisible = false;
+    }
     processor_.projectState().ui.selectedPad = pad;
     if (audition && (processor_.projectState().global.auditionDuringPlayback
                      || !processor_.isTransportPlaying()))
@@ -4252,21 +4273,6 @@ bool BeatScholarLinuxEditor::keyPressed(const juce::KeyPress& key)
     const int padIndex = lowerIndex >= 0 ? lowerIndex : upperIndex >= 0 ? upperIndex + 8 : -1;
     if (padIndex >= 0)
     {
-        // Pad keys prime Drum/Sounds. A held shortcut still overrides the tool
-        // until release, then returns to this newly selected placement mode.
-        previousBrush_ = momentaryBrushActive_ ? momentaryBrushPrevious_ : brush_;
-        if (momentaryBrushActive_)
-        {
-            momentaryBrushPrevious_ = Brush::drum;
-            momentaryModulePrevious_ = Module::soundCharacter;
-            updateMomentaryBrush();
-        }
-        else
-        {
-            brush_ = Brush::drum;
-            module_ = Module::soundCharacter;
-            processor_.projectState().ui.randomizerVisible = false;
-        }
         selectPad(static_cast<std::size_t>(padIndex), false);
         return true;
     }

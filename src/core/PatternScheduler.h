@@ -68,10 +68,8 @@ private:
     struct PendingTrigger
     {
         double targetQuarterNote = 0.0;
-        std::int64_t targetSample = 0;
         PatternId patternId = 0;
         std::uint64_t sequence = 0;
-        bool usesHostPpq = false;
     };
 
     struct DueTrigger
@@ -92,7 +90,6 @@ private:
     double expectedQuarterNote_ = 0.0;
     double phaseQuarterNotes_ = 0.0;
     bool wasPlaying_ = false;
-    bool expectedPpqValid_ = false;
 };
 
 class PatternTriggerCollector

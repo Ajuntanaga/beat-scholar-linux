@@ -132,6 +132,10 @@ BeatScholarLinuxProcessor::BeatScholarLinuxProcessor()
     for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
         for (std::size_t effect = 0; effect < padBypassNames.size(); ++effect)
             padBypassParameters_[pad][effect] = parameters_.getRawParameterValue(padBypassId(pad, effect));
+    // Defaults belong only to a new instance. Audio re-preparation must never
+    // replace an intentionally empty or partially populated restored kit.
+    loadFactoryKitIfAvailable();
+    syncParametersFromProject();
     pendingMidiOffFrames_.fill(-1);
     for (auto& snapshot : stateSnapshots_)
         snapshot = projectEditor_.state();
@@ -279,7 +283,6 @@ void BeatScholarLinuxProcessor::prepareToPlay(double sampleRate, int maximumExpe
     fallbackSamplePosition_.store(0);
     patternScheduler_.reset(audioPattern_.load(std::memory_order_acquire));
     loadBuiltInPreviewKit();
-    loadFactoryKitIfAvailable();
     loadFactorySamples();
     markProjectDirty();
     publishProjectStateIfNeeded();
@@ -402,7 +405,10 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     frame.bpm = parameters_.getRawParameterValue("bpm")->load();
     frame.absoluteSampleStart = fallbackSamplePosition_.load();
     frame.blockSize = samplesInBlock;
-    frame.playing = standalonePlaying_.load();
+    // Undefined is the unwrapped processor used by offline tools/tests.
+    // Hosted wrappers require affirmative transport information from the host.
+    frame.playing = (standalone || wrapperType == juce::AudioProcessor::wrapperType_Undefined)
+        && standalonePlaying_.load();
     frame.swingPercent = parameters_.getRawParameterValue("swing")->load();
     // AudioProcessorPlayer supplies device time, not musical transport.
     // Its clock keeps advancing while paused and its isPlaying stays false.
@@ -489,7 +495,16 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         {
             const auto metadata = *input++;
             const auto message = metadata.getMessage();
-            if (!state.global.samplerEnabled || (!message.isNoteOn() && !message.isNoteOff()))
+            if (!state.global.samplerEnabled)
+                continue;
+            if (message.isAllSoundOff() || message.isAllNotesOff())
+            {
+                advanceAudio(metadata.samplePosition);
+                audioEngine_.stopMidiChannel(static_cast<std::uint8_t>(message.getChannel()),
+                                             message.isAllSoundOff());
+                continue;
+            }
+            if (!message.isNoteOn() && !message.isNoteOff())
                 continue;
             if (const auto pad = state.padIndexForMidiNote(static_cast<std::uint8_t>(message.getNoteNumber())))
             {
@@ -601,7 +616,7 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                 buffer.copyFrom(destination, 0, scratch_[static_cast<std::size_t>(source)].data(), samplesInBlock);
         }
     if (frame.playing)
-        fallbackSamplePosition_.fetch_add(samplesInBlock);
+        fallbackSamplePosition_.store(frame.absoluteSampleStart + samplesInBlock);
     readingStateIndex_.store(-1, std::memory_order_release);
 }
 

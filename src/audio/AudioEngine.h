@@ -117,6 +117,7 @@ public:
     void noteOn(std::uint8_t midiNote, float velocity, std::size_t gateFrames = 0,
                 bool followsNoteOff = true, std::uint8_t midiChannel = 1) noexcept;
     void noteOff(std::uint8_t midiNote, std::uint8_t midiChannel = 1) noexcept;
+    void stopMidiChannel(std::uint8_t midiChannel, bool allSoundOff) noexcept;
     // Streaming callers clear once, then render monotonically between note events.
     void beginBlock(AudioBlock& output, std::size_t sampleCount) noexcept;
     void renderRange(AudioBlock& output, std::size_t start, std::size_t end) noexcept;

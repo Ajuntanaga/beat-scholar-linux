@@ -586,6 +586,46 @@ void testSwungMidiExportKeepsThePlaybackLoopPhase()
             }
 }
 
+void testMidiExportKeepsRemappedPadRetriggerOrder()
+{
+    for (const bool shortPadFirst : { false, true })
+        for (const bool reverseLanes : { false, true })
+        {
+            auto state = bsl::ProjectState::makeDefault();
+            auto& pattern = state.patterns.front();
+            pattern.bars = { bsl::BarState::make(1, 4) };
+            pattern.lanes = { bsl::LaneState::make(1), bsl::LaneState::make(1) };
+            for (std::size_t pad = 0; pad < 2; ++pad)
+            {
+                const bool shortGate = pad == (shortPadFirst ? 0u : 1u);
+                auto& beat = pattern.lanes[reverseLanes ? 1 - pad : pad].beats.front();
+                beat = bsl::BeatState::withSubdivision(shortGate ? 4 : 1,
+                    static_cast<std::uint8_t>(pad), 0.8f);
+                for (std::size_t slice = 1; slice < beat.slices.size(); ++slice)
+                    beat.slices[slice].enabled = false;
+                state.kit.pads[pad].midiNote = 60;
+            }
+            bsl::TransportFrame frame;
+            frame.sampleRate = 1920.0; // One sample per MIDI tick at 120 BPM.
+            frame.bpm = 120.0;
+            frame.blockSize = 960;
+            frame.playing = true;
+            const auto played = bsl::Sequencer::render(state, frame);
+            const auto exported = bsl::Sequencer::exportPattern(state, 0, 960);
+            check(played.size() == 2 && exported.size() == 2,
+                  "shared-note remapping retains both simultaneous pad hits");
+            if (played.size() != 2 || exported.size() != 2) continue;
+            check(played.back().gateFrames == (shortPadFirst ? 960u : 240u),
+                  "last pad determines the live shared-note release");
+            for (std::size_t i = 0; i < played.size(); ++i)
+                check(exported[i].tick == played[i].sampleOffset
+                          && exported[i].note == played[i].note
+                          && exported[i].velocity == played[i].velocity
+                          && exported[i].gateTicks == static_cast<std::int64_t>(played[i].gateFrames),
+                      "MIDI export preserves live retrigger order when pads share a note");
+        }
+}
+
 void testPadIdentityIsIndependentOfMidiMapping()
 {
     auto state = bsl::ProjectState::makeDefault();
@@ -771,6 +811,7 @@ int main()
     testPatternTriggerNotesSelectPatterns();
     testPatternMidiExportPreservesTripletTimingAndVelocity();
     testSwungMidiExportKeepsThePlaybackLoopPhase();
+    testMidiExportKeepsRemappedPadRetriggerOrder();
     testPadIdentityIsIndependentOfMidiMapping();
     testLaneRandomizationUsesOneUndoCheckpointAndStableBeatSeeds();
     testLaneDefaultsContainValidPadIndices();

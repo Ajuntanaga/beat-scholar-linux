@@ -26,7 +26,9 @@ with subprocess.Popen(["openbox"], stdout=subprocess.DEVNULL,
         # Xvfb -noreset retains the atoms when the window manager disconnects.
         window_manager.terminate()
         window_manager.wait(timeout=5)
-        result = subprocess.run(sys.argv[1:], timeout=90,
+        # Full audio/editor fixtures can approach 90 seconds under host load.
+        # Individual input and menu readiness deadlines remain bounded in C++.
+        result = subprocess.run(sys.argv[1:], timeout=180,
                                 env={**os.environ, "BSL_ISOLATED_GUI_TESTS": "1"})
     finally:
         if window_manager.poll() is None:

@@ -9,9 +9,22 @@
 #include <memory>
 #include <map>
 
-// Provide deterministic convolution history without shipping factory IRs to CI.
+// Observe publication and provide deterministic convolution fixtures without factory IRs.
 struct BeatScholarLinuxProcessorTestAccess
 {
+    static bool currentProjectIsPublished(BeatScholarLinuxProcessor& processor)
+    {
+        const std::lock_guard lock(processor.statePublishMutex_);
+        return processor.lastPublishedEditorRevision_ == processor.projectEditor().revision()
+            && processor.lastPublishedExplicitRevision_
+                == processor.explicitRevision_.load(std::memory_order_relaxed);
+    }
+
+    static std::int64_t fallbackSamplePosition(BeatScholarLinuxProcessor& processor)
+    {
+        return processor.fallbackSamplePosition_.load();
+    }
+
     static void prepareDistortion(BeatScholarLinuxProcessor& processor)
     {
         processor.audioEngine_.setDistortionResponse({ std::vector<float>{1.0f}, std::vector<float>{1.0f} });
@@ -728,14 +741,24 @@ private:
             invoked_ = item != nullptr && item->getActions().invoke(juce::AccessibilityActionType::press);
             check(invoked_, label + " can be selected");
             if (!invoked_) juce::PopupMenu::dismissAllActiveMenus();
+            actionDeadline_ = juce::Time::getMillisecondCounterHiRes() + 2000.0;
             phase_ = 2;
         }
         else
         {
             if (invoked_)
             {
-                checkResult();
                 const bool copy = index_ == 0 || index_ == 7;
+                // Menu callbacks and the editor's 20 Hz publication are queued
+                // separately. Observe both; never publish on the test's behalf.
+                const bool edited = copy || processor_.projectEditor().revision() > revision_;
+                const bool published = index_ != 12
+                    || BeatScholarLinuxProcessorTestAccess::currentProjectIsPublished(processor_);
+                if ((!edited || !published)
+                    && juce::Time::getMillisecondCounterHiRes() < actionDeadline_)
+                    return;
+                check(edited && published, label + " completes and reaches audio within two seconds");
+                checkResult();
                 check(processor_.projectEditor().revision() == revision_ + (copy ? 0 : 1),
                       label + (copy ? " does not edit the project" : " creates exactly one edit"));
                 if (!copy)
@@ -762,6 +785,7 @@ private:
     bsl::ProjectState before_;
     std::function<void()> done_;
     std::uint64_t revision_ = 0;
+    double actionDeadline_ = 0.0;
     std::size_t index_ = 0;
     int phase_ = 0;
     bool invoked_ = false;
@@ -1022,6 +1046,29 @@ void testRandomizerTabRestoresSoundPanel()
     auto* randomAfterSecondTab = childWithId<juce::Slider>(*editor, "random.0");
     check(randomAfterSecondTab != nullptr && randomAfterSecondTab->isVisible(),
           "repeated Tab restores randomizer panel with the randomizer brush");
+
+    for (const bool usePadKeys : { true, false })
+    {
+        dice->onClick();
+        if (usePadKeys)
+        {
+            editor->keyPressed(juce::KeyPress('a', {}, 'a'));
+            editor->keyPressed(juce::KeyPress('s', {}, 's'));
+        }
+        else
+        {
+            auto* drum = childWithId<juce::TextButton>(*editor, "brush.drum");
+            check(drum != nullptr, "Tab regression locates drum brush");
+            if (drum == nullptr) return;
+            drum->onClick();
+            drum->onClick();
+        }
+        editor->keyPressed(juce::KeyPress(juce::KeyPress::tabKey));
+        auto* restored = childWithId<juce::Slider>(*editor, "random.0");
+        check(restored != nullptr && restored->isVisible(),
+              usePadKeys ? "Tab remembers last brush after successive pad shortcuts"
+                         : "Tab remembers last brush after repeated drum selection");
+    }
 }
 
 void testRandomizerTriggerModuleToggleIsIndependent(const juce::File& output)
@@ -2081,12 +2128,16 @@ void testKeyboardFocus(const juce::File& output)
     std::vector<bsl::BeatState> shortcutOriginalBeats;
     const auto clickShortcutEditor = [&](juce::Point<int> position, std::function<bool()> ready) {
         const auto screen = shortcutEditor->localPointToGlobal(position);
-        juce::ChildProcess command;
-        const bool started = command.start(juce::StringArray { "xdotool", "mousemove",
+        auto command = std::make_shared<juce::ChildProcess>();
+        const bool started = command->start(juce::StringArray { "xdotool", "mousemove",
             juce::String(screen.x), juce::String(screen.y), "click", "1" });
-        check(started && command.waitForProcessToFinish(2000) && command.getExitCode() == 0,
-              "click shortcut editor only on isolated Xvfb display");
-        pendingUiInput = std::move(ready);
+        check(started, "start shortcut editor click only on isolated Xvfb display");
+        // Deliver the click while JUCE can dispatch X11 events. Blocking its
+        // message thread until xdotool exits can strand the input before the
+        // menu has received it. Keep the child alive and observe both results.
+        pendingUiInput = [command, ready = std::move(ready)] {
+            return !command->isRunning() && command->getExitCode() == 0 && ready();
+        };
     };
     const auto clickShortcutGrid = [&](juce::Point<int> position) {
         const auto revision = shortcutProcessor->projectEditor().revision();
@@ -4055,6 +4106,25 @@ void testDocumentedKeyboardRows()
                       && !current->projectEditor().canUndo(),
                   "pad-key selection adds no history before the one placement edit");
         }
+    // Manual p15: selecting a sound pad primes Drum just like a pad key.
+    for (const auto* previous : { "brush.slicer", "brush.velocity" })
+    {
+        BeatScholarLinuxProcessor current;
+        BeatScholarLinuxEditor view(current);
+        auto* oldBrush = childWithId<juce::TextButton>(view, previous);
+        auto* pad = childWithId<juce::TextButton>(view, "pad.8");
+        auto* drum = childWithId<juce::TextButton>(view, "brush.drum");
+        check(oldBrush && pad && drum, "locate sound pad priming controls");
+        if (!(oldBrush && pad && drum)) continue;
+        oldBrush->onClick();
+        pad->onClick();
+        check(current.projectState().ui.selectedPad == 8 && drum->getToggleState(),
+              "clicking a sound pad primes Drum after " + juce::String(previous));
+        pad->onClick();
+        view.keyPressed(juce::KeyPress(juce::KeyPress::tabKey));
+        check(oldBrush->getToggleState(), "repeated sound pad clicks retain the previous brush for Tab");
+        check(!current.projectEditor().canUndo(), "sound pad selection adds no edit history");
+    }
     for (const char held : { '3', '/', '\0' })
     {
         auto current = std::make_unique<BeatScholarLinuxProcessor>();
@@ -4603,11 +4673,23 @@ void testLaneContextMenuDoesNotEdit()
     processor->projectState().patterns[0].lanes = { bsl::LaneState::make(4) };
     auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
     editor->setVisible(true);
+    const auto addLanePopup = visualEvent(*editor, { 30.0f, 80.0f }, juce::ModifierKeys::rightButtonModifier);
+    editor->mouseDown(addLanePopup);
+    check(processor->projectState().patterns[0].lanes.size() == 1
+              && !processor->projectEditor().canUndo(),
+          "right-clicking add lane preserves lanes and undo history");
+    juce::PopupMenu::dismissAllActiveMenus();
     const auto event = visualEvent(*editor, { 20.0f, 120.0f }, juce::ModifierKeys::rightButtonModifier);
     editor->mouseDown(event);
     check(!processor->projectState().patterns[0].lanes[0].solo,
           "right-clicking lane opens menu without toggling solo");
     check(juce::PopupMenu::dismissAllActiveMenus(), "lane right-click exposes a context menu");
+    editor->mouseDown(visualEvent(*editor, { 30.0f, 80.0f }, juce::ModifierKeys::leftButtonModifier));
+    check(processor->projectState().patterns[0].lanes.size() == 2
+              && processor->projectEditor().undo()
+              && processor->projectState().patterns[0].lanes.size() == 1
+              && !processor->projectEditor().canUndo(),
+          "left-clicking add lane still adds a lane in one undo step");
 }
 
 void testMasterUndoPreservesHostAutomation()
@@ -4662,6 +4744,171 @@ std::unique_ptr<BeatScholarLinuxProcessor> makeProcessorForWrapper(juce::AudioPr
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
     juce::AudioProcessor::setTypeOfNextNewPlugin(juce::AudioProcessor::wrapperType_Undefined);
     return processor;
+}
+
+
+void testFunctionalRepairs(const juce::File& output)
+{
+    const auto previous = juce::SystemStats::getEnvironmentVariable("XDG_DATA_HOME", "");
+    const auto xdg = output.getChildFile("functional-repairs-xdg");
+    setenv("XDG_DATA_HOME", xdg.getFullPathName().toRawUTF8(), 1);
+    const auto factory = bsl::dataRoot().getChildFile("Factory/Kits/Acoustic Power/Acoustic Power.json");
+    check(factory.getParentDirectory().createDirectory().wasOk(), "create factory initialization fixture");
+    check(factory.replaceWithText(R"json({"name":"Factory sentinel","Pads":{"Pads":[{"name":"Factory pad"}]}})json"),
+          "write factory initialization fixture");
+    for (const bool empty : { false, true })
+    {
+        auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
+        auto state = makeBypassTestProject(1);
+        state.kit.pads[0] = bsl::ProjectState::makeDefault().kit.pads[0];
+        state.kit.pads[0].factorySampleIds = {};
+        if (empty)
+            for (auto& pad : state.kit.pads)
+            {
+                pad.factorySampleIds = {};
+                pad.customSampleBase64.clear();
+                pad.customSampleName.clear();
+                pad.customSampleSha256.clear();
+            }
+        state.kit.pads[0].name = "Restored kit";
+        state.master.gain = 0.37f;
+        const auto bytes = bsl::statecodec::encode(state);
+        processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
+        for (int preparation = 0; preparation < 2; ++preparation)
+        {
+            processor->setRateAndBufferSizeDetails(48000, 64);
+            processor->prepareToPlay(48000, 64);
+            const auto& restored = processor->projectEditor().state();
+            check(restored.kit.pads[0].name == state.kit.pads[0].name
+                      && restored.kit.pads[1].customSampleBase64.value() == state.kit.pads[1].customSampleBase64.value()
+                      && std::abs(restored.master.gain - state.master.gain) < 1e-6f,
+                  "prepare preserves restored empty-first-pad kit and master, including empty kits");
+            processor->releaseResources();
+        }
+    }
+    if (previous.isEmpty()) unsetenv("XDG_DATA_HOME");
+    else setenv("XDG_DATA_HOME", previous.toRawUTF8(), 1);
+
+    for (const int controller : { 120, 123 })
+        for (const bool oneShot : { false, true })
+        {
+            auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
+            auto state = makeBypassTestProject(0);
+            state.kit.pads[0].oneShot = oneShot;
+            state.kit.pads[0].lpfBypass = true;
+            const auto bytes = bsl::statecodec::encode(state);
+            processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
+            processor->setRateAndBufferSizeDetails(48000, 64);
+            processor->prepareToPlay(48000, 64);
+            settleMainGain(*processor, 64);
+            juce::AudioBuffer<float> audio(processor->getTotalNumOutputChannels(), 64);
+            juce::MidiBuffer midi;
+            midi.addEvent(juce::MidiMessage::noteOn(2, 36, juce::uint8(100)), 0);
+            midi.addEvent(juce::MidiMessage::controllerEvent(1, controller, 0), 16);
+            processor->processBlock(audio, midi);
+            check(audio.getMagnitude(0, 32, 32) > 0.01f, "panic preserves other MIDI channels");
+            midi.clear();
+            midi.addEvent(juce::MidiMessage::controllerEvent(2, controller, 0), 32);
+            processor->processBlock(audio, midi);
+            check(audio.getMagnitude(0, 0, 32) > 0.01f, "panic respects event sample offset");
+            const bool shouldStop = controller == 120 || !oneShot;
+            check((audio.getMagnitude(0, 32, 32) < 1e-6f) == shouldStop,
+                  "CC120 silences one shots; CC123 follows normal note-off behavior");
+            if (!oneShot)
+            {
+                midi.clear();
+                midi.addEvent(juce::MidiMessage::noteOn(2, 36, juce::uint8(100)), 0);
+                midi.addEvent(juce::MidiMessage::noteOff(2, 36), 32);
+                processor->processBlock(audio, midi);
+                check(audio.getMagnitude(0, 0, 32) > 0.01f && audio.getMagnitude(0, 32, 32) < 1e-6f,
+                      "fresh note releases normally after panic resets channel lifetimes");
+            }
+            processor->releaseResources();
+        }
+
+    struct Clock final : juce::AudioPlayHead
+    {
+        juce::Optional<PositionInfo> position;
+        juce::Optional<PositionInfo> getPosition() const override { return position; }
+    } clock;
+    auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
+    processor->setRateAndBufferSizeDetails(48000, 64);
+    processor->prepareToPlay(48000, 64);
+    juce::AudioBuffer<float> audio(processor->getTotalNumOutputChannels(), 64);
+    juce::MidiBuffer midi;
+    processor->processBlock(audio, midi);
+    check(!processor->isTransportPlaying(), "VST without a playhead remains stopped");
+    processor->setPlayHead(&clock);
+    processor->processBlock(audio, midi);
+    check(!processor->isTransportPlaying(), "VST without position info remains stopped");
+    juce::AudioPlayHead::PositionInfo position;
+    position.setIsPlaying(true);
+    position.setTimeInSamples(48000);
+    clock.position = position;
+    processor->processBlock(audio, midi);
+    check(BeatScholarLinuxProcessorTestAccess::fallbackSamplePosition(*processor) == 48064,
+          "fallback clock synchronizes to host sample position");
+    position.setTimeInSamples(juce::Optional<juce::int64>{});
+    clock.position = position;
+    processor->processBlock(audio, midi);
+    check(BeatScholarLinuxProcessorTestAccess::fallbackSamplePosition(*processor) == 48128,
+          "missing sample field continues from last host position");
+    clock.position = {};
+    processor->processBlock(audio, midi);
+    check(!processor->isTransportPlaying(), "losing host position stops hosted playback");
+    processor->setPlayHead(nullptr);
+    processor->releaseResources();
+}
+
+void testModifiedArrangementContextMenusDoNotEdit(const juce::File& output)
+{
+    for (const auto wrapper : { juce::AudioProcessor::wrapperType_Standalone,
+                               juce::AudioProcessor::wrapperType_VST3 })
+        for (const int target : { 0, 1, 2 })
+        {
+            auto processor = makeProcessorForWrapper(wrapper);
+            auto& state = processor->projectState();
+            state.ui.patternMode = target == 2;
+            state.patterns[0].lanes = { bsl::LaneState::make(4) };
+            auto& beat = state.patterns[0].lanes[0].beats[0];
+            beat = bsl::BeatState::withSubdivision(3, 5, 0.37f);
+            for (auto& slice : beat.slices) slice.enabled = true;
+            auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+            editor->setSize(1280, 720);
+            editor->setVisible(true);
+            const auto point = target == 0 ? juce::Point<float>(580.0f, 80.0f)
+                                           : juce::Point<float>(1190.0f, 146.0f);
+            const auto popup = visualEvent(*editor, point, juce::ModifierKeys::rightButtonModifier
+                                                           | juce::ModifierKeys::shiftModifier);
+            juce::PopupMenu::dismissAllActiveMenus();
+            check(juce::Component::getCurrentlyModalComponent() == nullptr, "context menu fixture starts without an active menu");
+            editor->mouseDown(popup);
+            check(beat.slices.size() == 3 && beat.slices[0].enabled
+                      && beat.slices[0].padIndex == 5 && beat.slices[0].velocity == 0.37f
+                      && !processor->projectEditor().canUndo(),
+                  "Shift-right-click on bar header, bar pad or pattern preserves notes and history");
+            auto* menu = juce::Component::getCurrentlyModalComponent();
+            check(menu != nullptr,
+                  "Shift-right-click on bar header, bar pad or pattern opens its context menu");
+            if (menu != nullptr && wrapper == juce::AudioProcessor::wrapperType_Standalone && target != 1)
+                saveVisual(*menu, output, target == 0 ? "modified-bar-context.png" : "modified-pattern-context.png");
+            juce::PopupMenu::dismissAllActiveMenus();
+            editor->mouseUp(popup);
+            if (target != 2)
+            {
+                const auto reset = visualEvent(*editor, point, juce::ModifierKeys::leftButtonModifier
+                                                              | juce::ModifierKeys::shiftModifier);
+                editor->mouseDown(reset);
+                editor->mouseUp(reset);
+                check(!beat.slices[0].enabled && processor->projectEditor().undo(),
+                      "Shift-left-click still clears bar contents with undo");
+                const auto& restored = processor->projectState().patterns[0].lanes[0].beats[0];
+                check(restored.slices.size() == 3 && restored.slices[0].enabled
+                          && restored.slices[0].padIndex == 5 && restored.slices[0].velocity == 0.37f
+                          && !processor->projectEditor().canUndo(),
+                      "one undo restores bar music after Shift-left-click");
+            }
+        }
 }
 
 void testStandaloneTransportIgnoresDeviceClock(const juce::File& output)
@@ -5070,7 +5317,7 @@ void testMidiExportGatesFollowPlayback(const juce::File& output)
     // Read the serialized events without JUCE inventing missing note-offs.
     // Dense slices, swing, shared notes and mixed meters must each retain one
     // release per hit, at the same gate boundary used by the live sequencer.
-    for (int mode = 0; mode < 4; ++mode)
+    for (int mode = 0; mode < 6; ++mode)
     {
         BeatScholarLinuxProcessor processor;
         auto& state = processor.projectState();
@@ -5086,6 +5333,21 @@ void testMidiExportGatesFollowPlayback(const juce::File& output)
         {
             pattern.lanes.push_back(bsl::LaneState::make(1));
             pattern.lanes.back().beats.front() = bsl::BeatState::withSubdivision(3, 0, 0.5f);
+        }
+        if (mode >= 4)
+        {
+            // Equal-velocity hits sharing a remapped MIDI note must retain
+            // playback's pad order, even when the final pad has a shorter gate.
+            state.kit.pads[0].midiNote = state.kit.pads[1].midiNote = 60;
+            pattern.lanes = { bsl::LaneState::make(1), bsl::LaneState::make(1) };
+            for (std::size_t pad = 0; pad < 2; ++pad)
+            {
+                auto& beat = pattern.lanes[pad].beats.front();
+                beat = bsl::BeatState::withSubdivision(pad == (mode == 4 ? 1u : 0u) ? 4 : 1,
+                    static_cast<std::uint8_t>(pad), 0.8f);
+                for (std::size_t slice = 1; slice < beat.slices.size(); ++slice)
+                    beat.slices[slice].enabled = false;
+            }
         }
         bsl::TransportFrame frame;
         frame.sampleRate = 1920.0; // 120 BPM: one sample per MIDI tick.
@@ -5748,6 +6010,8 @@ void testCloseEditorDuringEffectDrag()
 void testSeparateDriveAndDistControls(const juce::File& output)
 {
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    // Control isolation needs neutral settings, independent of the installed factory kit.
+    processor->projectState().kit = bsl::KitState {};
     auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
     editor->setVisible(true);
     auto& pad = processor->projectState().kit.pads[0];
@@ -5796,12 +6060,33 @@ void testSeparateDriveAndDistControls(const juce::File& output)
           "Dist changes parallel distortion independently of Drive and delay");
     auto* reverb = childWithId<juce::Slider>(*editor, "effect.6");
     auto* room = childWithId<juce::Slider>(*editor, "effect.7");
-    if (reverb != nullptr && room != nullptr)
+    if (reverb != nullptr && room != nullptr && gain != nullptr)
     {
         reverb->setValue(0.26, juce::sendNotificationSync);
         room->setValue(0.45, juce::sendNotificationSync);
         dist->setValue(0.29, juce::sendNotificationSync);
         saveVisual(*editor, output, "sampler-sends-manual.png");
+        for (const int width : {1280, 960})
+        {
+            editor->setSize(width, width * 720 / 1280);
+            const auto snapshot = gain->createComponentSnapshot(gain->getLocalBounds());
+            int left = snapshot.getWidth(), right = -1;
+            for (int y = 0; y < snapshot.getHeight(); ++y)
+                for (int x = 0; x < snapshot.getWidth(); ++x)
+                {
+                    const auto pixel = snapshot.getPixelAt(x, y);
+                    if (pixel.getRed() > 160 && pixel.getGreen() > 160 && pixel.getBlue() > 160)
+                    {
+                        left = std::min(left, x);
+                        right = std::max(right, x);
+                    }
+                }
+            const double designWidth = (right - left + 1) * 1280.0 / width;
+            check(right >= left && designWidth >= 8.0 && designWidth <= 11.0,
+                  "Gain thumb matches scaled official tutorial width at both editor sizes");
+            saveVisual(*editor, output, width == 1280 ? "gain-reference-1280.png" : "gain-reference-960.png");
+        }
+        editor->setSize(1280, 720);
         reverb->setValue(0.0, juce::sendNotificationSync);
         room->setValue(0.5, juce::sendNotificationSync);
         dist->setValue(1.0, juce::sendNotificationSync);
@@ -5815,6 +6100,18 @@ int main(int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI initialiser;
     const juce::File output(argc > 1 ? argv[1] : "/tmp/beat-scholar-editor-tests");
     check(output.createDirectory().wasOk(), "create screenshot directory");
+    if (argc > 2 && juce::String(argv[2]) == "--gain-reference")
+    {
+        testSeparateDriveAndDistControls(output);
+        std::cout << "Gain reference failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
+    testFunctionalRepairs(output);
+    if (argc > 2 && juce::String(argv[2]) == "--functional-repairs")
+    {
+        std::cout << "Functional repair failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
     testPublishedDisplayOptions(output);
     testHostMidiMapReportsCurrentPadNames();
     testDenseOfflineBlockKeepsEveryHit();
@@ -5856,6 +6153,7 @@ int main(int argc, char** argv)
     testDocumentedNumericEntry(output);
     testBarMeterNumericEntry(output);
     testLaneContextMenuDoesNotEdit();
+    testModifiedArrangementContextMenusDoNotEdit(output);
     testSequencerMidiNotesHaveFiniteLifetimes();
     testStandaloneTransportIgnoresDeviceClock(output);
     testHostedTransportRemainsHostControlled(output);

@@ -363,7 +363,7 @@ std::vector<MidiTickEvent> Sequencer::exportPattern(const ProjectState& state,
                     const auto gateTicks = std::max<std::int64_t>(1,
                         std::llround((local + swungEnd - swung) * ticksPerQuarter) - unwrappedTick);
                     result.push_back({ tick, state.kit.pads[slice.padIndex].midiNote,
-                                       midiVelocity(slice.velocity), gateTicks });
+                                       midiVelocity(slice.velocity), slice.padIndex, gateTicks });
                 }
             }
             beatStart += beatLength;

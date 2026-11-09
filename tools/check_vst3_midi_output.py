@@ -106,6 +106,27 @@ def main() -> int:
         run_case('odd-subdivisions', odd, active,
                  [(1001, 100, 127), (2001, 100, 0), (3041, 60, 64), (4041, 60, 0)], expected, block)
 
+    # Simultaneous pads can share a MIDI output note. The higher pad index
+    # retriggers last at equal velocity, and its gate owns the final release.
+    for short_pad in (0, 1):
+        shared = copy.deepcopy(state)
+        shared['pads'][0]['midiNote'] = shared['pads'][1]['midiNote'] = 60
+        pattern = shared['patterns'][0]
+        template = copy.deepcopy(pattern['lanes'][0])
+        pattern['lanes'] = []
+        for pad in (0, 1):
+            lane = copy.deepcopy(template)
+            lane['beats'] = [beat(4 if pad == short_pad else 1)] + [beat(1) for _ in range(3)]
+            for quarter, slices in enumerate(lane['beats']):
+                for index, hit in enumerate(slices):
+                    hit.update(padIndex=pad, enabled=quarter == 0 and index == 0)
+            pattern['lanes'].append(lane)
+        final_gate = rounded(FRAMES_PER_QUARTER / (4 if short_pad == 1 else 1))
+        expected = [note(0, 'note_on', 60, 95), note(0, 'note_off', 60),
+                    note(0, 'note_on', 60, 95), note(final_gate, 'note_off', 60)]
+        for block in BLOCK_SIZES:
+            run_case(f'shared-note-short-pad-{short_pad}', shared, 40001, [], expected, block)
+
     # Start from a silent pattern and switch via its separate pattern-note mapping.
     for quantization, quarters in [('off', None), ('quarter', 1), ('sixteenth', 0.25),
                                    ('thirtySecond', 0.125)]:

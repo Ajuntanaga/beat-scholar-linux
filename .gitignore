@@ -27,6 +27,7 @@
 /tools/*
 !/tools/actual_vst3_host.cpp
 !/tools/check_vst3_midi_output.py
+!/tools/check_vst3_panic.py
 !/tools/extract_factory_samples.cpp
 !/tools/extract_factory_impulses.py
 !/tools/measure_effect_parity.py

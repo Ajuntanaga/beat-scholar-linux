@@ -4,6 +4,7 @@
 #include <juce_events/juce_events.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <cstdint>
@@ -26,6 +27,7 @@ struct MidiEvent
     std::int64_t sample = 0;
     int note = 36;
     int velocity = 127;
+    bool controller = false;
 };
 
 struct Options
@@ -110,6 +112,12 @@ Options parseOptions(int argc, char** argv)
         else if (argument == "--block-size") options.blockSize = static_cast<int>(parseInt64(next(index, "--block-size"), "--block-size"));
         else if (argument == "--active-frames") options.activeFrames = parseInt64(next(index, "--active-frames"), "--active-frames");
         else if (argument == "--midi") options.midi.push_back(parseMidi(next(index, "--midi")));
+        else if (argument == "--cc")
+        {
+            auto event = parseMidi(next(index, "--cc"));
+            event.controller = true;
+            options.midi.push_back(event);
+        }
         else if (argument == "--play-sequencer") options.playSequencer = true;
         else if (argument == "--float-output") options.floatOutput = true;
         else if (argument == "--help")
@@ -117,7 +125,7 @@ Options parseOptions(int argc, char** argv)
             std::cout
                 << "Usage: actual_vst3_host --plugin BUNDLE --state PRESET_OR_BSLX --output WAV\\n"
                 << "       --expect-sha256 HEX --sample-rate HZ --block-size N --active-frames N\\n"
-                << "       [--midi SAMPLE:NOTE:VELOCITY] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output]\\n";
+                << "       [--midi SAMPLE:NOTE:VELOCITY] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output]\\n";
             std::exit(0);
         }
         else fail("unknown option: " + argument);
@@ -360,13 +368,17 @@ int run(const Options& options)
         fail("plugin did not restore the supplied native v2 state exactly");
 
     int reportedPadNames = 0;
+    std::array<bool, 128> checkedNotes {};
     const auto padsValue = expectedStateJson.getProperty("pads", {});
     if (const auto* pads = padsValue.getArray())
         for (const auto& pad : *pads)
         {
             const auto expectedName = pad.getProperty("name", {}).toString();
             const auto note = static_cast<int>(pad.getProperty("midiNote", -1));
-            if (expectedName.isEmpty() || note < 0 || note > 127) continue;
+            if (note < 0 || note > 127 || checkedNotes[static_cast<std::size_t>(note)]) continue;
+            // A shared MIDI note exposes one name: the first mapped pad wins.
+            checkedNotes[static_cast<std::size_t>(note)] = true;
+            if (expectedName.isEmpty()) continue;
             const auto reported = plugin->getNameForMidiNoteNumber(note, 1);
             if (!reported || *reported != expectedName)
                 fail("VST3 host note-name query did not report the restored pad map");
@@ -407,7 +419,9 @@ int run(const Options& options)
             if (event.sample >= cursor)
             {
                 const auto offset = static_cast<int>(event.sample - cursor);
-                const auto message = event.velocity == 0
+                const auto message = event.controller
+                    ? juce::MidiMessage::controllerEvent(1, event.note, event.velocity)
+                    : event.velocity == 0
                     ? juce::MidiMessage::noteOff(1, event.note)
                     : juce::MidiMessage::noteOn(1, event.note,
                                                 static_cast<juce::uint8>(event.velocity));
@@ -477,8 +491,8 @@ int run(const Options& options)
     {
         juce::DynamicObject::Ptr encoded = new juce::DynamicObject();
         encoded->setProperty("sample", static_cast<juce::int64>(event.sample));
-        encoded->setProperty("note", event.note);
-        encoded->setProperty("velocity", event.velocity);
+        encoded->setProperty(event.controller ? "controller" : "note", event.note);
+        encoded->setProperty(event.controller ? "value" : "velocity", event.velocity);
         midiEvents.add(juce::var(encoded.get()));
     }
     reportObject->setProperty("midi_events", midiEvents);
