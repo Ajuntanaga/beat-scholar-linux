@@ -8,6 +8,10 @@
 namespace bsl {
 namespace {
 
+// Native sequencer stores each note at 98% of its straight slice.
+// Warp the shortened endpoint so swing affects both onset and release.
+constexpr double sliceGateRatio = 0.98;
+
 double referenceLength(SwingReference reference)
 {
     switch (reference)
@@ -36,16 +40,24 @@ double Sequencer::applySwing(double quarterNotePosition,
 
     const double length = referenceLength(reference);
     const double grid = std::floor(quarterNotePosition / length);
-    const double phase = (quarterNotePosition - grid * length) / length;
-    const double warpedMidpoint = 0.5 + std::clamp(swingPercent, -200.0, 200.0) / 600.0;
+    const double start = grid * length;
+    const double phase = std::clamp((quarterNotePosition - start) / length, 0.0, 1.0);
 
-    double warpedPhase = 0.0;
-    if (phase <= 0.5)
-        warpedPhase = phase * warpedMidpoint / 0.5;
-    else
-        warpedPhase = warpedMidpoint + (phase - 0.5) * (1.0 - warpedMidpoint) / 0.5;
+    // Native swing uses a float normalized parameter, compresses its extremes,
+    // then skews the whole interval (including fractional subdivisions).
+    double midpoint = std::clamp(static_cast<double>(static_cast<float>(
+        (std::clamp(swingPercent, -200.0, 200.0) + 200.0) / 400.0)), 0.001, 0.999);
+    if (midpoint > 0.8)
+        midpoint = (midpoint - 0.8) * (0.9 - 0.8) / (1.0 - 0.8) + 0.8;
+    else if (midpoint < 0.2)
+        midpoint = midpoint * 0.1 / 0.2 + 0.1;
 
-    return (grid + warpedPhase) * length;
+    const double end = start + length;
+    const double rangeMidpoint = (start + midpoint * (end - start) - start) / (end - start);
+    const double skew = std::log(0.5) / std::log(rangeMidpoint);
+    const double warpedPhase = phase > 0.0 && skew != 1.0
+        ? std::exp(std::log(phase) / skew) : phase;
+    return start + (end - start) * warpedPhase;
 }
 
 std::vector<MidiEvent> Sequencer::render(const ProjectState& state,
@@ -130,7 +142,7 @@ void forEachEvent(const ProjectState& state, const TransportFrame& transport,
                                                             swing,
                                                             state.global.swingReference);
                     const double localSample = swungPosition * samplesPerQuarter;
-                    const double gateSamples = (Sequencer::applySwing(straightPosition + subdivisionLength,
+                    const double gateSamples = (Sequencer::applySwing(straightPosition + subdivisionLength * sliceGateRatio,
                                                             swing, state.global.swingReference)
                                                 - swungPosition) * samplesPerQuarter;
                     const double timelineStart = std::isfinite(transport.patternPhaseQuarterNotes)
@@ -279,7 +291,7 @@ std::size_t Sequencer::renderBatch(const ProjectState& state,
                         if (relative >= upper()) break;
                         if (absolute < 0.0 || relative < lower) continue;
                         const auto offset = static_cast<std::int32_t>(std::floor(relative + 0.5));
-                        const double gateSamples = (applySwing(straight + subdivisionLength,
+                        const double gateSamples = (applySwing(straight + subdivisionLength * sliceGateRatio,
                             swing, state.global.swingReference) - swungPosition) * samplesPerQuarter;
                         // Positional identity is stable when earlier beats/cycles are skipped.
                         const auto ordinal = ((static_cast<std::size_t>(cycle - firstCycle) * totalBeats
@@ -358,7 +370,7 @@ std::vector<MidiTickEvent> Sequencer::exportPattern(const ProjectState& state,
                     const double local = std::fmod(swung, duration);
                     const auto unwrappedTick = std::llround(local * ticksPerQuarter);
                     const auto tick = unwrappedTick % loopTicks;
-                    const double swungEnd = applySwing(straight + subdivisionLength,
+                    const double swungEnd = applySwing(straight + subdivisionLength * sliceGateRatio,
                         state.global.swingPercent, state.global.swingReference);
                     const auto gateTicks = std::max<std::int64_t>(1,
                         std::llround((local + swungEnd - swung) * ticksPerQuarter) - unwrappedTick);

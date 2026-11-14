@@ -43,6 +43,7 @@ struct Options
     double tempo = 120.0;
     int blockSize = 64;
     std::int64_t activeFrames = 0;
+    std::int64_t preRollFrames = 0;
     bool playSequencer = false;
     bool floatOutput = false;
     std::vector<MidiEvent> midi;
@@ -111,6 +112,7 @@ Options parseOptions(int argc, char** argv)
         else if (argument == "--tempo") options.tempo = parseDouble(next(index, "--tempo"), "--tempo");
         else if (argument == "--block-size") options.blockSize = static_cast<int>(parseInt64(next(index, "--block-size"), "--block-size"));
         else if (argument == "--active-frames") options.activeFrames = parseInt64(next(index, "--active-frames"), "--active-frames");
+        else if (argument == "--pre-roll-frames") options.preRollFrames = parseInt64(next(index, "--pre-roll-frames"), "--pre-roll-frames");
         else if (argument == "--midi") options.midi.push_back(parseMidi(next(index, "--midi")));
         else if (argument == "--cc")
         {
@@ -125,7 +127,7 @@ Options parseOptions(int argc, char** argv)
             std::cout
                 << "Usage: actual_vst3_host --plugin BUNDLE --state PRESET_OR_BSLX --output WAV\\n"
                 << "       --expect-sha256 HEX --sample-rate HZ --block-size N --active-frames N\\n"
-                << "       [--midi SAMPLE:NOTE:VELOCITY] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output]\\n";
+                << "       [--midi SAMPLE:NOTE:VELOCITY] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--pre-roll-frames N]\\n";
             std::exit(0);
         }
         else fail("unknown option: " + argument);
@@ -138,6 +140,8 @@ Options parseOptions(int argc, char** argv)
     if (options.sampleRate < 8000.0 || options.sampleRate > 384000.0) fail("--sample-rate is outside 8000..384000");
     if (options.tempo <= 0.0 || options.tempo > 1000.0) fail("--tempo is outside (0,1000]");
     if (options.blockSize < 1 || options.blockSize > 65536) fail("--block-size is outside 1..65536");
+    if (options.preRollFrames < 0 || options.preRollFrames > static_cast<std::int64_t>(options.sampleRate * 60.0))
+        fail("--pre-roll-frames is outside 0..60 seconds");
     if (options.activeFrames < 1) fail("--active-frames must be positive");
     if (options.midi.empty() && !options.playSequencer)
         fail("at least one deterministic --midi event or --play-sequencer is required");
@@ -391,6 +395,25 @@ int run(const Options& options)
     if (plugin->getTotalNumOutputChannels() < 2)
         fail("plugin did not expose a main stereo output");
 
+    // Settle control ramps before replaying previously rendered references.
+    // Default remains zero so cold-start checks retain their original behavior.
+    if (options.playSequencer)
+    {
+        transport.position.setIsPlaying(false);
+        transport.position.setBpm(options.tempo);
+        transport.position.setTimeInSamples(0);
+        transport.position.setPpqPosition(0.0);
+    }
+    for (std::int64_t remaining = options.preRollFrames; remaining > 0;)
+    {
+        const auto frames = static_cast<int>(std::min<std::int64_t>(options.blockSize, remaining));
+        juce::AudioBuffer<float> silence(2, frames);
+        silence.clear();
+        juce::MidiBuffer noMidi;
+        plugin->processBlock(silence, noMidi);
+        remaining -= frames;
+    }
+
     const auto tailSeconds = plugin->getTailLengthSeconds();
     if (!std::isfinite(tailSeconds) || tailSeconds < 0.0 || tailSeconds > 60.0)
         fail("plugin declared an invalid tail length");
@@ -433,7 +456,9 @@ int run(const Options& options)
             transport.position.setIsPlaying(cursor < options.activeFrames);
             transport.position.setBpm(options.tempo);
             transport.position.setTimeInSamples(cursor);
-            transport.position.setPpqPosition(static_cast<double>(cursor) * options.tempo / (60.0 * options.sampleRate));
+            // Match the isolated REAPER reference: samples -> seconds -> beats.
+            // Reassociation changes boundary placement by one sample.
+            transport.position.setPpqPosition(static_cast<double>(cursor) / options.sampleRate * options.tempo / 60.0);
         }
         plugin->processBlock(block, midi);
         for (const auto metadata : midi)
@@ -480,6 +505,7 @@ int run(const Options& options)
     reportObject->setProperty("block_size", options.blockSize);
     reportObject->setProperty("tempo", options.tempo);
     reportObject->setProperty("output_midi_events", outputMidi);
+    reportObject->setProperty("pre_roll_frames", static_cast<juce::int64>(options.preRollFrames));
     reportObject->setProperty("active_frames", static_cast<juce::int64>(options.activeFrames));
     reportObject->setProperty("play_sequencer", options.playSequencer);
     reportObject->setProperty("declared_tail_seconds", tailSeconds);

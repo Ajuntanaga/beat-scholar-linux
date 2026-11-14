@@ -164,8 +164,8 @@ void testEmbeddedSampleBudgetMatchesLoaderReplacementSemantics()
     check(!fitsEmbeddedSampleBudget(maximumEmbeddedSampleBytes + 1, 0), "retained overflow is rejected");
     check(!fitsEmbeddedSampleBudget(1, std::numeric_limits<std::size_t>::max()), "incoming size cannot overflow budget arithmetic");
     auto kit = bsl::KitState {};
-    kit.pads[0].customSampleBase64 = "TQ=="; // One decoded byte.
-    kit.pads[1].customSampleBase64 = "TWE="; // Two decoded bytes.
+    kit.pads[0].customSamples[0].base64 = "TQ=="; // One decoded byte.
+    kit.pads[1].customSamples[0].base64 = "TWE="; // Two decoded bytes.
     check(canReplaceEmbeddedSample(kit, 0, maximumEmbeddedSampleBytes - 2),
           "replacing a pad excludes its old payload and counts other-pad padding");
     check(!canReplaceEmbeddedSample(kit, 0, maximumEmbeddedSampleBytes - 1),
@@ -187,13 +187,14 @@ void testNativeStateRoundTripIncludesProjectAndEmbeddedSample()
     source.patterns.front().bars = { bsl::BarState::make(7, 8) };
     for (auto& lane : source.patterns.front().lanes)
         lane.beats.assign(7, bsl::BeatState::withSubdivision(5, 2, 0.42f));
-    source.kit.pads[2].customSampleName = "private-rim.flac";
-    source.kit.pads[2].customSampleSha256 =
+    source.kit.pads[2].customSamples[0].name = "private-rim.flac";
+    source.kit.pads[2].customSamples[0].sha256 =
         "95f9e7a66bfb10d3c609f2c88ef3566ae3239ab4e025d0e661f7779f62c02ada";
-    source.kit.pads[2].customSampleBase64 = "RkxBQw==";
+    source.kit.pads[2].customSamples[0].base64 = "RkxBQw==";
     source.kit.pads[2].pitchSemitones = -4.0f;
     source.kit.pads[2].filterEnabled = false;
     source.kit.pads[2].attackNormalized = 0.35f;
+    source.kit.pads[2].releaseSeconds = 0.125f;
     source.kit.pads[2].rootNote = 61;
     source.kit.pads[2].driveEnabled = true;
     source.kit.pads[2].driveGainDb = 8.0f;
@@ -236,6 +237,7 @@ void testNativeStateRoundTripIncludesProjectAndEmbeddedSample()
           && restored.ui.kitFile == source.ui.kitFile
           && restored.ui.randomizerFile == source.ui.randomizerFile,
           "content identity survives the host-state envelope");
+    check(restored.kit.pads[2].releaseSeconds == 0.125f, "release duration survives host state recall");
     check(restored.global.swingPercent == -37.5, "global settings round trip");
     check(std::abs(restored.global.defaultVelocity - 0.63f) < 1.0e-6f
               && !restored.global.auditionDuringPlayback && restored.global.kitLocked,
@@ -247,7 +249,7 @@ void testNativeStateRoundTripIncludesProjectAndEmbeddedSample()
           "pattern quantization round trips");
     check(restored.patterns.front().lanes.front().beats.front().slices.size() == 5,
           "subdivision state round trips");
-    check(restored.kit.pads[2].customSampleBase64.value() == "RkxBQw==",
+    check(restored.kit.pads[2].customSamples[0].base64.value() == "RkxBQw==",
           "embedded custom sample bytes round trip");
     check(std::abs(restored.master.compression - 0.63f) < 1.0e-6f,
           "master processing state round trips");
@@ -391,16 +393,16 @@ void testVersionOneMigrationDecouplesPadIdentityFromMidi()
           "unmatched v1 MIDI note falls back to the legacy 36-based pad index");
     check(restored.patterns.front().quantization == bsl::PatternQuantization::whole,
           "v1 patterns migrate to whole-note quantization");
-    check(restored.kit.pads[0].customSampleBase64.value() == "RkxBQw==",
+    check(restored.kit.pads[0].customSamples[0].base64.value() == "RkxBQw==",
           "bounded v1 JUCE base64 migrates to canonical standard base64");
 }
 
 void testMalformedEmbeddedDataAndSampleNamesAreRejectedAtomically()
 {
     auto source = bsl::ProjectState::makeDefault();
-    source.kit.pads[0].customSampleName = "kick.flac";
-    source.kit.pads[0].customSampleBase64 = "RkxBQw==";
-    source.kit.pads[0].customSampleSha256 =
+    source.kit.pads[0].customSamples[0].name = "kick.flac";
+    source.kit.pads[0].customSamples[0].base64 = "RkxBQw==";
+    source.kit.pads[0].customSamples[0].sha256 =
         "95f9e7a66bfb10d3c609f2c88ef3566ae3239ab4e025d0e661f7779f62c02ada";
     const auto validJson = bsl::statecodec::encodePresetJson(source);
     check(validJson.isNotEmpty(), "valid canonical embedded sample encodes");
@@ -573,7 +575,7 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
         {"name":"Kick","Layers":[{"Sample":{"Binary":{"name":"kick.flac"}}}],
          "Params":{"LayerMix":0.25,"OneShot":"On","Mono":"On","Pan":0.5,"Length":0.8,
                    "Volume":"0.00 dB","Hipass":"120 Hz",
-                   "ADSR":{"Attack":"35%"},"Note":"C4",
+                   "ADSR":{"Attack":"35%","Release":0.12},"Note":"C4",
                    "Pitch":{"Root":"E3","Tune":"-2","Fine":"7"},
                    "Compressor":0.3,"BitCrush":0.1,
                    "Filter":{"Enable":"Off","Cutoff":"6.0 kHz","Reso":"1.5"},
@@ -600,6 +602,44 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
     auto state = bsl::ProjectState::makeDefault();
     check(bsl::statecodec::importLegacyPresetJson(json, state), "legacy preset JSON imports");
     check(state.isValid(), "legacy preset is validated before publication");
+    check(state.kit.pads[1].midiNote == 38 && state.kit.pads[4].midiNote == 42,
+          "legacy absent output map uses native default drum mapping");
+    auto mapped = juce::JSON::parse(json);
+    juce::Array<juce::var> mappings;
+    for (int note = 0; note < 128; ++note)
+    {
+        auto* entry = new juce::DynamicObject();
+        entry->setProperty("number", note == 60 || note == 37 ? 72 : note);
+        entry->setProperty("type", 0);
+        mappings.add(juce::var(entry));
+    }
+    auto* map = new juce::DynamicObject();
+    map->setProperty("Mappings", mappings);
+    mapped.getProperty("Sampler", {}).getDynamicObject()->setProperty("Mapping", juce::var(map));
+    auto mappedState = state;
+    check(bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(mapped), mappedState)
+              && mappedState.kit.pads[0].midiNote == 72 && mappedState.kit.pads[1].midiNote == 72,
+          "legacy explicit output map preserves duplicate output pitches");
+    check(mappedState.patterns[0].lanes[0].beats[0].slices[0].padIndex == 0
+              && mappedState.patterns[0].lanes[0].beats[1].slices[0].padIndex == 1,
+          "legacy output remapping preserves sequencer pad ownership");
+    auto mappedKit = state.kit;
+    auto mappedMaster = state.master;
+    check(bsl::statecodec::importLegacyKitJson(
+              juce::JSON::toString(mapped.getProperty("Sampler", {})), mappedKit, mappedMaster)
+              && mappedKit.pads[0].midiNote == 72 && mappedKit.pads[1].midiNote == 72,
+          "legacy kit import retains the explicit output map");
+
+    auto twoPatterns = juce::JSON::parse(json);
+    auto* importedPatterns = twoPatterns.getProperty("Seq", {}).getProperty("Patterns", {})
+                                 .getProperty("Patterns", {}).getArray();
+    importedPatterns->add(importedPatterns->getReference(0).clone());
+    auto triggeredState = state;
+    check(bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(twoPatterns), triggeredState)
+              && triggeredState.patterns.size() == 2
+              && triggeredState.patterns[0].triggerNote == 60
+              && triggeredState.patterns[1].triggerNote == 61,
+          "legacy patterns retain native default MIDI triggers C3 and C#3");
     check(!state.global.samplerEnabled && !state.global.auxEnabled && !state.global.masterEnabled,
           "legacy LiveEnable restores the sampler, AUX and Master independently");
     auto old = juce::JSON::parse(json);
@@ -649,6 +689,7 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
               && state.kit.pads.front().midiNote == 60
               && state.kit.pads.front().rootNote == 52
               && std::abs(state.kit.pads.front().attackNormalized - 0.35f) < 1.0e-6f
+              && std::abs(state.kit.pads.front().releaseSeconds - 0.12f) < 1.0e-6f
               && std::abs(state.kit.pads.front().driveGainDb - 9.5f) < 1.0e-6f
               && std::abs(state.kit.pads.front().distortionMix - 0.55f) < 1.0e-6f
               && state.kit.pads.front().delay == 0.0f
@@ -738,9 +779,13 @@ void testDriveStateCompatibilityAndOriginalEnable()
     bsl::AudioEngine engine;
     engine.prepare(48000.0);
     auto settings = bsl::makePadPlaybackSettings(restored.pads[0]);
-    settings.gain = 1.0f; // Isolate Drive migration from the separately tested native output trim.
+    settings.lengthEnvelopeEnabled = false; // Isolate routing on a one-frame source.
+    settings.gain = 1.0f;
+    settings.outputTrim = 1.0f; // Isolate routing from native output trim.
+    settings.layerInputGain = 1.0f; // Isolate routing from native +6 dB input boost.
     engine.setPadSettings(0, settings);
-    engine.setPadSample(0, { 48000.0, { { 0.1f } } });
+    // Silent endpoint and compensated rate feed one exact impulse into routing.
+    engine.setPadSample(0, { 96000.0, { { 0.1f, 0.0f } } });
     bsl::AudioBlock silence(34, std::vector<float>(4800));
     engine.process(silence, 4800);
     engine.noteOn(36, 1.0f);
@@ -754,7 +799,7 @@ void testDriveStateCompatibilityAndOriginalEnable()
         { R"json({"Drive":{"Enable":"Off","Gain":"12 dB"},"Enable":{"DriveEnable":"On"}})json", true, 12.0f },
         { R"json({"Drive":{"Enable":"On","Gain":"12 dB"},"Enable":{"DriveEnable":"Off"}})json", false, 12.0f },
         { R"json({"Drive":{"Gain":"6 dB"}})json", true, 6.0f },
-        { R"json({"Drive":{"Enable":"Off","Gain":"12 dB"}})json", false, 12.0f },
+        { R"json({"Drive":{"Enable":"Off","Gain":"12 dB"}})json", true, 12.0f },
         { R"json({"Drive":{"Gain":"-12 dB"}})json", true, 0.0f },
         { R"json({"Drive":{"Gain":"60 dB"}})json", true, 24.0f }
     }};
@@ -765,7 +810,7 @@ void testDriveStateCompatibilityAndOriginalEnable()
         check(bsl::statecodec::importLegacyKitJson(original, restored, master), "original Drive fixture imports");
         check(restored.pads[0].driveEnabled == fixture.enabled
                   && restored.pads[0].driveGainDb == fixture.db,
-              "original Drive uses outer enable precedence and native 0..24 dB range");
+              "original Drive uses modern enable with default On, ignores obsolete enable, and clamps 0..24 dB");
         const auto roundTrip = juce::JSON::parse(bsl::statecodec::encodeKitJson(restored, master));
         const auto* importedPads = roundTrip.getProperty("pads", {}).getArray();
         check(importedPads != nullptr
@@ -808,7 +853,7 @@ void testLegacyHighPassFrequencyAndEnable()
 void testLegacyAuxSettingsDoNotProcessUnsentMasterAudio()
 {
     const juce::String json = R"json({"Pads":{"Pads":[{"Params":{
-      "Volume":"0 dB","Drive":{"Enable":"Off"},
+      "Volume":"0 dB","Drive":{"Enable":"Off"},"Enable":{"DriveEnable":"Off"},
       "Aux":{"Aux1":"0%","Aux2":"0%","Aux3":"0%","Aux4":"0%"}}}]},
       "Params":{"Master":"0 dB","DistDrive":"78%","Delay":"100%","Reverb":"100%","Room":"100%"}})json";
     auto state = bsl::ProjectState::makeDefault();
@@ -816,11 +861,15 @@ void testLegacyAuxSettingsDoNotProcessUnsentMasterAudio()
     bsl::AudioEngine engine;
     engine.prepare(48000.0);
     engine.setDistortionResponse({ std::vector<float>{1.0f}, std::vector<float>{1.0f} });
-    engine.setPadSample(0, { 48000.0, { { 0.1f } } });
+    // Silent endpoint and compensated rate feed one exact impulse into routing.
+    engine.setPadSample(0, { 96000.0, { { 0.1f, 0.0f } } });
     auto settings = bsl::makePadPlaybackSettings(state.kit.pads[0]);
     settings.filterEnabled = false; // This fixture isolates Aux/Drive routing.
     settings.highPassEnabled = false;
-    settings.gain = 1.0f; // Native output trim has a dedicated audio regression.
+    settings.lengthEnvelopeEnabled = false; // Isolate routing on a one-frame source.
+    settings.gain = 1.0f;
+    settings.outputTrim = 1.0f; // Native output trim has a dedicated audio regression.
+    settings.layerInputGain = 1.0f; // Native input boost has a dedicated audio regression.
     engine.setPadSettings(0, settings);
     auto master = bsl::makeMasterPlaybackSettings(state.master, state.master.gain);
     master.distortionDrive = state.kit.pads[0].distortionDrive;
@@ -853,6 +902,82 @@ void testLegacyAuxSettingsDoNotProcessUnsentMasterAudio()
     engine.noteOn(36, 1.0f);
     engine.process(output, 1);
     check(output[0][0] > 0.1f, "Drive insert works independently of a zero Aux3 send");
+}
+
+void testLegacyEmbeddedSampleImport()
+{
+    constexpr auto wavBase64 = "UklGRi4AAABXQVZFZm10IBAAAAABAAEAgLsAAAB3AQACABAAZGF0YQoAAAAAAAAgAPAAQAAQ";
+    const juce::String json = R"json({"Pads":{"Pads":[{"name":"Embedded",
+      "Layers":[{"Sample":{"FileBuffer":{"name":"endpoint.wav",
+      "sampleRate":96000,"data":"UklGRi4AAABXQVZFZm10IBAAAAABAAEAgLsAAAB3AQACABAAZGF0YQoAAAAAAAAgAPAAQAAQ"}}}]}]}})json";
+    bsl::KitState kit;
+    bsl::MasterState master;
+    check(bsl::statecodec::importLegacyKitJson(json, kit, master), "native FileBuffer imports");
+    check(kit.pads[0].customSamples[0].base64.value() == wavBase64
+              && kit.pads[0].customSamples[0].sha256.size() == 64,
+          "native embedded audio is retained with its integrity hash");
+    check(kit.pads[0].customSamples[0].sampleRate == 96000.0,
+          "native playback rate overrides the embedded WAV header");
+    check(!kit.pads[0].customSampleLayered && kit.pads[0].customSamples[1].empty(),
+          "single embedded samples retain ordinary full-pad override semantics");
+
+    const juce::String binaryThenEmbedded = R"json({"Pads":{"Pads":[{"name":"Mixed A",
+      "Layers":[{"Sample":{"Binary":{"name":"factory-a.flac"}}},
+                {"Sample":{"FileBuffer":{"name":"layer-two.wav","sampleRate":48000,
+                 "data":"UklGRi4AAABXQVZFZm10IBAAAAABAAEAgLsAAAB3AQACABAAZGF0YQoAAAAAAAAgAPAAQAAQ"}}}]}]}})json";
+    check(bsl::statecodec::importLegacyKitJson(binaryThenEmbedded, kit, master)
+              && kit.pads[0].customSampleLayered
+              && kit.pads[0].factorySampleIds[0] == "factory-a.flac"
+              && kit.pads[0].customSamples[1].name == "layer-two.wav"
+              && kit.pads[0].customSamples[1].sampleRate == 48000.0,
+          "factory then embedded layer order imports without collapsing either layer");
+
+    const juce::String embeddedThenBinary = R"json({"Pads":{"Pads":[{"name":"Mixed B",
+      "Layers":[{"Sample":{"FileBuffer":{"name":"layer-one.wav","sampleRate":44100,
+                 "data":"UklGRi4AAABXQVZFZm10IBAAAAABAAEAgLsAAAB3AQACABAAZGF0YQoAAAAAAAAgAPAAQAAQ"}}},
+                {"Sample":{"Binary":{"name":"factory-b.flac"}}}]}]}})json";
+    check(bsl::statecodec::importLegacyKitJson(embeddedThenBinary, kit, master)
+              && kit.pads[0].customSampleLayered
+              && kit.pads[0].customSamples[0].name == "layer-one.wav"
+              && kit.pads[0].customSamples[0].sampleRate == 44100.0
+              && kit.pads[0].factorySampleIds[1] == "factory-b.flac",
+          "embedded then factory layer order imports without collapsing either layer");
+
+    const juce::String twoEmbedded = R"json({"Pads":{"Pads":[{"name":"Embedded Pair",
+      "Layers":[{"Sample":{"FileBuffer":{"name":"low.wav","sampleRate":48000,
+                 "data":"UklGRi4AAABXQVZFZm10IBAAAAABAAEAgLsAAAB3AQACABAAZGF0YQoAAAAAAAAgAPAAQAAQ"}}},
+                {"Sample":{"FileBuffer":{"name":"high.wav","sampleRate":96000,
+                 "data":"UklGRi4AAABXQVZFZm10IBAAAAABAAEAgLsAAAB3AQACABAAZGF0YQoAAAAAAAAgAPAAQAAQ"}}}]}]}})json";
+    check(bsl::statecodec::importLegacyKitJson(twoEmbedded, kit, master)
+              && kit.pads[0].customSampleLayered
+              && kit.pads[0].customSamples[0].name == "low.wav"
+              && kit.pads[0].customSamples[1].name == "high.wav"
+              && kit.pads[0].customSamples[0].sampleRate == 48000.0
+              && kit.pads[0].customSamples[1].sampleRate == 96000.0,
+          "two embedded layers retain their names, order, and playback rates");
+    auto project = bsl::ProjectState::makeDefault();
+    project.kit = kit;
+    auto restored = bsl::ProjectState::makeDefault();
+    const auto encoded = bsl::statecodec::encodePresetJson(project);
+    check(encoded.contains("customSampleLayer2")
+              && bsl::statecodec::decodePresetJson(encoded, restored)
+              && restored.kit.pads[0].customSampleLayered
+              && restored.kit.pads[0].customSamples[0].sampleRate == 48000.0
+              && restored.kit.pads[0].customSamples[1].sampleRate == 96000.0
+              && restored.kit.pads[0].customSamples[1].base64.value()
+                     == kit.pads[0].customSamples[1].base64.value(),
+          "both embedded playback rates and audio survive native state roundtrip");
+    const auto previousFirst = kit.pads[0].customSamples[0];
+    const auto previousSecond = kit.pads[0].customSamples[1];
+    check(!bsl::statecodec::importLegacyKitJson(twoEmbedded.replace("96000", "-1"), kit, master)
+              && kit.pads[0].customSamples[0].sha256 == previousFirst.sha256
+              && kit.pads[0].customSamples[1].sha256 == previousSecond.sha256
+              && kit.pads[0].customSamples[1].sampleRate == previousSecond.sampleRate,
+          "invalid second embedded layer is rejected atomically");
+    check(!bsl::statecodec::importLegacyKitJson(twoEmbedded.replace(wavBase64, "broken"), kit, master)
+              && kit.pads[0].customSamples[0].sha256 == previousFirst.sha256
+              && kit.pads[0].customSamples[1].sha256 == previousSecond.sha256,
+          "malformed layered audio is rejected atomically");
 }
 
 void testLegacyKitAdapterImportsLayersAndProcessing()
@@ -1079,6 +1204,7 @@ int main()
     testDriveStateCompatibilityAndOriginalEnable();
     testLegacyHighPassFrequencyAndEnable();
     testLegacyAuxSettingsDoNotProcessUnsentMasterAudio();
+    testLegacyEmbeddedSampleImport();
     testLegacyKitAdapterImportsLayersAndProcessing();
     testRandomizerIndicesRejectNarrowingAndNonIntegers();
     testRandomizerSelectionsRejectDuplicatesAtomically();

@@ -5,7 +5,7 @@
 #include "core/Model.h"
 #include "core/PatternScheduler.h"
 #include "core/ProjectEditor.h"
-#include "core/Sequencer.h"
+#include "core/SequencerPlayback.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -93,7 +93,9 @@ private:
     void loadFactorySamples(std::optional<std::size_t> onlyPad = std::nullopt);
     void syncParametersFromProject();
     void copyParameterValuesToState(bsl::ProjectState&) const;
-    bool installSampleBytes(std::size_t pad, const void* data, std::size_t size);
+    bool installSampleBytes(std::size_t pad, const void* data, std::size_t size,
+                            double sampleRate = 0.0,
+                            std::optional<std::size_t> layer = std::nullopt);
 
     bsl::ProjectEditor projectEditor_ { bsl::ProjectState::makeDefault() };
     bsl::AmbienceConvolution ambience_;
@@ -109,7 +111,7 @@ private:
     juce::AbstractFifo auditionFifo_ { auditionQueueSize };
     std::array<PadAudition, auditionQueueSize> pendingTriggers_ {};
     juce::MidiBuffer incomingMidi_;
-    std::array<bsl::SequencerBatchEvent, maximumSequencerEvents> sequencerEvents_ {};
+    std::array<bsl::PlaybackEvent, maximumSequencerEvents> sequencerEvents_ {};
     bsl::PatternTriggerCollector patternTriggerCollector_;
     std::array<bsl::PatternRenderSegment,
                bsl::PatternScheduler::maximumPendingTriggers + 1> renderSegments_ {};
@@ -129,8 +131,8 @@ private:
     std::atomic<bool> standalonePlaying_ { true };
     std::atomic<bool> transportPlaying_ { false };
     std::atomic<double> effectiveBpm_ { 120.0 };
-    // Audio-thread-only pending MIDI gates, relative to the next callback.
-    std::array<std::int64_t, 128> pendingMidiOffFrames_;
+    // Audio-thread-only callback lifecycle shared by sequenced MIDI and sampler voices.
+    bsl::SequencerPlayback sequencerPlayback_;
     std::int64_t midiExpectedSample_ = 0;
     double midiExpectedPpq_ = std::numeric_limits<double>::quiet_NaN();
     bool midiWasPlaying_ = false;

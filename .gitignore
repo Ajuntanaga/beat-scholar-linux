@@ -11,12 +11,14 @@
 !/src/**/*.h
 !/tests/
 /tests/*
+!/tests/native_dense_timing.h
 !/tests/*.cpp
 !/tests/test_*.py
 !/tests/tsan.supp
 !/tests/fixtures/
 /tests/fixtures/*
 !/tests/fixtures/README.md
+!/tests/fixtures/native_pattern_triggers.json
 !/tests/fixtures/synthetic-tone.mp3
 !/docs/
 /docs/*

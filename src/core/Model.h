@@ -142,17 +142,39 @@ private:
 
 struct PadState
 {
+    struct EmbeddedSample
+    {
+        std::string name;
+        std::string sha256;
+        SamplePayload base64;
+        double sampleRate = 0.0; // Zero uses the audio file header rate.
+
+        [[nodiscard]] bool empty() const noexcept
+        {
+            return name.empty() && sha256.empty() && base64.empty();
+        }
+        void clear() noexcept
+        {
+            name.clear();
+            sha256.clear();
+            base64.clear();
+            sampleRate = 0.0;
+        }
+    };
+
     std::string name;
     std::array<std::string, 2> factorySampleIds;
-    std::string customSampleName;
-    std::string customSampleSha256;
-    SamplePayload customSampleBase64;
+    std::array<EmbeddedSample, 2> customSamples;
+    // Candidate-created custom samples historically replace the whole pad.
+    // Native layered states instead combine each embedded/factory source.
+    bool customSampleLayered = false;
     std::uint8_t midiNote = 36;
     std::uint8_t rootNote = 60;
     float layerMix = 0.0f;
     float gain = 1.0f;
     float pan = 0.0f;
     float attackSeconds = 0.0f;
+    float releaseSeconds = 0.03f;
     float attackNormalized = 0.0f;
     float damp = 0.0f;
     float pitchSemitones = 0.0f;
@@ -252,6 +274,7 @@ struct ProjectState
     static ProjectState makeDefault();
     static ProjectState makeMainInit();
     [[nodiscard]] bool isValid() const;
+    [[nodiscard]] std::optional<std::size_t> padIndexForInputMidiNote(std::uint8_t note) const noexcept;
     [[nodiscard]] std::optional<std::size_t> padIndexForMidiNote(std::uint8_t note) const noexcept;
     bool selectPatternForTrigger(std::uint8_t note) noexcept;
     [[nodiscard]] std::optional<std::uint8_t> unusedPatternTriggerNote(int preferred) const noexcept;

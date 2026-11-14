@@ -25,6 +25,7 @@ import numpy as np
 
 
 EXPECTED_CID = "ABCDEF019182FAEB416A756E42736C78"
+INPUT_NOTES = (36, 38, 37, 39, 42, 46, 49, 51, 57, 55, 43, 41, 54, 40, 53, 56)
 LEVELS = (0.0, 0.25, 0.5, 0.75, 0.8, 1.0)
 RATES = (44100, 48000, 96000)
 BLOCKS = (17, 64, 511)
@@ -322,9 +323,10 @@ def default_pad(index: int) -> dict[str, Any]:
     return {
         "name": PAD_NAMES[index], "factorySampleIds": ["", ""],
         "customSampleName": "", "customSampleSha256": "", "customSampleBase64": "",
+        "customSampleRate": 0.0,
         "midiNote": 36 + index, "rootNote": 60, "layerMix": 0.0,
         "gain": math.sqrt(2.0) if index == 0 else 1.0, "pan": 0.0,
-        "attackSeconds": 0.0, "attackNormalized": 0.0, "damp": 0.0,
+        "attackSeconds": 0.0, "releaseSeconds": 0.03, "attackNormalized": 0.0, "damp": 0.0,
         "pitchSemitones": 0.0, "fineCents": 0.0, "highPass": 0.0,
         "filterEnabled": False, "cutoff": 1.0, "resonance": 0.0,
         "driveEnabled": False, "driveGainDb": 0.0, "distortionMix": 0.0,
@@ -400,7 +402,7 @@ def module_path(bundle: Path) -> Path:
 
 def render_case(*, host: Path, bundle: Path, plugin_sha256: str, input_wav: Path,
                 state_path: Path, output_wav: Path, sample_rate: int, block_size: int,
-                active_frames: int, pad: dict[str, Any] | None = None,
+                active_frames: int, pre_roll_frames: int = 0, pad: dict[str, Any] | None = None,
                 master: dict[str, Any] | None = None,
                 additional_input_wavs: tuple[Path, ...] = (),
                 midi: tuple[str, ...] = ("0:36:127",)) -> dict[str, Any]:
@@ -415,6 +417,8 @@ def render_case(*, host: Path, bundle: Path, plugin_sha256: str, input_wav: Path
         "--expect-cid", EXPECTED_CID, "--sample-rate", str(sample_rate),
         "--block-size", str(block_size), "--active-frames", str(active_frames),
     ]
+    if pre_roll_frames:
+        command.extend(("--pre-roll-frames", str(pre_roll_frames)))
     for event in midi:
         command.extend(("--midi", event))
     environment = os.environ.copy()
@@ -427,6 +431,8 @@ def render_case(*, host: Path, bundle: Path, plugin_sha256: str, input_wav: Path
             f"actual VST3 host failed ({completed.returncode}): {' '.join(command)}\n"
             f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}")
     host_report = json.loads(completed.stdout)
+    if host_report.get("pre_roll_frames", 0) != pre_roll_frames:
+        raise RuntimeError("host report returned an unexpected pre-roll duration")
     if host_report.get("module_sha256") != plugin_sha256:
         raise RuntimeError("host report returned an unexpected module hash")
     return {
@@ -470,7 +476,10 @@ REFERENCE_CASES: dict[str, dict[str, Any]] = {
     "pad_pitch_plus2": {"category": "timing-pitch", "input": "neutral",
                         "timing_checks": ("onset", "duration", "pitch", "correlation"),
                         "pad": {"pitchSemitones": 2.0}},
-    "master_crush_080": {"category": "nonlinear", "master": {"crush": 0.8}},
+    # Native .8 Crush holds 17 frames (audio_tests golden vector). Settling
+    # must preserve its capture phase, not advance it by 4800 % 17 frames.
+    "master_crush_080": {"category": "nonlinear", "master": {"crush": 0.8},
+                         "pre_roll_period_frames": 17},
     "master_compression_080": {"category": "nonlinear", "master": {"compression": 0.8}},
     "master_filter_035": {"category": "filter", "master": {
         "filterEnabled": True, "cutoff": 0.35, "resonance": 0.5}},
@@ -707,6 +716,12 @@ def evaluate_reference_acceptance(
     }
 
 
+def reference_pre_roll_frames(sample_rate: int, case: dict[str, Any]) -> int:
+    frames = math.ceil(sample_rate * 0.1)
+    period = case.get("pre_roll_period_frames", 1)
+    return ((frames + period - 1) // period) * period
+
+
 def run_references(validation_root: Path, artifacts: Path, *, host: Path,
                    bundle: Path, plugin_sha256: str, block_size: int,
                    suite_mode: str = "full") -> dict[str, Any]:
@@ -762,9 +777,11 @@ def run_references(validation_root: Path, artifacts: Path, *, host: Path,
             host=host, bundle=bundle, plugin_sha256=plugin_sha256,
             input_wav=input_wav, state_path=artifacts / f"actual-{name}.bslpreset",
             output_wav=output, sample_rate=sample_rate, block_size=block_size,
-            active_frames=target_frames, pad=case.get("pad"), master=case.get("master"),
+            # Replay inputs already contain native startup; do not apply a second ramp.
+            active_frames=target_frames, pre_roll_frames=reference_pre_roll_frames(sample_rate, case),
+            pad=case.get("pad"), master=case.get("master"),
             additional_input_wavs=(tuple(sources[1:]) if uses_neutral else ()),
-            midi=(tuple(f"{index * loop_frames}:{36 + index}:127"
+            midi=(tuple(f"{index * loop_frames}:{INPUT_NOTES[index]}:127"
                         for index in range(len(sources)))
                   if uses_neutral else ("0:36:127",)))
         rendered_rate, rendered = read_pcm24(output)
@@ -781,8 +798,9 @@ def run_references(validation_root: Path, artifacts: Path, *, host: Path,
         state_path=artifacts / "actual-ambience-functional-neutral.bslpreset",
         output_wav=ambience_neutral_output, sample_rate=sample_rate,
         block_size=block_size, active_frames=ambience_frames,
+        pre_roll_frames=round(sample_rate * 0.1),
         additional_input_wavs=tuple(ambience_sources[1:]),
-        midi=tuple(f"{index * loop_frames}:{36 + index}:127"
+        midi=tuple(f"{index * loop_frames}:{INPUT_NOTES[index]}:127"
                    for index in range(len(ambience_sources))))
     ambience_render_rate, ambience_render = read_pcm24(ambience_neutral_output)
     if ambience_render_rate != sample_rate or len(ambience_render) < ambience_frames:

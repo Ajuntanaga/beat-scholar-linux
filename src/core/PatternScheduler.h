@@ -68,6 +68,7 @@ private:
     struct PendingTrigger
     {
         double targetQuarterNote = 0.0;
+        bool atCallbackStart = false;
         PatternId patternId = 0;
         std::uint64_t sequence = 0;
     };
@@ -88,7 +89,7 @@ private:
     std::uint64_t nextSequence_ = 0;
     std::int64_t expectedSampleStart_ = 0;
     double expectedQuarterNote_ = 0.0;
-    double phaseQuarterNotes_ = 0.0;
+    double patternOriginQuarterNotes_ = 0.0;
     bool wasPlaying_ = false;
 };
 

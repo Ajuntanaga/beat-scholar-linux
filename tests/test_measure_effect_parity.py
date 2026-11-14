@@ -17,6 +17,47 @@ SPEC.loader.exec_module(PARITY)
 
 
 class EffectParityHarnessTests(unittest.TestCase):
+    def test_reference_settling_preserves_crush_capture_phase(self) -> None:
+        case = PARITY.REFERENCE_CASES["master_crush_080"]
+        for rate in (44100, 48000, 96000):
+            frames = PARITY.reference_pre_roll_frames(rate, case)
+            self.assertGreaterEqual(frames, rate * 0.1)
+            self.assertLess(frames, rate * 0.1 + 17)
+            self.assertEqual(frames % 17, 0)
+        self.assertEqual(PARITY.reference_pre_roll_frames(48000, {}), 4800)
+        self.assertEqual(PARITY.reference_pre_roll_frames(48000, case), 4811)
+
+    def test_render_pre_roll_is_explicit_and_receipted(self) -> None:
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            sample, output = work / "input.wav", work / "output.wav"
+            PARITY.write_impulse_pcm24(sample, frames=128)
+            output.write_bytes(sample.read_bytes())
+            for frames in (0, 4800):
+                receipt = PARITY.json.dumps({"module_sha256": "fixture",
+                                            "pre_roll_frames": frames})
+                with patch.object(PARITY.subprocess, "run", return_value=
+                        subprocess.CompletedProcess([], 0, receipt, "")) as run:
+                    report = PARITY.render_case(host=work / "host", bundle=work / "plugin",
+                        plugin_sha256="fixture", input_wav=sample,
+                        state_path=work / "state.json", output_wav=output,
+                        sample_rate=48000, block_size=64, active_frames=128,
+                        pre_roll_frames=frames)
+                command = run.call_args.args[0]
+                self.assertEqual("--pre-roll-frames" in command, frames != 0)
+                self.assertEqual(report["host"]["pre_roll_frames"], frames)
+                self.assertEqual(command[command.index("--midi") + 1], "0:36:127")
+            with patch.object(PARITY.subprocess, "run", return_value=
+                    subprocess.CompletedProcess([], 0,
+                        PARITY.json.dumps({"module_sha256": "fixture"}), "")):
+                with self.assertRaisesRegex(RuntimeError, "pre-roll duration"):
+                    PARITY.render_case(host=work / "host", bundle=work / "plugin",
+                        plugin_sha256="fixture", input_wav=sample,
+                        state_path=work / "state.json", output_wav=output,
+                        sample_rate=48000, block_size=64, active_frames=128,
+                        pre_roll_frames=4800)
+
     def test_reference_replay_restores_trim_without_clipping(self) -> None:
         samples = PARITY.np.array([[0.1, -0.2], [0.8, -0.9], [0.0, 0.0]])
         with tempfile.TemporaryDirectory() as directory:

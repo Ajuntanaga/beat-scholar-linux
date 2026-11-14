@@ -207,8 +207,11 @@ void testEngineRoutingWithConvolution()
         for (std::size_t pad = 0; pad < 2; ++pad)
         {
             const float sample = pad == 0 ? 1.0f : 0.25f;
-            engine.setPadSample(pad, { 48000, { { sample } } });
+            // A silent endpoint at twice the host rate feeds one exact impulse
+            // through the native normalized sampler, isolating AUX routing.
+            engine.setPadSample(pad, { 96000, { { sample, 0.0f } } });
             bsl::PadPlaybackSettings settings;
+            settings.lengthEnvelopeEnabled = false;
             settings.filterEnabled = settings.highPassEnabled = false;
             settings.room = roomSend[pad];
             settings.reverb = plateSend[pad];

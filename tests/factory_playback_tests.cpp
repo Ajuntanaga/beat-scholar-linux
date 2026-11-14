@@ -25,7 +25,14 @@ int main(int argc, char** argv)
     const juce::File output(argc > 1 ? argv[1] : "/tmp/beat-scholar-factory-playback");
     if (output.createDirectory().failed()) return 1;
     const juce::String mode = argc > 2 ? argv[2] : "";
-    const bool requireAmbience = argc > 3 && juce::String(argv[3]) == "--require-ambience";
+    bool requireAmbience = false, exportStates = false;
+    for (int index = 3; index < argc; ++index)
+    {
+        const juce::String option(argv[index]);
+        if (option == "--require-ambience") requireAmbience = true;
+        else if (option == "--export-states") exportStates = true;
+        else { std::cerr << "Unknown option: " << option << '\n'; return 1; }
+    }
     const bool allPatterns = mode == "--all-patterns";
     const bool allPresets = allPatterns || mode == "--all";
     const auto presetRoot = factory.getChildFile("Presets");
@@ -87,6 +94,13 @@ int main(int argc, char** argv)
                 reportPattern = static_cast<int>(patternIndex);
                 processor->stopStandalone();
                 processor->selectPatternFromUi(patternIndex);
+                if (exportStates)
+                {
+                    processor->getStateInformation(state);
+                    const auto stateFile = output.getChildFile(stem + "-pattern-"
+                        + juce::String(static_cast<int>(patternIndex)) + ".bslx");
+                    if (!stateFile.replaceWithData(state.getData(), state.getSize())) return 1;
+                }
                 const auto& project = processor->projectState();
                 const auto& pattern = project.patterns[patternIndex];
                 const double seconds = allPatterns

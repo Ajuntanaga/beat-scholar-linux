@@ -26,13 +26,32 @@ void check(bool condition, std::string_view message)
 
 
 
+void testMainInitFactorySamples()
+{
+    const auto state = bsl::ProjectState::makeMainInit();
+    check(state.isValid(), "Main Init remains valid with factory assignments");
+    check(state.kit.pads[0].factorySampleIds[0] == "SRC-DW_INST-BD_TYPE-Body_NAME-DW Sub.flac",
+          "Init kick uses explicit DW Sub override");
+    check(state.kit.pads[0].factorySampleIds[1] == "SRC-707_INST-BD_TYPE-Hit_NAME-SvN Kick.flac"
+              && state.kit.pads[1].factorySampleIds[1] == "SRC-707_INST-Snare_TYPE-Hit_NAME-SvN 2.flac",
+          "Init kick and snare retain their hit layers");
+    check(state.kit.pads[8].factorySampleIds[0] == "SRC-808_INST-Cymbal_TYPE-Crash_NAME-GR8 Crash.flac"
+              && state.kit.pads[15].factorySampleIds[0] == "SRC-DW_INST-FX_NAME-Single Snap 1.flac",
+          "Init second crash and FX use category index two");
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        check(state.kit.pads[pad].layerMix == 0.5f
+                  && !state.kit.pads[pad].factorySampleIds[0].empty()
+                  && (pad < 2 || state.kit.pads[pad].factorySampleIds[1].empty()),
+              "Init has sixteen assigned pads with only kick and snare dual layered");
+}
+
 void testHistorySharesImmutableSamplePayloadsAndTracksParameterOwnership()
 {
     auto state = bsl::ProjectState::makeDefault();
-    state.kit.pads[0].customSampleName = "synthetic.wav";
-    state.kit.pads[0].customSampleSha256 = std::string(64, '0');
-    state.kit.pads[0].customSampleBase64 = std::string(4 * 1024 * 1024, 'A');
-    const auto* originalStorage = state.kit.pads[0].customSampleBase64.value().data();
+    state.kit.pads[0].customSamples[0].name = "synthetic.wav";
+    state.kit.pads[0].customSamples[0].sha256 = std::string(64, '0');
+    state.kit.pads[0].customSamples[0].base64 = std::string(4 * 1024 * 1024, 'A');
+    const auto* originalStorage = state.kit.pads[0].customSamples[0].base64.value().data();
     bsl::ProjectEditor editor(state);
     for (int step = 0; step < 128; ++step)
     {
@@ -42,20 +61,20 @@ void testHistorySharesImmutableSamplePayloadsAndTracksParameterOwnership()
     for (int step = 0; step < 128; ++step)
     {
         check(editor.undo(), "retained history entry is undoable");
-        check(editor.state().kit.pads[0].customSampleBase64.value().data() == originalStorage,
+        check(editor.state().kit.pads[0].customSamples[0].base64.value().data() == originalStorage,
               "every undo snapshot shares the same immutable sample bytes");
         check(editor.restoredParameters() == bsl::HistoryParameters::none,
               "ordinary edits do not own host parameters");
     }
     editor.checkpoint(bsl::HistoryParameters::kit);
-    editor.state().kit.pads[0].customSampleBase64 = std::string("TQ==");
-    check(state.kit.pads[0].customSampleBase64.value().data() == originalStorage,
+    editor.state().kit.pads[0].customSamples[0].base64 = std::string("TQ==");
+    check(state.kit.pads[0].customSamples[0].base64.value().data() == originalStorage,
           "replacing a payload leaves earlier project copies immutable");
     check(editor.undo() && editor.restoredParameters() == bsl::HistoryParameters::kit
-              && editor.state().kit.pads[0].customSampleBase64.value().data() == originalStorage,
+              && editor.state().kit.pads[0].customSamples[0].base64.value().data() == originalStorage,
           "kit undo restores shared payload and explicit parameter ownership");
     check(editor.redo() && editor.restoredParameters() == bsl::HistoryParameters::kit
-              && editor.state().kit.pads[0].customSampleBase64.value() == "TQ==",
+              && editor.state().kit.pads[0].customSamples[0].base64.value() == "TQ==",
           "kit redo restores replacement payload and ownership");
     editor.checkpoint(bsl::HistoryParameters::masterGain);
     editor.state().master.gain = 0.7f;
@@ -177,9 +196,39 @@ void testSequencerProducesSampleAccurateTripletEvents()
         check(events[0].sampleOffset == 0, "first triplet starts at block start");
         check(events[1].sampleOffset == 8000, "second triplet is sample accurate");
         check(events[2].sampleOffset == 16000, "third triplet is sample accurate");
-        check(events[0].gateFrames == 8000 && events[1].gateFrames == 8000
-                  && events[2].gateFrames == 8000,
-              "each triplet owns exactly one slice of the beat");
+        check(events[0].gateFrames == 7840 && events[1].gateFrames == 7840
+                  && events[2].gateFrames == 7840,
+              "each triplet releases before the following slice");
+    }
+}
+
+void testNativeSequencerGateLeavesTwoPercentGap()
+{
+    // Original preset stores Time.length=.49/.245/.1225 for 2/4/8
+    // slices. Its first two-slice note releases at frame14112 at100BPM.
+    for (const auto [subdivisions, expectedGate] :
+         { std::pair{2, 14112u}, std::pair{4, 7056u}, std::pair{8, 3528u} })
+    {
+        auto state = bsl::ProjectState::makeDefault();
+        auto& pattern = state.patterns.front();
+        pattern.bars = { bsl::BarState::make(1, 4) };
+        pattern.lanes = { bsl::LaneState::make(1) };
+        pattern.lanes[0].beats[0] = bsl::BeatState::withSubdivision(subdivisions, 0, 1.0f);
+        bsl::TransportFrame frame;
+        frame.sampleRate = 48000.0;
+        frame.bpm = 100.0;
+        frame.blockSize = 28800;
+        frame.playing = true;
+        const auto events = bsl::Sequencer::render(state, frame);
+        check(events.size() == static_cast<std::size_t>(subdivisions), "native gate keeps every onset");
+        for (const auto& event : events)
+            check(event.gateFrames == expectedGate, "native sequencer releases at 98 percent of each slice");
+        std::array<bsl::SequencerBatchEvent, 16> batch {};
+        bsl::SequencerBatchCursor cursor;
+        const auto count = bsl::Sequencer::renderBatch(state, frame, 0, batch, cursor);
+        check(count == events.size(), "batch retains native gate event count");
+        for (std::size_t i = 0; i < count; ++i)
+            check(batch[i].event.gateFrames == expectedGate, "batch uses native slice release timing");
     }
 }
 
@@ -204,6 +253,34 @@ void testRealtimeSequencerRenderUsesCallerOwnedBoundedStorage()
           "bounded real-time render preserves sorted sample offsets");
 }
 
+void testNativeSwingTripletCurve()
+{
+    // Original VST3 MIDI capture: 48 kHz, 100 BPM, quarter reference.
+    struct Capture { double swing; int second; int third; };
+    for (const auto c : { Capture{-200, 754, 7510}, Capture{-100, 3200, 12800},
+                         Capture{50, 13673, 21877}, Capture{100, 18254, 24339},
+                         Capture{150, 21743, 25962}, Capture{200, 24349, 27069} })
+    {
+        for (const auto reference : { bsl::SwingReference::eighth,
+                                     bsl::SwingReference::quarter,
+                                     bsl::SwingReference::half })
+        {
+            const double length = reference == bsl::SwingReference::eighth ? 0.5
+                                : reference == bsl::SwingReference::half ? 2.0 : 1.0;
+            // Captures quantize to samples; exact truncation/float-source
+            // ordering remains a separate one-frame parity investigation.
+            const double second = bsl::Sequencer::applySwing(length / 3.0, c.swing, reference)
+                                / length * 28800.0;
+            const double third = bsl::Sequencer::applySwing(2.0 * length / 3.0, c.swing, reference)
+                               / length * 28800.0;
+            check(std::abs(second - c.second) <= 1.0,
+                  "native swing curve matches captured second triplet within one frame");
+            check(std::abs(third - c.third) <= 1.0,
+                  "native swing curve matches captured third triplet within one frame");
+        }
+    }
+}
+
 void testNegativeSwingAdvancesOffGridEvents()
 {
     auto state = bsl::ProjectState::makeDefault();
@@ -222,8 +299,8 @@ void testNegativeSwingAdvancesOffGridEvents()
     check(events.size() == 4, "swung beat emits four slice gates");
     if (events.size() == 4)
     {
-        check(events[0].gateFrames == 4000 && events[1].gateFrames == 8000
-                  && events[2].gateFrames == 4000 && events[3].gateFrames == 8000,
+        check(events[0].gateFrames == 2881 && events[1].gateFrames == 8761
+                  && events[2].gateFrames == 2881 && events[3].gateFrames == 8761,
               "slice gates follow swung boundaries, including the final beat boundary");
     }
     const auto straight = bsl::Sequencer::applySwing(0.25, 0.0, bsl::SwingReference::eighth);
@@ -536,8 +613,8 @@ void testPatternMidiExportPreservesTripletTimingAndVelocity()
         check(events[0].note == 42 && events[0].velocity == 64,
               "MIDI export keeps note mapping and rounded velocity");
         check(std::all_of(events.begin(), events.end(), [](const auto& event) {
-            return event.gateTicks == 320;
-        }), "MIDI export gates span the triplet subdivision");
+            return event.gateTicks == 314;
+        }), "MIDI export preserves the native triplet release gap");
     }
 }
 
@@ -553,7 +630,7 @@ void testSwungMidiExportKeepsThePlaybackLoopPhase()
     beat.slices[0].enabled = beat.slices[1].enabled = false;
     state.global.swingPercent = 200.0;
     const auto tail = bsl::Sequencer::exportPattern(state, 0, 960);
-    check(tail.size() == 1 && tail[0].tick == 27,
+    check(tail.size() == 1 && tail[0].tick == 166,
           "swung tail wraps into the MIDI clip at the same phase as looped playback");
 
     for (const auto reference : { bsl::SwingReference::eighth, bsl::SwingReference::quarter,
@@ -615,7 +692,7 @@ void testMidiExportKeepsRemappedPadRetriggerOrder()
             check(played.size() == 2 && exported.size() == 2,
                   "shared-note remapping retains both simultaneous pad hits");
             if (played.size() != 2 || exported.size() != 2) continue;
-            check(played.back().gateFrames == (shortPadFirst ? 960u : 240u),
+            check(played.back().gateFrames == (shortPadFirst ? 941u : 235u),
                   "last pad determines the live shared-note release");
             for (std::size_t i = 0; i < played.size(); ++i)
                 check(exported[i].tick == played[i].sampleOffset
@@ -642,9 +719,18 @@ void testPadIdentityIsIndependentOfMidiMapping()
     check(state.patterns.front().lanes.front().beats.front().slices.front().padIndex == 0,
           "remapping MIDI does not mutate slice pad identity");
     check(state.padIndexForMidiNote(77) == std::optional<std::size_t> { 0 },
-          "incoming remapped MIDI selects the configured pad");
-    check(!state.padIndexForMidiNote(36),
-          "incoming MIDI no longer assumes the legacy 36-based pad identity");
+          "output note lookup retains the configured mapping");
+    // Native input mapping is independent of the editable MIDI output map.
+    const std::array<std::uint8_t, bsl::padCount> inputNotes {
+        36, 38, 37, 39, 42, 46, 49, 51, 57, 55, 43, 41, 54, 40, 53, 56
+    };
+    for (std::size_t pad = 0; pad < inputNotes.size(); ++pad)
+        check(state.padIndexForInputMidiNote(inputNotes[pad]) == std::optional<std::size_t> { pad },
+              "incoming drum note selects native pad independently of output mapping");
+    for (int note = 0; note < 128; ++note)
+        if (std::find(inputNotes.begin(), inputNotes.end(), note) == inputNotes.end())
+            check(!state.padIndexForInputMidiNote(static_cast<std::uint8_t>(note)),
+                  "unmapped input notes do not trigger a pad");
 }
 
 void testLaneRandomizationUsesOneUndoCheckpointAndStableBeatSeeds()
@@ -786,6 +872,7 @@ void testBatchWindowsMatchFullRender()
 
 int main()
 {
+    testMainInitFactorySamples();
     testSequencerBatchesPreserveSimultaneousEvents();
     testBatchWindowsMatchFullRender();
     testHistorySharesImmutableSamplePayloadsAndTracksParameterOwnership();
@@ -794,7 +881,9 @@ int main()
     testRandomizerInitPreset();
     testSubdivisionRemembersDisabledVelocity();
     testSequencerProducesSampleAccurateTripletEvents();
+    testNativeSequencerGateLeavesTwoPercentGap();
     testRealtimeSequencerRenderUsesCallerOwnedBoundedStorage();
+    testNativeSwingTripletCurve();
     testNegativeSwingAdvancesOffGridEvents();
     testAddBarRejectsInvalidMeterWithoutHistory();
     testSetBarMeterRejectsInvalidInputWithoutChangingHistory();

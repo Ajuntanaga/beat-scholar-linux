@@ -1,6 +1,7 @@
 #include "plugin/PluginEditor.h"
 #include "plugin/StateCodec.h"
 #include "plugin/DataPaths.h"
+#include "native_dense_timing.h"
 #include <juce_cryptography/juce_cryptography.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_graphics/juce_graphics.h>
@@ -104,7 +105,7 @@ void testSectors(const juce::File& output)
         {
             const float angle = juce::MathConstants<float>::twoPi * (float(i) + 0.5f) / float(count);
             const auto expected = juce::Colour(colours[i % colours.size()])
-                                      .withSaturation(0.62f).withBrightness(0.72f);
+                                      .withBrightness(0.72f);
             for (const float distance : { 0.35f, 0.80f })
             {
                 // At 45 slices use the outer point, safely clear of antialiased edges.
@@ -131,6 +132,67 @@ void testSectors(const juce::File& output)
             for (std::size_t j = i + 1; j < count; ++j)
                 check(changed[j].padIndex == j % colours.size(), "click leaves other sectors alone");
         }
+    }
+}
+
+void testPartialSliceOutlines(const juce::File& output)
+{
+    // Modalics' Samples & Sounds tutorial at 2:35 shows partially populated
+    // 4-, 5- and 8-slice beats with bright outlines around the empty slices too.
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    auto& state = processor->projectState();
+    state.patterns.front().lanes = { bsl::LaneState::make(4) };
+    auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    const auto panel = juce::Colour(bsl::ui::colour::panel);
+    for (const int width : { 1280, 960 })
+    {
+        const float scale = float(width) / 1280.0f;
+        editor->setSize(width, width * 9 / 16);
+        const auto centre = juce::Point<float>(62.0f + 1070.0f / 8.0f, 306.0f) * scale;
+        const float radius = (1070.0f / 4.0f) * 0.36f * scale;
+        const auto pointAt = [&](float angle, float distance)
+        {
+            return centre + juce::Point<float>(-std::sin(angle), std::cos(angle))
+                                * (radius * distance);
+        };
+        const auto brightestNear = [](const juce::Image& snapshot, juce::Point<float> point)
+        {
+            float brightness = 0.0f;
+            const auto pixel = point.roundToInt();
+            for (int y = pixel.y - 1; y <= pixel.y + 1; ++y)
+                for (int x = pixel.x - 1; x <= pixel.x + 1; ++x)
+                    brightness = std::max(brightness, snapshot.getPixelAt(x, y).getBrightness());
+            return brightness;
+        };
+        for (const std::size_t count : { 4U, 5U, 8U })
+        {
+            auto& beat = state.patterns.front().lanes.front().beats.front();
+            beat = bsl::BeatState::withSubdivision(count, 0, 1.0f);
+            for (std::size_t i = 1; i < count; ++i)
+                beat.slices[i].enabled = false;
+            const auto snapshot = editor->createComponentSnapshot(editor->getLocalBounds());
+            const auto emptyMid = juce::MathConstants<float>::twoPi * 1.5f / float(count);
+            const auto emptyBoundary = juce::MathConstants<float>::twoPi * 2.0f / float(count);
+            const auto context = juce::String(int(count)) + " slices at " + juce::String(width);
+            check(brightestNear(snapshot, pointAt(emptyMid, 1.0f)) > 0.6f,
+                  "partial beat keeps empty outer arc bright: " + context);
+            check(brightestNear(snapshot, pointAt(emptyBoundary, 0.7f)) > 0.6f,
+                  "partial beat keeps empty radial divider bright: " + context);
+            const auto inside = pointAt(emptyMid, 0.7f).roundToInt();
+            check(similar(snapshot.getPixelAt(inside.x, inside.y), panel),
+                  "empty slice interior remains empty: " + context);
+            auto stream = output.getChildFile("partial-slices-" + juce::String(int(count))
+                + "-" + juce::String(width) + ".png").createOutputStream();
+            if (stream != nullptr) { stream->setPosition(0); stream->truncate(); }
+            check(stream != nullptr && juce::PNGImageFormat().writeImageToStream(snapshot, *stream),
+                  "write partial slice screenshot");
+        }
+        auto& beat = state.patterns.front().lanes.front().beats.front();
+        beat = bsl::BeatState::withSubdivision(1, 0, 1.0f);
+        beat.slices.front().enabled = false;
+        const auto snapshot = editor->createComponentSnapshot(editor->getLocalBounds());
+        check(brightestNear(snapshot, pointAt(juce::MathConstants<float>::halfPi, 1.0f)) < 0.6f,
+              "empty unsplit beat keeps its dim outline at " + juce::String(width));
     }
 }
 
@@ -164,8 +226,8 @@ void testStateRefreshPreservesSoundControls(const juce::File& output)
     // These coordinates target the real controls after the editor's 1280x720 layout.
     auto* volume = dynamic_cast<juce::Slider*>(editor->getComponentAt(1011, 650));
     auto* pan = dynamic_cast<juce::Slider*>(editor->getComponentAt(1011, 590));
-    auto* pitch = dynamic_cast<juce::Slider*>(editor->getComponentAt(639, 605));
-    auto* cutoff = dynamic_cast<juce::Slider*>(editor->getComponentAt(759, 605));
+    auto* pitch = dynamic_cast<juce::Slider*>(editor->getComponentAt(662, 610));
+    auto* cutoff = dynamic_cast<juce::Slider*>(editor->getComponentAt(781, 610));
     auto* master = dynamic_cast<juce::Slider*>(editor->getComponentAt(1219, 635));
     auto* oneShot = dynamic_cast<juce::TextButton*>(editor->getComponentAt(470, 652));
     check(volume != nullptr && pan != nullptr && pitch != nullptr && cutoff != nullptr
@@ -307,10 +369,11 @@ std::vector<std::uint8_t> constantPcm16Wav(int sampleRate, int frames)
     return bytes;
 }
 
-std::vector<float> renderSequencedGateCase(int sampleRate, int blockSize, bool oneShot)
+std::vector<float> renderSequencedGateCase(int sampleRate, int blockSize, bool oneShot,
+                                           bool useHostClock = false)
 {
     // A 4/4 pattern has just one enabled one-slice beat at time zero.  Its
-    // documented gate is one beat = 60 / 120 seconds; the pattern cannot
+    // native gate is 98% of one beat; the pattern cannot
     // retrigger until the four-beat bar begins again at 2 seconds.
     constexpr double bpm = 120.0;
     const auto gateFrames = static_cast<int>(sampleRate * 60.0 / bpm);
@@ -331,19 +394,30 @@ std::vector<float> renderSequencedGateCase(int sampleRate, int blockSize, bool o
     const juce::MemoryBlock wavBytes(wav.data(), wav.size());
     auto& pad = project.kit.pads.front();
     pad.factorySampleIds = {};
-    pad.customSampleName = "sequenced-gate.wav";
-    pad.customSampleSha256 = juce::SHA256(wavBytes).toHexString().toStdString();
-    pad.customSampleBase64 = juce::Base64::toBase64(wavBytes.getData(), wavBytes.getSize()).toStdString();
+    pad.customSamples[0].name = "sequenced-gate.wav";
+    pad.customSamples[0].sha256 = juce::SHA256(wavBytes).toHexString().toStdString();
+    pad.customSamples[0].base64 = juce::Base64::toBase64(wavBytes.getData(), wavBytes.getSize()).toStdString();
     pad.oneShot = oneShot;
+    pad.releaseSeconds = 0.0f; // Isolate the gate boundary from the separately tested release envelope.
     pad.hpfBypass = true; // Keep this DC fixture audible while isolating the note gate.
     const auto state = bsl::statecodec::encode(project);
     check(state.getSize() > 0, "synthetic sequenced-gate state encodes");
 
+    struct HostClock final : juce::AudioPlayHead
+    {
+        PositionInfo info;
+        juce::Optional<PositionInfo> getPosition() const override { return info; }
+    } clock;
+    clock.info.setIsPlaying(true);
+    clock.info.setBpm(bpm);
     BeatScholarLinuxProcessor processor;
     processor.setRateAndBufferSizeDetails(sampleRate, blockSize);
     processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
     processor.prepareToPlay(sampleRate, blockSize);
-    processor.playStandalone();
+    if (useHostClock)
+        processor.setPlayHead(&clock);
+    else
+        processor.playStandalone();
 
     // Render exactly gate + 2 frames.  A partial last buffer is deliberate:
     // it detects block-size-specific scheduling rather than rounding duration
@@ -355,12 +429,17 @@ std::vector<float> renderSequencedGateCase(int sampleRate, int blockSize, bool o
     {
         const int frames = std::min(blockSize, gateFrames + 2 - rendered);
         juce::AudioBuffer<float> buffer(processor.getTotalNumOutputChannels(), frames);
+        // Match the original REAPER capture's absolute host PPQ arithmetic.
+        // Standalone's integrated clock is tested separately below.
+        clock.info.setTimeInSamples(rendered);
+        clock.info.setPpqPosition(static_cast<double>(rendered) / sampleRate * bpm / 60.0);
         midi.clear();
         processor.processBlock(buffer, midi);
         for (int frame = 0; frame < frames; ++frame)
             output.push_back(buffer.getSample(0, frame));
         rendered += frames;
     }
+    processor.setPlayHead(nullptr);
     processor.releaseResources();
     return output;
 }
@@ -372,9 +451,9 @@ float renderAuditionEnergy(std::initializer_list<float> velocities)
     const juce::MemoryBlock bytes(wav.data(), wav.size());
     auto& pad = project.kit.pads.front();
     pad.factorySampleIds = {};
-    pad.customSampleName = "audition.wav";
-    pad.customSampleSha256 = juce::SHA256(bytes).toHexString().toStdString();
-    pad.customSampleBase64 = juce::Base64::toBase64(bytes.getData(), bytes.getSize()).toStdString();
+    pad.customSamples[0].name = "audition.wav";
+    pad.customSamples[0].sha256 = juce::SHA256(bytes).toHexString().toStdString();
+    pad.customSamples[0].base64 = juce::Base64::toBase64(bytes.getData(), bytes.getSize()).toStdString();
     pad.oneShot = true;
     const auto encoded = bsl::statecodec::encode(project);
     BeatScholarLinuxProcessor processor;
@@ -397,7 +476,7 @@ float renderAuditionEnergy(std::initializer_list<float> velocities)
 void testHostNoteOffKeepsMidiChannelsIndependent()
 {
     // The same pad can be played simultaneously by tracks on different MIDI
-    // channels. Releases must follow their input channel even after pad remap.
+    // channels. Output-note remapping must not change sampler input or release routing.
     for (const int note : { 36, 72 })
     {
         auto project = bsl::ProjectState::makeDefault();
@@ -406,11 +485,12 @@ void testHostNoteOffKeepsMidiChannelsIndependent()
         const juce::MemoryBlock bytes(wav.data(), wav.size());
         auto& pad = project.kit.pads.front();
         pad.factorySampleIds = {};
-        pad.customSampleName = "channel-gate.wav";
-        pad.customSampleSha256 = juce::SHA256(bytes).toHexString().toStdString();
-        pad.customSampleBase64 = juce::Base64::toBase64(bytes.getData(), bytes.getSize()).toStdString();
+        pad.customSamples[0].name = "channel-gate.wav";
+        pad.customSamples[0].sha256 = juce::SHA256(bytes).toHexString().toStdString();
+        pad.customSamples[0].base64 = juce::Base64::toBase64(bytes.getData(), bytes.getSize()).toStdString();
         pad.midiNote = static_cast<std::uint8_t>(note);
         pad.oneShot = false;
+        pad.releaseSeconds = 0.0f; // Channel ownership test, independent of envelope duration.
         pad.hpfBypass = true;
         pad.lpfBypass = true;
         const auto state = bsl::statecodec::encode(project);
@@ -426,17 +506,20 @@ void testHostNoteOffKeepsMidiChannelsIndependent()
             processor.processBlock(audio, midi);
             return audio.getSample(0, 8);
         };
-        const auto all = render({ juce::MidiMessage::noteOn(1, note, juce::uint8(16)),
-                                  juce::MidiMessage::noteOn(2, note, juce::uint8(32)),
-                                  juce::MidiMessage::noteOn(16, note, juce::uint8(48)) });
+        // Captured native low-velocity conversion and positive-velocity floor.
+        const auto amplitude = [](int velocity) { return 0.05f + 0.95f * (velocity * 128.0f / 16383.0f); };
+        const auto total = amplitude(16) + amplitude(32) + amplitude(48);
+        const auto all = render({ juce::MidiMessage::noteOn(1, 36, juce::uint8(16)),
+                                  juce::MidiMessage::noteOn(2, 36, juce::uint8(32)),
+                                  juce::MidiMessage::noteOn(16, 36, juce::uint8(48)) });
         check(all > 0.05f, "three MIDI channels trigger the configured pad");
-        check(std::abs(render({ juce::MidiMessage::noteOff(3, note) }) - all) < 1e-6f,
+        check(std::abs(render({ juce::MidiMessage::noteOff(3, 36) }) - all) < 1e-6f,
               "unmatched MIDI channel cannot release another channel's held pad");
-        check(std::abs(render({ juce::MidiMessage::noteOff(2, note) }) - all * (64.0f / 96.0f)) < 1e-6f,
+        check(std::abs(render({ juce::MidiMessage::noteOff(2, 36) }) - all * ((amplitude(16) + amplitude(48)) / total)) < 1e-6f,
               "MIDI channel 2 releases its own voice despite channel 1 starting first");
-        check(std::abs(render({ juce::MidiMessage::noteOff(16, note) }) - all * (16.0f / 96.0f)) < 1e-6f,
+        check(std::abs(render({ juce::MidiMessage::noteOff(16, 36) }) - all * (amplitude(16) / total)) < 1e-6f,
               "MIDI channel 16 releases its own voice while channel 1 keeps playing");
-        check(std::abs(render({ juce::MidiMessage::noteOff(1, note) })) < 1e-6f,
+        check(std::abs(render({ juce::MidiMessage::noteOff(1, 36) })) < 1e-6f,
               "final matching MIDI release stops the remaining held pad voice");
         processor.releaseResources();
     }
@@ -447,7 +530,7 @@ void testPadAuditionsPreserveRepeatedHits()
     const auto single = renderAuditionEnergy({1.0f});
     const auto repeated = renderAuditionEnergy({0.25f, 1.0f});
     check(single > 1.0f, "synthetic pad audition is audible");
-    check(std::abs(repeated / single - 1.25f) < 0.001f,
+    check(std::abs(repeated / single - (1.0f + 0.05f + 0.95f * 0.25f)) < 0.001f,
           "two auditions before one callback retain both hits and velocities");
     check(std::abs(renderAuditionEnergy({1.0f, 0.0f}) - single) < 0.001f,
           "zero-velocity audition does not discard a pending hit");
@@ -462,15 +545,42 @@ void testSequencedOneShotGateUsesBeatDurationAcrossRatesAndBlocks()
     for (const auto sampleRate : rates)
     for (const auto blockSize : blockSizes)
     {
-        const auto gate = static_cast<std::size_t>(sampleRate / 2); // 120 BPM
+        const auto gate = static_cast<std::size_t>(std::llround(sampleRate * 0.5 * 0.98)); // Native gate at 120 BPM
         const auto gated = renderSequencedGateCase(sampleRate, blockSize, false);
         const auto oneShot = renderSequencedGateCase(sampleRate, blockSize, true);
         check(std::abs(gated[gate - 1]) > 0.1f,
-              "sequenced non-One-Shot renders until the final beat frame");
+              "sequenced non-One-Shot renders until the final native gate frame");
         check(std::abs(gated[gate]) < 1.0e-6f && std::abs(gated[gate + 1]) < 1.0e-6f,
-              "sequenced non-One-Shot stops exactly at the beat gate");
+              "sequenced non-One-Shot stops exactly at the native 98-percent gate");
         check(std::abs(oneShot[gate]) > 0.1f && std::abs(oneShot[gate + 1]) > 0.1f,
               "sequenced One Shot continues beyond the beat gate");
+    }
+}
+
+void testSequencedOneShotGateMatchesCapturedHostTiming()
+{
+    // Original-plugin MIDI releases captured in isolated REAPER on 2026-11-14:
+    // 120 BPM, one active beat in 4/4, Step.Time.length = 0.98.
+    // Native quantization depends on rate AND block size; llround(beat * 0.98)
+    // is not the oracle. Local raw captures: single-gate-native-2026-11-13.
+    struct Capture { int rate; int block; std::size_t release; };
+    constexpr std::array captures {
+        Capture {44100, 17, 21608}, Capture {44100, 64, 21609}, Capture {44100, 511, 21608},
+        Capture {48000, 17, 23520}, Capture {48000, 64, 23520}, Capture {48000, 511, 23519},
+        Capture {96000, 17, 47040}, Capture {96000, 64, 47040}, Capture {96000, 511, 47039}
+    };
+    for (const auto& capture : captures)
+    {
+        const auto gated = renderSequencedGateCase(capture.rate, capture.block, false, true);
+        const auto oneShot = renderSequencedGateCase(capture.rate, capture.block, true, true);
+        const auto gate = capture.release;
+        const auto label = juce::String(capture.rate) + "/" + juce::String(capture.block);
+        check(std::abs(gated[gate - 1]) > 0.1f,
+              "hosted non-One-Shot remains audible before captured release " + label);
+        check(std::abs(gated[gate]) < 1.0e-6f && std::abs(gated[gate + 1]) < 1.0e-6f,
+              "hosted non-One-Shot stops at captured release " + label);
+        check(std::abs(oneShot[gate]) > 0.1f && std::abs(oneShot[gate + 1]) > 0.1f,
+              "hosted One Shot continues beyond captured release " + label);
     }
 }
 
@@ -676,18 +786,23 @@ private:
             if (block == 0)
             {
                 // Opening B's menu selects B. Trigger A exactly at the first
-                // boundary, then request the newly assigned B note mid-beat.
+                // boundary. Request B in the following callback so it queues.
                 midi.addEvent(juce::MidiMessage::noteOn(1, 12, 0.8f), 0);
-                midi.addEvent(juce::MidiMessage::noteOn(1, 14, 0.8f), 100);
             }
+            if (block == 1)
+                midi.addEvent(juce::MidiMessage::noteOn(1, 14, 0.8f), 100);
             processor_.processBlock(audio, midi);
             for (const auto event : midi)
                 if (event.getMessage().isNoteOn())
                     notes.emplace_back(block * 1024 + event.samplePosition,
                                        event.getMessage().getNoteNumber());
         }
-        check(notes == std::vector<std::pair<int, int>> {{0, 36}, {24000, 37}},
-              "editor-assigned trigger switches at the quarter boundary with no leaked input");
+        const auto& pads = processor_.projectState().kit.pads;
+        const std::vector<std::pair<int, int>> expectedNotes {
+            {0, pads[0].midiNote}, {23552, pads[1].midiNote}
+        };
+        check(notes == expectedNotes,
+              "editor-assigned trigger switches in the native quarter-boundary callback with no leaked input");
         check(processor_.takeRequestedPatternForUi() == 1,
               "editor-assigned trigger reports the playing destination to the UI");
         processor_.setPlayHead(nullptr);
@@ -813,7 +928,7 @@ void testMixedMeterGeometry(const juce::File& output)
     for (std::size_t beat = 0; beat < lengths.size(); ++beat)
     {
         const juce::Point<float> centre { 62.0f + (start + lengths[beat] * 0.5f) * 1070.0f / 7.5f, 306.0f };
-        const auto expected = juce::Colour(colours[beat]).withSaturation(0.62f).withBrightness(0.72f);
+        const auto expected = juce::Colour(colours[beat]).withBrightness(0.72f);
         check(similar(snapshot.getPixelAt(juce::roundToInt(centre.x), juce::roundToInt(centre.y)), expected),
               "mixed-meter beat is drawn at its time-proportional centre");
         const float radius = std::min(1.0f, lengths[beat]) * 1070.0f / 7.5f * 0.36f;
@@ -896,7 +1011,7 @@ void testCustomSampleAndMasterVisualStates(const juce::File& output)
 {
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
     auto& pad = processor->projectState().kit.pads[0];
-    pad.customSampleName = "Speshel Kick.wav";
+    pad.customSamples[0].name = "Speshel Kick.wav";
     auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
     int visibleLayers = 0;
     for (auto* child : editor->getChildren())
@@ -918,6 +1033,52 @@ void testCustomSampleAndMasterVisualStates(const juce::File& output)
         }
     check(greenPixels == 0, "master fader does not display fabricated green audio levels at silence");
     saveVisual(*editor, output, "custom-sample.png");
+}
+
+void testEmbeddedLayerVisualStateAndHistory(const juce::File& output)
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    auto& pad = processor->projectState().kit.pads[0];
+    pad.customSampleLayered = true;
+    pad.customSamples[0].name = "Embedded Body.wav";
+    pad.customSamples[0].sampleRate = 48000.0;
+    pad.customSamples[1].name = "Embedded Click.wav";
+    pad.customSamples[1].sampleRate = 96000.0;
+    auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    editor->setSize(1280, 720);
+    editor->setVisible(true);
+
+    int visibleLayers = 0;
+    bool bodyLabel = false;
+    bool clickLabel = false;
+    for (auto* child : editor->getChildren())
+        if (child->isVisible() && child->getComponentID() == "sample.layer")
+            if (auto* button = dynamic_cast<juce::TextButton*>(child))
+            {
+                ++visibleLayers;
+                bodyLabel = bodyLabel || button->getButtonText() == "Embedded Body.wav";
+                clickLabel = clickLabel || button->getButtonText() == "Embedded Click.wav";
+            }
+    check(visibleLayers == 2 && bodyLabel && clickLabel,
+          "layered embedded samples expose both named layer selectors");
+    auto* mix = editor->findChildWithID("sound.4");
+    check(mix != nullptr && mix->isVisible() && mix->isEnabled(),
+          "layered embedded samples keep the documented Mix control available");
+    saveVisual(*editor, output, "embedded-layer-controls.png");
+
+    processor->projectEditor().checkpoint();
+    pad.customSamples[1].name = "Edited Click.wav";
+    pad.customSamples[1].sampleRate = 88200.0;
+    check(processor->restoreProjectHistory(false)
+              && processor->projectState().kit.pads[0].customSamples[0].sampleRate == 48000.0
+              && processor->projectState().kit.pads[0].customSamples[1].name == "Embedded Click.wav"
+              && processor->projectState().kit.pads[0].customSamples[1].sampleRate == 96000.0,
+          "undo restores both embedded-layer identities and playback rates");
+    check(processor->restoreProjectHistory(true)
+              && processor->projectState().kit.pads[0].customSamples[0].sampleRate == 48000.0
+              && processor->projectState().kit.pads[0].customSamples[1].name == "Edited Click.wav"
+              && processor->projectState().kit.pads[0].customSamples[1].sampleRate == 88200.0,
+          "redo restores the edited second embedded layer without changing layer one");
 }
 
 template <typename Component>
@@ -1272,7 +1433,7 @@ void testPatternMidiExportPreservesNameAndMeterDuration(const juce::File& output
         check(latestNoteOff <= expectedEnd,
               "exported final note-off is clamped to the end-of-track tick");
         if (test.swing == 200.0)
-            check(latestNoteOn == 27.0 && latestNoteOff == 160.0,
+            check(latestNoteOn == 10.0 && latestNoteOff == 56.0,
                   "swung short-meter MIDI retains a playable note and the cyclic start position");
     }
 }
@@ -1664,9 +1825,9 @@ private:
             const auto& pads = processor_.projectState().kit.pads;
             if (case_ == 1)
             {
-                check(pads[0].customSampleName == sample_.getFileName().toStdString()
-                          && pads[0].customSampleSha256 == expectedHash_
-                          && !pads[0].customSampleBase64.empty(),
+                check(pads[0].customSamples[0].name == sample_.getFileName().toStdString()
+                          && pads[0].customSamples[0].sha256 == expectedHash_
+                          && !pads[0].customSamples[0].base64.empty(),
                       "accepting the folder chooser loads and embeds the selected sample");
                 for (std::size_t index = 1; index < pads.size(); ++index)
                     check(samePad(pads[index], before_.kit.pads[index]), "folder import preserves every other pad");
@@ -1691,7 +1852,7 @@ private:
                 if (undo != nullptr && redo != nullptr)
                 {
                     undo->onClick();
-                    check(processor_.projectState().kit.pads[0].customSampleSha256 == expectedHash_,
+                    check(processor_.projectState().kit.pads[0].customSamples[0].sha256 == expectedHash_,
                           "undo of X restores the imported sample");
                     redo->onClick();
                     check(samePad(processor_.projectState().kit.pads[0], before_.kit.pads[0]),
@@ -1737,7 +1898,7 @@ public:
         check(samples.createDirectory().wasOk(), "create factory menu fixtures");
         juce::MemoryOutputStream wav;
         const auto fixture = makeBypassTestProject(0);
-        check(juce::Base64::convertFromBase64(wav, juce::String(fixture.kit.pads[0].customSampleBase64.value())),
+        check(juce::Base64::convertFromBase64(wav, juce::String(fixture.kit.pads[0].customSamples[0].base64.value())),
               "decode factory menu WAV fixture");
         for (const auto* name : {"test_INST-BD_TYPE-Body_NAME-Wav Body.wav",
                                  "test_INST-BD_TYPE-Hit_NAME-Wav Hit.WAV",
@@ -2850,9 +3011,9 @@ bsl::ProjectState makeBypassTestProject(int padIndex)
     for (const auto pad : { 0, padIndex })
     {
         auto& sound = state.kit.pads[static_cast<std::size_t>(pad)];
-        sound.customSampleName = "automation-test.wav";
-        sound.customSampleSha256 = juce::SHA256(wav).toHexString().toStdString();
-        sound.customSampleBase64 = juce::Base64::toBase64(wav.getData(), wav.getSize()).toStdString();
+        sound.customSamples[0].name = "automation-test.wav";
+        sound.customSamples[0].sha256 = juce::SHA256(wav).toHexString().toStdString();
+        sound.customSamples[0].base64 = juce::Base64::toBase64(wav.getData(), wav.getSize()).toStdString();
     }
     return state;
 }
@@ -2872,6 +3033,7 @@ void testModuleSwitchesReachEditorAndProcessor(const juce::File& output)
             state.master.cutoff = 0.15f;
             state.master.gain = 0.25f;
             auto& pad = state.kit.pads[0];
+            pad.oneShot = false; // Isolate module gain from the One Shot length envelope.
             pad.filterEnabled = false;
             pad.hpfBypass = true; // Isolate module gain from the always-on 10 Hz HPF.
             pad.independentDistortion = true;
@@ -2913,11 +3075,14 @@ void testModuleSwitchesReachEditorAndProcessor(const juce::File& output)
             editor.reset();
             processor->releaseResources();
         }
-    // A 0.5-peak sample, native 0.3 pad trim, centre pan and 0.25
-    // master volume produce approximately 0.0265 on either channel.
+    // This block's sampled sine peak passes through the measured native +6 dB
+    // pre-compressor gain, 0.3 pad trim, centre pan and 0.25 master volume.
+    float sourcePeak = 0.0f;
+    for (int frame = 0; frame < 64; ++frame)
+        sourcePeak = std::max(sourcePeak, 0.3f + 0.2f * std::sin(float(frame) * 0.71f));
     std::cout << "Module-switch peaks: " << peaks[0] << ", " << peaks[1]
               << ", " << peaks[2] << ", " << peaks[3] << '\n';
-    check(std::abs(peaks[0] - 0.5f * 0.3f * std::sqrt(0.5f) * 0.25f) < 0.0001f
+    check(std::abs(peaks[0] - sourcePeak * std::pow(10.0f, 6.0f / 20.0f) * 0.3f * std::sqrt(0.5f) * 0.25f) < 0.0001f
               && peaks[1] < peaks[0] * 0.1f,
           "restored Master flag bypasses the real processor LPF and retains volume");
     check(peaks[2] > peaks[0] * 1.1f,
@@ -3050,7 +3215,13 @@ std::vector<float> renderBypassTest(bsl::ProjectState state, int pad, const juce
     {
         midi.clear();
         if (block == 0)
-            midi.addEvent(juce::MidiMessage::noteOn(1, 36 + pad, juce::uint8(127)), 0);
+        {
+            // Native sampler input mapping is independent of output-note settings.
+            constexpr std::array inputNotes { 36, 38, 37, 39, 42, 46, 49, 51,
+                                              57, 55, 43, 41, 54, 40, 53, 56 };
+            midi.addEvent(juce::MidiMessage::noteOn(1, inputNotes[static_cast<std::size_t>(pad)],
+                                                  juce::uint8(127)), 0);
+        }
         processor->processBlock(buffer, midi);
         result.insert(result.end(), buffer.getReadPointer(0), buffer.getReadPointer(0) + 64);
     }
@@ -3874,6 +4045,11 @@ void testMainAndKitInitContract()
     master->setValueNotifyingHost(master->convertTo0to1(0.6f));
     swing->setValueNotifyingHost(swing->convertTo0to1(42.0f));
     processor->resetKitToInit();
+    const auto expectedInit = bsl::ProjectState::makeMainInit();
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        check(processor->projectState().kit.pads[pad].factorySampleIds
+                  == expectedInit.kit.pads[pad].factorySampleIds,
+              "Kit Init and Main Init share native factory assignments");
     const auto after = bsl::statecodec::encode(processor->projectState());
     check(processor->projectState().patterns[0].name == "Keep sequence"
               && processor->projectState().patterns[0].lanes[0].beats[0].slices[0].enabled
@@ -3982,7 +4158,7 @@ void testSampleDropTargets(const juce::File& output)
 {
     const auto source = makeBypassTestProject(0);
     juce::MemoryOutputStream wav;
-    check(juce::Base64::convertFromBase64(wav, juce::String(source.kit.pads[0].customSampleBase64.value())),
+    check(juce::Base64::convertFromBase64(wav, juce::String(source.kit.pads[0].customSamples[0].base64.value())),
           "decode sample-drop fixture");
     const auto file = output.getChildFile("drop-target.wav");
     check(file.replaceWithData(wav.getData(), wav.getDataSize()), "write sample-drop fixture");
@@ -4018,24 +4194,24 @@ void testSampleDropTargets(const juce::File& output)
         check(bsl::statecodec::encodeKitJson(state.kit, state.master) == original, "hidden Sounds sample area does not accept drops in Randomizer");
         const auto target = pad->getBounds().getCentre();
         editor->filesDropped(files, target.x, target.y);
-        check(state.kit.pads[8].customSampleName == "drop-target.wav"
-                  && state.kit.pads[3].customSampleBase64.empty() && state.ui.selectedPad == 8,
+        check(state.kit.pads[8].customSamples[0].name == "drop-target.wav"
+                  && state.kit.pads[3].customSamples[0].base64.empty() && state.ui.selectedPad == 8,
               "drop on a drum pad loads that pad while Randomizer is shown");
         check(editor->isInterestedInFileDrag(mixedFiles), "mixed drag containing supported audio is accepted");
         editor->filesDropped(mixedFiles, target.x, target.y);
-        check(state.kit.pads[8].customSampleName == "drop-mixed.wav",
+        check(state.kit.pads[8].customSamples[0].name == "drop-mixed.wav",
               "pad drop loads the first supported audio file in a mixed selection");
         drum->onClick();
         state.ui.selectedPad = 3;
         const auto otherPad = state.kit.pads[8];
         drop(475, 650);
-        check(state.kit.pads[3].customSampleName == "drop-target.wav"
-                  && state.kit.pads[8].customSampleName == otherPad.customSampleName
-                  && state.kit.pads[8].customSampleBase64.value() == otherPad.customSampleBase64.value(),
+        check(state.kit.pads[3].customSamples[0].name == "drop-target.wav"
+                  && state.kit.pads[8].customSamples[0].name == otherPad.customSamples[0].name
+                  && state.kit.pads[8].customSamples[0].base64.value() == otherPad.customSamples[0].base64.value(),
               "drop on visible Sounds sample area loads only the selected pad");
         editor->filesDropped(mixedFiles, 475 * width / 1280, 650 * width / 1280);
-        check(state.kit.pads[3].customSampleName == "drop-mixed.wav"
-                  && state.kit.pads[8].customSampleName == otherPad.customSampleName,
+        check(state.kit.pads[3].customSamples[0].name == "drop-mixed.wav"
+                  && state.kit.pads[8].customSamples[0].name == otherPad.customSamples[0].name,
               "Sounds drop loads supported audio following an unsupported file");
         if (width == 1280) saveVisual(*editor, output, "sample-drop-target.png");
     }
@@ -4494,9 +4670,9 @@ void testInvalidEmbeddedAudioDoesNotReplaceStateOrSound(const juce::File& output
     const auto before = render();
     auto invalid = processor->projectState();
     invalid.patterns[0].name = "Invalid media";
-    invalid.kit.pads[0].customSampleName = "invalid.flac";
-    invalid.kit.pads[0].customSampleBase64 = juce::Base64::toBase64("FLAC", 4).toStdString();
-    invalid.kit.pads[0].customSampleSha256 = juce::SHA256("FLAC", 4).toHexString().toStdString();
+    invalid.kit.pads[0].customSamples[0].name = "invalid.flac";
+    invalid.kit.pads[0].customSamples[0].base64 = juce::Base64::toBase64("FLAC", 4).toStdString();
+    invalid.kit.pads[0].customSamples[0].sha256 = juce::SHA256("FLAC", 4).toHexString().toStdString();
     encoded = bsl::statecodec::encode(invalid);
     check(!encoded.isEmpty(), "malformed audio fixture passes structural codec checks");
     processor->setStateInformation(encoded.getData(), int(encoded.getSize()));
@@ -4766,9 +4942,9 @@ void testFunctionalRepairs(const juce::File& output)
             for (auto& pad : state.kit.pads)
             {
                 pad.factorySampleIds = {};
-                pad.customSampleBase64.clear();
-                pad.customSampleName.clear();
-                pad.customSampleSha256.clear();
+                pad.customSamples[0].base64.clear();
+                pad.customSamples[0].name.clear();
+                pad.customSamples[0].sha256.clear();
             }
         state.kit.pads[0].name = "Restored kit";
         state.master.gain = 0.37f;
@@ -4780,7 +4956,7 @@ void testFunctionalRepairs(const juce::File& output)
             processor->prepareToPlay(48000, 64);
             const auto& restored = processor->projectEditor().state();
             check(restored.kit.pads[0].name == state.kit.pads[0].name
-                      && restored.kit.pads[1].customSampleBase64.value() == state.kit.pads[1].customSampleBase64.value()
+                      && restored.kit.pads[1].customSamples[0].base64.value() == state.kit.pads[1].customSamples[0].base64.value()
                       && std::abs(restored.master.gain - state.master.gain) < 1e-6f,
                   "prepare preserves restored empty-first-pad kit and master, including empty kits");
             processor->releaseResources();
@@ -4795,6 +4971,7 @@ void testFunctionalRepairs(const juce::File& output)
             auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
             auto state = makeBypassTestProject(0);
             state.kit.pads[0].oneShot = oneShot;
+            state.kit.pads[0].releaseSeconds = 0.0f; // Isolate panic/channel lifetime handling.
             state.kit.pads[0].lpfBypass = true;
             const auto bytes = bsl::statecodec::encode(state);
             processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
@@ -5224,7 +5401,8 @@ void testQueuedPatternsSurviveStructuralEdits()
         juce::Optional<PositionInfo> getPosition() const override { return info; }
     };
     // Each pattern plays a distinct pad every quarter note. The incoming C
-    // trigger is queued at sample 100 for the boundary at sample 24000.
+    // trigger arrives in callback 1, then edits happen while it is pending.
+    // Native quantization switches at the callback containing sample 24000.
     for (int edit = 0; edit < 5; ++edit)
     {
         PlayHead clock;
@@ -5252,7 +5430,7 @@ void testQueuedPatternsSurviveStructuralEdits()
         std::vector<std::pair<int, int>> notes;
         for (int block = 0; block < 25; ++block)
         {
-            if (block == 1)
+            if (block == 2)
             {
                 auto& editor = processor->projectEditor();
                 if (edit == 0)
@@ -5286,7 +5464,7 @@ void testQueuedPatternsSurviveStructuralEdits()
             clock.info.setPpqPosition(block * 1024.0 / 24000.0);
             juce::AudioBuffer<float> audio(2, 1024);
             juce::MidiBuffer midi;
-            if (block == 0)
+            if (block == 1)
                 midi.addEvent(juce::MidiMessage::noteOn(1, 14, 0.8f), 100);
             processor->processBlock(audio, midi);
             for (const auto event : midi)
@@ -5296,7 +5474,7 @@ void testQueuedPatternsSurviveStructuralEdits()
         }
         const bool targetExists = edit < 2 || edit == 4;
         const std::vector<std::pair<int, int>> expected { { 0, 36 },
-                                                        { 24000, targetExists ? 38 : 36 } };
+                                                        { targetExists ? 23552 : 24000, targetExists ? 38 : 36 } };
         check(notes == expected, "queued pattern retains identity or cancels after edit "
                                  + juce::String(edit));
         const int requested = processor->takeRequestedPatternForUi();
@@ -5488,7 +5666,7 @@ void testDirectPatternClickOverridesMidiSwitch()
         std::vector<std::pair<int, int>> notesAfterClick;
         for (int block = 0; block < 25; ++block)
         {
-            if (block == 1)
+            if (block == (queued ? 2 : 1))
             {
                 const auto event = visualEvent(*editor, { 1205.0f, 146.0f });
                 editor->mouseDown(event);
@@ -5500,9 +5678,9 @@ void testDirectPatternClickOverridesMidiSwitch()
             clock.info.setPpqPosition(block * 1024.0 / 24000.0);
             juce::AudioBuffer<float> audio(2, 1024);
             juce::MidiBuffer midi;
-            if (block == 0) midi.addEvent(juce::MidiMessage::noteOn(1, 13, 0.8f), 100);
+            if (block == (queued ? 1 : 0)) midi.addEvent(juce::MidiMessage::noteOn(1, 13, 0.8f), 100);
             processor->processBlock(audio, midi);
-            if (block > 0)
+            if (block >= (queued ? 2 : 1))
                 for (const auto event : midi)
                     if (event.getMessage().isNoteOn())
                         notesAfterClick.emplace_back(block * 1024 + event.samplePosition,
@@ -5669,42 +5847,82 @@ void testHostMidiMapReportsCurrentPadNames()
 void testDenseOfflineBlockKeepsEveryHit()
 {
     constexpr int frames = 16384;
+    constexpr std::array<int, 16> inputNotes {36,38,37,39,42,46,49,51,57,55,43,41,54,40,53,56};
+    struct PlayHead final : juce::AudioPlayHead
+    {
+        PositionInfo info;
+        juce::Optional<PositionInfo> getPosition() const override { return info; }
+    };
     auto state = makeBypassTestProject(0);
     state.global.sequencerEnabled = true;
     state.global.beatsPerMinute = 300.0;
+    for (auto& pad : state.kit.pads)
+    {
+        pad.customSamples[0] = state.kit.pads[0].customSamples[0];
+        pad.oneShot = true;
+    }
     auto& pattern = state.patterns[0];
     pattern.bars = { bsl::BarState::make(1, 16) };
     pattern.lanes.assign(16, bsl::LaneState::make(1));
     for (std::size_t lane = 0; lane < pattern.lanes.size(); ++lane)
         pattern.lanes[lane].beats[0] = bsl::BeatState::withSubdivision(45, static_cast<std::uint8_t>(lane), 0.5f);
-    const auto bytes = bsl::statecodec::encode(state);
-    auto render = [&](int blockSize) {
-        auto processor = std::make_unique<BeatScholarLinuxProcessor>();
-        processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
-        processor->setRateAndBufferSizeDetails(48000, blockSize);
-        processor->prepareToPlay(48000, blockSize);
-        std::vector<std::pair<int, int>> notes;
-        std::vector<float> audio;
-        for (int offset = 0; offset < frames; offset += blockSize)
+    for (const int blockSize : {128, frames})
+    {
+        const auto& timing = blockSize == 128 ? nativeDense128 : nativeDense16384;
+        auto render = [&](bool sequence) {
+            auto project = state;
+            project.global.sequencerEnabled = sequence;
+            const auto bytes = bsl::statecodec::encode(project);
+            auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+            processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
+            processor->setRateAndBufferSizeDetails(48000, blockSize);
+            processor->prepareToPlay(48000, blockSize);
+            PlayHead clock;
+            clock.info.setIsPlaying(true);
+            clock.info.setBpm(300.0);
+            processor->setPlayHead(&clock);
+            std::vector<std::pair<int, int>> notes;
+            std::vector<float> audio;
+            for (int offset = 0; offset < frames; offset += blockSize)
+            {
+                clock.info.setTimeInSamples(offset);
+                clock.info.setPpqPosition(double(offset) / 48000.0 * 300.0 / 60.0);
+                juce::AudioBuffer<float> buffer(2, std::min(blockSize, frames - offset));
+                juce::MidiBuffer midi;
+                if (!sequence)
+                    for (std::size_t i = 0; i < timing.size(); ++i)
+                        if (timing[i] >= offset && timing[i] < offset + buffer.getNumSamples())
+                            for (const auto note : inputNotes)
+                                midi.addEvent(i % 2 == 0
+                                    ? juce::MidiMessage::noteOn(1, note, juce::uint8(64))
+                                    : juce::MidiMessage::noteOff(1, note), timing[i] - offset);
+                processor->processBlock(buffer, midi);
+                for (const auto event : midi)
+                    if (event.getMessage().isNoteOn())
+                        notes.emplace_back(offset + event.samplePosition, event.getMessage().getNoteNumber());
+                audio.insert(audio.end(), buffer.getReadPointer(0), buffer.getReadPointer(0) + buffer.getNumSamples());
+            }
+            processor->setPlayHead(nullptr);
+            std::sort(notes.begin(), notes.end());
+            return std::pair { notes, audio };
+        };
+        const auto actual = render(true), reference = render(false);
+        std::vector<std::pair<int, int>> expected;
+        for (std::size_t i = 0; i < timing.size(); i += 2)
+            for (const auto& pad : state.kit.pads)
+                expected.emplace_back(timing[i], pad.midiNote);
+        std::sort(expected.begin(), expected.end());
+        check(actual.first.size() == 4928, "dense playback preserves all 308 times and 16 lanes");
+        check(actual.first == expected, "dense playback matches original timing for its host block size");
+        float error = 0.0f, peak = 0.0f;
+        for (std::size_t n = 0; n < actual.second.size(); ++n)
         {
-            juce::AudioBuffer<float> buffer(2, std::min(blockSize, frames - offset));
-            juce::MidiBuffer midi;
-            processor->processBlock(buffer, midi);
-            for (const auto event : midi)
-                if (event.getMessage().isNoteOn())
-                    notes.emplace_back(offset + event.samplePosition, event.getMessage().getNoteNumber());
-            audio.insert(audio.end(), buffer.getReadPointer(0), buffer.getReadPointer(0) + buffer.getNumSamples());
+            error = std::max(error, std::abs(actual.second[n] - reference.second[n]));
+            peak = std::max(peak, std::abs(reference.second[n]));
         }
-        std::sort(notes.begin(), notes.end());
-        return std::pair { notes, audio };
-    };
-    const auto small = render(128), large = render(frames);
-    check(small.first.size() == 4928, "dense reference contains all 308 times and 16 lanes");
-    check(large.first == small.first, "large offline block preserves every dense pattern hit");
-    float error = 0.0f;
-    for (std::size_t n = 0; n < small.second.size(); ++n)
-        error = std::max(error, std::abs(small.second[n] - large.second[n]));
-    check(error < 1.0e-5f, "dense offline audio is independent of host block size");
+        check(peak > 0.01f && error < 1.0e-5f,
+              "dense sequencer audio matches original-timed MIDI driving the same sampler");
+    }
 }
 
 void testIncomingMidiBeyondFormerCapacity()
@@ -5736,7 +5954,7 @@ void testFactorySamplesRespectXdgDataHome(const juce::File& output)
     check(samples.createDirectory().wasOk(), "create isolated XDG sample directory");
     const auto fixture = makeBypassTestProject(0);
     juce::MemoryOutputStream wav;
-    check(juce::Base64::convertFromBase64(wav, juce::String(fixture.kit.pads[0].customSampleBase64.value())), "decode synthetic XDG sample");
+    check(juce::Base64::convertFromBase64(wav, juce::String(fixture.kit.pads[0].customSamples[0].base64.value())), "decode synthetic XDG sample");
     const auto file = samples.getChildFile("xdg-synthetic.wav");
     check(file.replaceWithData(wav.getData(), wav.getDataSize()), "write synthetic XDG sample");
     setenv("XDG_DATA_HOME", xdg.getFullPathName().toRawUTF8(), 1);
@@ -5764,7 +5982,7 @@ void testSampleReplacementPreservesOtherPads(const juce::File& output)
     auto state = makeBypassTestProject(1);
     state.kit.pads[1].oneShot = true;
     juce::MemoryOutputStream wav;
-    check(juce::Base64::convertFromBase64(wav, juce::String(state.kit.pads[0].customSampleBase64.value())),
+    check(juce::Base64::convertFromBase64(wav, juce::String(state.kit.pads[0].customSamples[0].base64.value())),
           "decode sample isolation fixture");
     const auto file = samples.getChildFile("replacement.wav");
     check(file.replaceWithData(wav.getData(), wav.getDataSize()), "write sample isolation fixture");
@@ -5786,7 +6004,7 @@ void testSampleReplacementPreservesOtherPads(const juce::File& output)
             check(processor->setFactorySample(0, static_cast<std::size_t>(operation - 1), "replacement.wav"),
                   "replace the selected factory sample layer");
         if (operation >= 0)
-            check(processor->projectState().kit.pads[0].customSampleBase64.empty(),
+            check(processor->projectState().kit.pads[0].customSamples[0].base64.empty(),
                   "sample replacement clears the selected pad's custom payload");
         midi.clear();
         processor->processBlock(buffer, midi);
@@ -6015,10 +6233,13 @@ void testSeparateDriveAndDistControls(const juce::File& output)
     auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
     editor->setVisible(true);
     auto& pad = processor->projectState().kit.pads[0];
-    auto* drive = dynamic_cast<juce::Slider*>(editor->getComponentAt(699, 680));
-    auto* dist = dynamic_cast<juce::Slider*>(editor->getComponentAt(885, 680));
+    auto* drive = childWithId<juce::Slider>(*editor, "effect.3");
+    auto* dist = childWithId<juce::Slider>(*editor, "effect.8");
     check(drive != nullptr && dist != nullptr, "documented Drive and Dist controls exist");
     if (drive == nullptr || dist == nullptr) return;
+    check(editor->getComponentAt(drive->getBounds().getCentre()) == drive
+              && editor->getComponentAt(dist->getBounds().getCentre()) == dist,
+          "Drive and Dist controls receive input at their visible centres");
     check(drive->getMinimum() == 0.0 && drive->getMaximum() == 24.0,
           "Drive exposes the native 0..24 dB control range");
     const std::array<std::pair<double, double>, 5> nativeDrivePositions {{{0.0, 0.0},
@@ -6100,10 +6321,28 @@ int main(int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI initialiser;
     const juce::File output(argc > 1 ? argv[1] : "/tmp/beat-scholar-editor-tests");
     check(output.createDirectory().wasOk(), "create screenshot directory");
+    if (argc > 2 && juce::String(argv[2]) == "--slice-outlines")
+    {
+        testPartialSliceOutlines(output);
+        std::cout << "Slice outline failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
     if (argc > 2 && juce::String(argv[2]) == "--gain-reference")
     {
         testSeparateDriveAndDistControls(output);
         std::cout << "Gain reference failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc > 2 && juce::String(argv[2]) == "--embedded-layers")
+    {
+        testEmbeddedLayerVisualStateAndHistory(output);
+        std::cout << "Embedded layer failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc > 2 && juce::String(argv[2]) == "--host-gate-reference")
+    {
+        testSequencedOneShotGateMatchesCapturedHostTiming();
+        std::cout << "Captured host gate failures: " << failures << '\n';
         return failures == 0 ? 0 : 1;
     }
     testFunctionalRepairs(output);
@@ -6169,6 +6408,7 @@ int main(int argc, char** argv)
     testSamplerDisableClearsVoicesAndTails();
     testSparseMultiOutputBusMapping();
     testSectors(output);
+    testPartialSliceOutlines(output);
     testSeparateDriveAndDistControls(output);
     testTutorialEffectDragValue(output);
     testCloseEditorDuringEffectDrag();
@@ -6176,11 +6416,13 @@ int main(int argc, char** argv)
     testStateRefreshPreservesSoundControls(output);
     testSoundControlEditsPreserveOtherValues();
     testSequencedOneShotGateUsesBeatDurationAcrossRatesAndBlocks();
+    testSequencedOneShotGateMatchesCapturedHostTiming();
     testPadAuditionsPreserveRepeatedHits();
     testHostNoteOffKeepsMidiChannelsIndependent();
     testMixedMeterGeometry(output);
     testBarHeaderActions(output);
     testCustomSampleAndMasterVisualStates(output);
+    testEmbeddedLayerVisualStateAndHistory(output);
     testRandomizerTabRestoresSoundPanel();
     testRandomizerTriggerModuleToggleIsIndependent(output);
     testRandomizerFillEmptyIsClickToggle(output);

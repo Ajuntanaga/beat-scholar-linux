@@ -698,7 +698,7 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
         soundLabels_[index].setInterceptsMouseClicks(false, false);
         soundLabels_[index].setText("", juce::dontSendNotification);
         soundLabels_[index].setJustificationType(juce::Justification::centred);
-        soundLabels_[index].setFont(juce::FontOptions(10.0f, juce::Font::bold));
+        soundLabels_[index].setFont(bsl::ui::font(14.0f, true));
         soundLabels_[index].setColour(juce::Label::textColourId, juce::Colour(0xffbfc3c8));
         addAndMakeVisible(soundLabels_[index]);
         soundControls_[index].addMouseListener(this, false);
@@ -755,7 +755,7 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
             // so keep resonance continuous instead of rounding it to 0.292.
             configureSlider(effectControls_[index], 0.0, 1.0, index == 2 ? 0.0 : 0.001, "");
         effectLabels_[index].setJustificationType(juce::Justification::centred);
-        effectLabels_[index].setFont(bsl::ui::font(11.0f, true));
+        effectLabels_[index].setFont(bsl::ui::font(14.0f, true));
         effectLabels_[index].setColour(juce::Label::textColourId,
                                       juce::Colour(lookAndFeel_.palette().text));
         addAndMakeVisible(effectLabels_[index]);
@@ -804,7 +804,7 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
         configureSlider(masterControls_[index], 0.0, index == 4 ? 1.5 : 1.0,
                         index == 1 ? 0.0 : 0.001, "");
         masterLabels_[index].setJustificationType(juce::Justification::centred);
-        masterLabels_[index].setFont(bsl::ui::font(9.0f, true));
+        masterLabels_[index].setFont(bsl::ui::font(14.0f, true));
         masterLabels_[index].setColour(juce::Label::textColourId,
                                       juce::Colour(lookAndFeel_.palette().text));
         addAndMakeVisible(masterLabels_[index]);
@@ -1233,7 +1233,7 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
     float firstQuarter = 0.0f;
     graphics.saveState();
     graphics.reduceClipRegion(header.toNearestInt());
-    graphics.setFont(bsl::ui::font(12.0f * scale, true));
+    graphics.setFont(bsl::ui::font(20.0f * scale, true));
     for (std::size_t bar = 0; bar < current.bars.size(); ++bar)
     {
         const auto& meter = current.bars[bar];
@@ -1531,7 +1531,8 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
         const auto& selectedPad = state.kit.pads[state.ui.selectedPad];
         const auto sampleColour = padColours_[state.ui.selectedPad].withSaturation(0.72f)
                                                               .withBrightness(0.70f);
-        const bool custom = !selectedPad.customSampleName.empty();
+        const bool custom = !selectedPad.customSampleLayered
+                            && !selectedPad.customSamples[0].name.empty();
         graphics.setColour(juce::Colour(lookAndFeel_.palette().panel));
         graphics.fillRect(samplePanel);
         graphics.setColour(sampleColour);
@@ -1539,7 +1540,7 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
         graphics.setColour(juce::Colour(lookAndFeel_.palette().text).withAlpha(0.90f));
         const auto sampleGlyph = designRect(getWidth(), getHeight(), custom ? 451.0f : 448.0f, custom ? 627.0f : 607.0f,
                                              52.0f, custom ? 36.0f : 42.0f).toFloat();
-        if (!selectedPad.customSampleName.empty())
+        if (custom)
         {
             juce::Path waveform;
             // The tutorial's custom-sample symbol has flat ends and three sharp peaks.
@@ -1563,7 +1564,7 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                 std::max(1.4f, 1.7f * scale));
         }
         // Vertical separators reproduce the manual's sound design groupings.
-        for (const float x : { 548.0f, 608.0f, 668.0f, 850.0f, 976.0f })
+        for (const float x : { 566.0f, 626.0f, 687.0f, 850.0f, 976.0f })
         {
             graphics.setColour(juce::Colour(lookAndFeel_.palette().border));
             const auto line = designRect(getWidth(), getHeight(), x, 558.0f, 1.0f, 152.0f);
@@ -1649,6 +1650,10 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
             if (previewing)
                 graphics.beginTransparencyLayer(0.5f);
             const auto slices = beat.slices.size();
+            // A populated beat outlines every slice, including empty sectors
+            // (Samples & Sounds tutorial, 2:35). Keep an empty beat dim.
+            const bool populated = std::any_of(beat.slices.begin(), beat.slices.end(),
+                                              [](const auto& slice) { return slice.enabled; });
             for (std::size_t sliceIndex = 0; sliceIndex < slices; ++sliceIndex)
             {
                 const float start = juce::MathConstants<float>::pi + juce::MathConstants<float>::twoPi
@@ -1663,14 +1668,13 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
                 const auto& slice = beat.slices[sliceIndex];
                 const std::size_t pad = std::min<std::size_t>(slice.padIndex, bsl::padCount - 1);
                 graphics.setColour(slice.enabled
-                                       ? padColours_[pad].withSaturation(0.62f)
-                                             .withBrightness(0.72f)
+                                       ? padColours_[pad].withBrightness(0.72f)
                                              .withAlpha(std::clamp(0.55f + slice.velocity * 0.45f,
                                                                    0.0f, 1.0f))
                                        : juce::Colour(lookAndFeel_.palette().panel));
                 graphics.fillPath(wedge);
-                graphics.setColour(slice.enabled ? juce::Colour(lookAndFeel_.palette().text)
-                                                   : juce::Colour(lookAndFeel_.palette().border));
+                graphics.setColour(populated ? juce::Colour(lookAndFeel_.palette().text)
+                                             : juce::Colour(lookAndFeel_.palette().border));
                 graphics.strokePath(wedge, juce::PathStrokeType(std::max(1.0f, scale * 1.15f)));
             }
             if (previewing)
@@ -1689,11 +1693,9 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
 void BeatScholarLinuxEditor::resized()
 {
     for (auto& label : effectLabels_)
-        label.setFont(bsl::ui::font(11.0f * designScale(getWidth(), getHeight()), true));
+        label.setFont(bsl::ui::font(14.0f * designScale(getWidth(), getHeight()), true));
     for (auto& label : soundLabels_)
-        label.setFont(module_ == Module::randomizer
-                          ? bsl::ui::font(14.0f * designScale(getWidth(), getHeight()), true)
-                          : juce::Font(juce::FontOptions(10.0f * designScale(getWidth(), getHeight()), juce::Font::bold)));
+        label.setFont(bsl::ui::font(14.0f * designScale(getWidth(), getHeight()), true));
     title_.setFont(juce::Font(juce::FontOptions("Nimbus Sans Narrow", "Bold",
 +                                                24.0f * designScale(getWidth(), getHeight()))));
     title_.setBounds(designRect(getWidth(), getHeight(), 16.0f, 13.0f, 132.0f, 34.0f));
@@ -1752,7 +1754,9 @@ void BeatScholarLinuxEditor::resized()
     randomizerPrevious_.setVisible(module_ == Module::randomizer);
     randomizerNext_.setVisible(module_ == Module::randomizer);
 
-    const bool custom = !processor_.projectState().kit.pads[processor_.projectState().ui.selectedPad].customSampleName.empty();
+    const auto& selectedPad = processor_.projectState().kit.pads[processor_.projectState().ui.selectedPad];
+    const bool custom = !selectedPad.customSampleLayered
+                        && !selectedPad.customSamples[0].name.empty();
     loadSample_.setBounds(designRect(getWidth(), getHeight(), 402.0f, 622.0f, 28.0f, 26.0f));
     clearSample_.setBounds(designRect(getWidth(), getHeight(), 512.0f, 563.0f, 27.0f, 24.0f));
     layerOne_.setBounds(designRect(getWidth(), getHeight(), custom ? 408.0f : 415.0f,
@@ -1813,7 +1817,7 @@ void BeatScholarLinuxEditor::resized()
     else
     {
         const std::array<juce::Point<float>, 8> characterPositions {{
-            { 558.0f, 573.0f }, { 558.0f, 649.0f }, { 620.0f, 573.0f }, { 620.0f, 649.0f },
+            { 573.0f, 573.0f }, { 573.0f, 649.0f }, { 635.0f, 573.0f }, { 635.0f, 649.0f },
             { 508.0f, 605.0f }, { 984.0f, 566.0f }, { 984.0f, 642.0f }, { 468.0f, 638.0f }
         }};
         for (std::size_t index = 0; index < characterPositions.size(); ++index)
@@ -1849,9 +1853,9 @@ void BeatScholarLinuxEditor::resized()
             }
         }
         const std::array<juce::Point<float>, 10> effectPositions {{
-            { 680.0f, 573.0f }, { 736.0f, 573.0f }, { 791.0f, 573.0f },
-            { 680.0f, 649.0f }, { 736.0f, 649.0f }, { 791.0f, 649.0f },
-            { 910.0f, 573.0f }, { 852.0f, 573.0f }, { 852.0f, 649.0f }, { 910.0f, 649.0f }
+            { 698.0f, 573.0f }, { 754.0f, 573.0f }, { 809.0f, 573.0f },
+            { 698.0f, 649.0f }, { 754.0f, 649.0f }, { 809.0f, 649.0f },
+            { 928.0f, 573.0f }, { 870.0f, 573.0f }, { 870.0f, 649.0f }, { 928.0f, 649.0f }
         }};
         for (std::size_t index = 0; index < effectPositions.size(); ++index)
         {
@@ -1882,7 +1886,7 @@ void BeatScholarLinuxEditor::resized()
     }};
     for (std::size_t index = 0; index < masterPositions.size(); ++index)
     {
-        masterLabels_[index].setFont(bsl::ui::font(11.5f * designScale(getWidth(), getHeight()), true));
+        masterLabels_[index].setFont(bsl::ui::font(14.0f * designScale(getWidth(), getHeight()), true));
         masterLabels_[index].setBounds(designRect(getWidth(), getHeight(),
             masterPositions[index].x - 26.0f, masterPositions[index].y, 52.0f, 14.0f));
         masterControls_[index].setBounds(index == 4
@@ -3077,7 +3081,7 @@ void BeatScholarLinuxEditor::configureModuleControls()
     state.ui.selectedPad = std::min(state.ui.selectedPad, bsl::padCount - 1);
     const auto& pad = state.kit.pads[state.ui.selectedPad];
     const bool randomizerVisible = module_ == Module::randomizer;
-    const bool custom = !pad.customSampleName.empty();
+    const bool custom = !pad.customSampleLayered && !pad.customSamples[0].name.empty();
     const std::array<bool, 4> moduleEnabled { state.randomizer.noteSelectionEnabled,
         state.randomizer.slicingEnabled, state.randomizer.triggeringEnabled, state.randomizer.velocityEnabled };
     for (std::size_t index = 0; index < randomModuleToggles_.size(); ++index)
@@ -3222,17 +3226,20 @@ void BeatScholarLinuxEditor::configureModuleControls()
         return id.empty() ? juce::String(fallback)
                           : factorySampleDisplayName(juce::File(juce::String(id)));
     };
-    layerOne_.setButtonText(!pad.customSampleName.empty()
-                                ? juce::String(pad.customSampleName)
+    layerOne_.setButtonText(!pad.customSamples[0].name.empty()
+                                ? juce::String(pad.customSamples[0].name)
                                 : layerName(pad.factorySampleIds[0], "Layer 1"));
     layerOne_.setComponentID(custom ? "sample.custom" : "sample.layer");
-    layerTwo_.setButtonText(layerName(pad.factorySampleIds[1], "Layer 2"));
+    layerTwo_.setButtonText(!pad.customSamples[1].name.empty()
+                                ? juce::String(pad.customSamples[1].name)
+                                : layerName(pad.factorySampleIds[1], "Layer 2"));
     padSolo_.setToggleState(pad.solo, juce::dontSendNotification);
     padMute_.setToggleState(pad.muted, juce::dontSendNotification);
     oneShot_.setToggleState(pad.oneShot, juce::dontSendNotification);
     mono_.setToggleState(pad.mono, juce::dontSendNotification);
     loadSample_.setVisible(!randomizerVisible);
-    clearSample_.setVisible(!randomizerVisible && !pad.customSampleName.empty());
+    clearSample_.setVisible(!randomizerVisible
+                            && (!pad.customSamples[0].empty() || !pad.customSamples[1].empty()));
     layerOne_.setVisible(!randomizerVisible);
     layerTwo_.setVisible(!randomizerVisible && !custom && state.ui.selectedPad <= 1);
     padSolo_.setVisible(!randomizerVisible);
@@ -3267,8 +3274,15 @@ void BeatScholarLinuxEditor::configureModuleControls()
         pads_[index].setToggleState(selected, juce::dontSendNotification);
         const auto& padState = state.kit.pads[index];
         juce::String tooltip = juce::String(padState.name) + " — " + midiNoteLabel(padState.midiNote, state.ui);
-        if (!padState.customSampleName.empty())
-            tooltip << " — custom: " << padState.customSampleName;
+        if (!padState.customSamples[0].name.empty() || !padState.customSamples[1].name.empty())
+        {
+            tooltip << " — custom: ";
+            if (!padState.customSamples[0].name.empty())
+                tooltip << padState.customSamples[0].name;
+            if (!padState.customSamples[1].name.empty())
+                tooltip << (padState.customSamples[0].name.empty() ? "" : " + ")
+                        << padState.customSamples[1].name;
+        }
         else if (!padState.factorySampleIds[0].empty())
             tooltip << " — " << factorySampleDisplayName(
                 juce::File(juce::String(padState.factorySampleIds[0])));
@@ -3673,7 +3687,8 @@ void BeatScholarLinuxEditor::showPadMenu(std::size_t padIndex)
     const auto& pad = processor_.projectState().kit.pads[padIndex];
     juce::PopupMenu menu;
     menu.addItem(1, "Load custom sample...");
-    menu.addItem(2, "Remove custom sample", !pad.customSampleBase64.empty());
+    menu.addItem(2, "Remove custom sample",
+                 !pad.customSamples[0].base64.empty() || !pad.customSamples[1].base64.empty());
     menu.addItem(8, "Select factory sample" + juce::String(padIndex <= 1 ? " layer 1..." : "..."));
     menu.addItem(9, "Select factory sample layer 2...", padIndex <= 1);
     menu.addSeparator();

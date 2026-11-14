@@ -13,6 +13,15 @@
 
 namespace {
 
+// Native sampler conversion preserves the MIDI midpoint in fourteen-bit space.
+// Both incoming MIDI and internal sequencer notes use this conversion.
+float samplerVelocity(int velocity) noexcept
+{
+    const int expanded = velocity == 127 ? 16383
+        : velocity * 128 + 2 * std::max(0, velocity - 64);
+    return static_cast<float>(expanded) / 16383.0f;
+}
+
 constexpr int totalOutputChannels = 34;
 constexpr std::array<const char*, 4> padBypassNames { "Lpf", "Hpf", "Drive", "Crush" };
 constexpr std::array<const char*, 4> padBypassLabels { "LPF", "HPF", "Drive", "Crush" };
@@ -53,11 +62,14 @@ bool validEmbeddedAudio(const bsl::KitState& kit)
 {
     for (const auto& pad : kit.pads)
     {
-        const auto& encoded = pad.customSampleBase64.value();
-        if (encoded.empty()) continue;
-        juce::MemoryOutputStream bytes;
-        if (!juce::Base64::convertFromBase64(bytes, juce::String(encoded))
-            || !decodeSampleBytes(bytes.getData(), bytes.getDataSize())) return false;
+        for (const auto& sample : pad.customSamples)
+        {
+            const auto& encoded = sample.base64.value();
+            if (encoded.empty()) continue;
+            juce::MemoryOutputStream bytes;
+            if (!juce::Base64::convertFromBase64(bytes, juce::String(encoded))
+                || !decodeSampleBytes(bytes.getData(), bytes.getDataSize())) return false;
+        }
     }
     return true;
 }
@@ -136,7 +148,7 @@ BeatScholarLinuxProcessor::BeatScholarLinuxProcessor()
     // replace an intentionally empty or partially populated restored kit.
     loadFactoryKitIfAvailable();
     syncParametersFromProject();
-    pendingMidiOffFrames_.fill(-1);
+    sequencerPlayback_.reset();
     for (auto& snapshot : stateSnapshots_)
         snapshot = projectEditor_.state();
     const auto& state = projectEditor_.state();
@@ -212,15 +224,24 @@ bool BeatScholarLinuxProcessor::restoreProjectHistory(bool redo)
     struct SampleIdentity
     {
         std::array<std::string, 2> factory;
-        std::string customHash;
-        bool hasCustom = false;
+        std::array<std::string, 2> customHashes;
+        std::array<bool, 2> hasCustom {};
+        std::array<double, 2> customRates {};
+        bool customLayered = false;
     };
     if (redo ? !projectEditor_.canRedo() : !projectEditor_.canUndo()) return false;
     std::array<SampleIdentity, bsl::padCount> samples;
     for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
     {
         const auto& sound = projectEditor_.state().kit.pads[pad];
-        samples[pad] = { sound.factorySampleIds, sound.customSampleSha256, !sound.customSampleBase64.empty() };
+        samples[pad].factory = sound.factorySampleIds;
+        samples[pad].customLayered = sound.customSampleLayered;
+        for (std::size_t layer = 0; layer < 2; ++layer)
+        {
+            samples[pad].customHashes[layer] = sound.customSamples[layer].sha256;
+            samples[pad].hasCustom[layer] = !sound.customSamples[layer].base64.empty();
+            samples[pad].customRates[layer] = sound.customSamples[layer].sampleRate;
+        }
     }
     if (!(redo ? projectEditor_.redo() : projectEditor_.undo())) return false;
     const auto& state = projectEditor_.state();
@@ -237,8 +258,12 @@ bool BeatScholarLinuxProcessor::restoreProjectHistory(bool redo)
             if (parameters == bsl::HistoryParameters::kit)
                 parameters_.getParameter(padBypassId(pad, effect))->setValueNotifyingHost(bypass[effect] ? 1.0f : 0.0f);
         changedSamples[pad] = samples[pad].factory != sound.factorySampleIds
-            || samples[pad].customHash != sound.customSampleSha256
-            || samples[pad].hasCustom != !sound.customSampleBase64.empty();
+            || samples[pad].customLayered != sound.customSampleLayered;
+        for (std::size_t layer = 0; layer < 2; ++layer)
+            changedSamples[pad] = changedSamples[pad]
+                || samples[pad].customRates[layer] != sound.customSamples[layer].sampleRate
+                || samples[pad].customHashes[layer] != sound.customSamples[layer].sha256
+                || samples[pad].hasCustom[layer] != !sound.customSamples[layer].base64.empty();
     }
     if (std::any_of(changedSamples.begin(), changedSamples.end(), [](bool changed) { return changed; }))
     {
@@ -277,7 +302,7 @@ void BeatScholarLinuxProcessor::prepareToPlay(double sampleRate, int maximumExpe
                     std::vector<float>(static_cast<std::size_t>(std::max(1, maximumExpectedSamplesPerBlock))));
     for (auto& peak : padPeaks_) peak.store(0.0f, std::memory_order_relaxed);
     for (auto& peak : outputPeaks_) peak.store(0.0f, std::memory_order_relaxed);
-    pendingMidiOffFrames_.fill(-1);
+    sequencerPlayback_.reset();
     midiWasPlaying_ = false;
     samplerWasEnabled_ = true;
     fallbackSamplePosition_.store(0);
@@ -430,13 +455,6 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         && (frame.absoluteSampleStart != midiExpectedSample_
             || (std::isfinite(frame.quarterNotePosition) && std::isfinite(midiExpectedPpq_)
                 && std::abs(frame.quarterNotePosition - midiExpectedPpq_) > 1.0e-4));
-    if (resetRequested || !midiPlaying || midiDiscontinuity)
-        for (std::size_t note = 0; note < pendingMidiOffFrames_.size(); ++note)
-            if (pendingMidiOffFrames_[note] >= 0)
-            {
-                midi.addEvent(juce::MidiMessage::noteOff(1, static_cast<int>(note)), 0);
-                pendingMidiOffFrames_[note] = -1;
-            }
     midiWasPlaying_ = midiPlaying;
     midiExpectedSample_ = frame.absoluteSampleStart + samplesInBlock;
     midiExpectedPpq_ = frame.quarterNotePosition
@@ -506,12 +524,15 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
             }
             if (!message.isNoteOn() && !message.isNoteOff())
                 continue;
-            if (const auto pad = state.padIndexForMidiNote(static_cast<std::uint8_t>(message.getNoteNumber())))
+            if (const auto pad = state.padIndexForInputMidiNote(static_cast<std::uint8_t>(message.getNoteNumber())))
             {
                 advanceAudio(metadata.samplePosition);
                 if (message.isNoteOn())
-                    audioEngine_.noteOn(static_cast<std::uint8_t>(36 + *pad), message.getFloatVelocity(),
+                {
+                    audioEngine_.noteOn(static_cast<std::uint8_t>(36 + *pad),
+                                        samplerVelocity(message.getVelocity()),
                                         0, true, static_cast<std::uint8_t>(message.getChannel()));
+                }
                 else
                     audioEngine_.noteOff(static_cast<std::uint8_t>(36 + *pad),
                                          static_cast<std::uint8_t>(message.getChannel()));
@@ -533,6 +554,44 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     playAuditions(auditionStart2, auditionCount2);
     auditionFifo_.finishedRead(auditionCount1 + auditionCount2);
 
+    const auto playSequencerFrame = [&](const bsl::TransportFrame& playbackFrame,
+                                         std::size_t patternIndex, int baseOffset) {
+        bsl::PlaybackCursor cursor;
+        while (!cursor.exhausted)
+        {
+            const auto count = sequencerPlayback_.renderBatch(state, playbackFrame, patternIndex,
+                                                               sequencerEvents_, cursor);
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                const auto& event = sequencerEvents_[index].event;
+                const int offset = event.sampleOffset + baseOffset;
+                consumeInputThrough(offset);
+                advanceAudio(offset);
+                if (event.velocity == 0)
+                {
+                    midi.addEvent(juce::MidiMessage::noteOff(1, event.note,
+                        static_cast<juce::uint8>(sequencerEvents_[index].releaseVelocity)), offset);
+                    audioEngine_.sequencerNoteOff(static_cast<std::uint8_t>(36 + event.padIndex),
+                                                  sequencerEvents_[index].laneIndex);
+                }
+                else
+                {
+                    midi.addEvent(juce::MidiMessage::noteOn(1, event.note,
+                        static_cast<juce::uint8>(event.velocity)), offset);
+                    if (state.global.samplerEnabled && event.padIndex < bsl::padCount)
+                        audioEngine_.sequencerNoteOn(static_cast<std::uint8_t>(36 + event.padIndex),
+                                                     samplerVelocity(event.velocity), sequencerEvents_[index].laneIndex);
+                }
+            }
+        }
+    };
+    if (resetRequested || !midiPlaying || midiDiscontinuity)
+    {
+        auto stoppedFrame = frame;
+        stoppedFrame.playing = false;
+        playSequencerFrame(stoppedFrame, 0, 0);
+    }
+
     for (std::size_t segmentIndex = 0; segmentIndex < segmentCount; ++segmentIndex)
     {
         const auto& segment = renderSegments_[segmentIndex];
@@ -548,46 +607,10 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
             const double samplesPerQuarter = segmentFrame.sampleRate * 60.0 / segmentFrame.bpm;
             segmentFrame.quarterNotePosition += static_cast<double>(segment.sampleOffset) / samplesPerQuarter;
         }
-        bsl::SequencerBatchCursor cursor;
-        while (!cursor.exhausted)
-        {
-            const auto count = bsl::Sequencer::renderBatch(state, segmentFrame, patternIndex,
-                                                          sequencerEvents_, cursor);
-            for (std::size_t index = 0; index < count; ++index)
-            {
-                const auto& event = sequencerEvents_[index].event;
-                const int offset = event.sampleOffset + segment.sampleOffset;
-                consumeInputThrough(offset);
-                advanceAudio(offset);
-                auto& pendingOff = pendingMidiOffFrames_[event.note];
-                if (pendingOff >= 0)
-                    midi.addEvent(juce::MidiMessage::noteOff(1, event.note),
-                                  static_cast<int>(std::min<std::int64_t>(pendingOff, offset)));
-                pendingOff = static_cast<std::int64_t>(offset)
-                             + std::max<std::int64_t>(1, static_cast<std::int64_t>(event.gateFrames));
-                midi.addEvent(juce::MidiMessage::noteOn(1, event.note, static_cast<juce::uint8>(event.velocity)), offset);
-                if (state.global.samplerEnabled && event.padIndex < bsl::padCount)
-                    audioEngine_.noteOn(static_cast<std::uint8_t>(36 + event.padIndex),
-                                        static_cast<float>(event.velocity) / 127.0f, event.gateFrames);
-            }
-        }
+        playSequencerFrame(segmentFrame, patternIndex, segment.sampleOffset);
     }
     consumeInputThrough(samplesInBlock);
     advanceAudio(samplesInBlock);
-
-    for (std::size_t note = 0; note < pendingMidiOffFrames_.size(); ++note)
-    {
-        auto& pendingOff = pendingMidiOffFrames_[note];
-        if (pendingOff < 0) continue;
-        if (pendingOff < samplesInBlock)
-        {
-            midi.addEvent(juce::MidiMessage::noteOff(1, static_cast<int>(note)),
-                          static_cast<int>(pendingOff));
-            pendingOff = -1;
-        }
-        else
-            pendingOff -= samplesInBlock;
-    }
 
     const auto publishPeak = [](std::atomic<float>& meter, float peak) {
         if (!std::isfinite(peak)) return;
@@ -712,12 +735,18 @@ bool BeatScholarLinuxProcessor::supportsDecodedSample(std::int64_t frames, unsig
         <= maximumDecodedSampleBytes / (sizeof(float) * storedChannels);
 }
 
-bool BeatScholarLinuxProcessor::installSampleBytes(std::size_t pad, const void* data, std::size_t size)
+bool BeatScholarLinuxProcessor::installSampleBytes(std::size_t pad, const void* data, std::size_t size,
+                                                    double sampleRate,
+                                                    std::optional<std::size_t> layer)
 {
-    if (pad >= bsl::padCount) return false;
+    if (pad >= bsl::padCount || (layer && *layer >= 2)) return false;
     auto sample = decodeSampleBytes(data, size);
     if (!sample) return false;
-    audioEngine_.setPadSample(pad, std::move(*sample));
+    if (sampleRate > 0.0) sample->sampleRate = sampleRate;
+    if (layer)
+        audioEngine_.setPadLayerSample(pad, *layer, std::move(*sample));
+    else
+        audioEngine_.setPadSample(pad, std::move(*sample));
     return true;
 }
 
@@ -739,9 +768,12 @@ juce::Result BeatScholarLinuxProcessor::loadCustomSample(std::size_t pad, const 
         return juce::Result::fail("Could not decode sample audio (128 MiB decoded limit)");
     projectEditor_.checkpoint();
     auto& state = projectEditor_.state().kit.pads[pad];
-    state.customSampleName = file.getFileName().toStdString();
-    state.customSampleSha256 = juce::SHA256(bytes).toHexString().toStdString();
-    state.customSampleBase64 = juce::Base64::toBase64(bytes.getData(), bytes.getSize()).toStdString();
+    state.customSamples[0].sampleRate = 0.0;
+    state.customSamples[0].name = file.getFileName().toStdString();
+    state.customSamples[0].sha256 = juce::SHA256(bytes).toHexString().toStdString();
+    state.customSamples[0].base64 = juce::Base64::toBase64(bytes.getData(), bytes.getSize()).toStdString();
+    state.customSamples[1].clear();
+    state.customSampleLayered = false;
     markProjectDirty();
     publishProjectStateIfNeeded();
     return juce::Result::ok();
@@ -759,9 +791,17 @@ bool BeatScholarLinuxProcessor::setFactorySample(std::size_t pad, std::size_t la
         return false;
     projectEditor_.checkpoint();
     auto& state = projectEditor_.state().kit.pads[pad];
-    state.customSampleName.clear();
-    state.customSampleSha256.clear();
-    state.customSampleBase64.clear();
+    if (state.customSampleLayered)
+    {
+        state.customSamples[layer].clear();
+        if (state.customSamples[0].empty() && state.customSamples[1].empty())
+            state.customSampleLayered = false;
+    }
+    else
+    {
+        state.customSamples[0].clear();
+        state.customSamples[1].clear();
+    }
     state.factorySampleIds[layer] = sampleId.toStdString();
     if (pad > 1)
         state.factorySampleIds[1].clear();
@@ -780,9 +820,9 @@ void BeatScholarLinuxProcessor::clearCustomSample(std::size_t pad)
         return;
     projectEditor_.checkpoint();
     auto& state = projectEditor_.state().kit.pads[pad];
-    state.customSampleName.clear();
-    state.customSampleSha256.clear();
-    state.customSampleBase64.clear();
+    state.customSamples[0].clear();
+    state.customSamples[1].clear();
+    state.customSampleLayered = false;
     suspendProcessing(true);
     loadBuiltInPreviewKit(pad);
     loadFactorySamples(pad);
@@ -926,7 +966,7 @@ void BeatScholarLinuxProcessor::resetPresetToInit()
 
 void BeatScholarLinuxProcessor::resetKitToInit()
 {
-    auto initialized = bsl::ProjectState::makeDefault();
+    auto initialized = bsl::ProjectState::makeMainInit();
     copyParameterValuesToState(projectEditor_.state());
     projectEditor_.checkpoint(bsl::HistoryParameters::kit);
     projectEditor_.state().kit = std::move(initialized.kit);
@@ -985,7 +1025,7 @@ bool BeatScholarLinuxProcessor::saveRandomizerFile(const juce::File& file)
 void BeatScholarLinuxProcessor::loadFactoryKitIfAvailable()
 {
     const auto& firstPad = projectEditor_.state().kit.pads.front();
-    if (!firstPad.factorySampleIds.front().empty() || !firstPad.customSampleBase64.empty())
+    if (!firstPad.factorySampleIds.front().empty() || !firstPad.customSamples[0].base64.empty())
         return;
     const auto kitFile = bsl::dataRoot().getChildFile("Factory/Kits/Acoustic Power/Acoustic Power.json");
     if (!readableStateFile(kitFile))
@@ -1007,10 +1047,14 @@ void BeatScholarLinuxProcessor::loadFactorySamples(std::optional<std::size_t> on
     {
         if (onlyPad && pad != *onlyPad) continue;
         const auto& state = projectEditor_.state().kit.pads[pad];
-        if (!state.customSampleBase64.empty())
+        const bool singleCustom = !state.customSampleLayered
+                                  && !state.customSamples[0].base64.empty();
+        if (singleCustom)
             continue;
         for (std::size_t layer = 0; layer < state.factorySampleIds.size(); ++layer)
         {
+            if (state.customSampleLayered && !state.customSamples[layer].base64.empty())
+                continue;
             const auto& id = state.factorySampleIds[layer];
             if (id.empty())
                 continue;
@@ -1050,16 +1094,28 @@ void BeatScholarLinuxProcessor::loadBuiltInPreviewKit(std::optional<std::size_t>
     for (std::size_t pad = 0; pad < projectEditor_.state().kit.pads.size(); ++pad)
     {
         if (onlyPad && pad != *onlyPad) continue;
-        const auto& encoded = projectEditor_.state().kit.pads[pad].customSampleBase64.value();
-        if (encoded.empty())
-            continue;
-        juce::MemoryBlock bytes;
-        juce::MemoryOutputStream decoded(bytes, false);
-        if (juce::Base64::convertFromBase64(decoded, juce::String(encoded)))
+        const auto& padState = projectEditor_.state().kit.pads[pad];
+        const auto installEmbedded = [&](std::size_t layer, bool replacePad) {
+            const auto& embedded = padState.customSamples[layer];
+            const auto& encoded = embedded.base64.value();
+            if (encoded.empty()) return;
+            juce::MemoryBlock bytes;
+            juce::MemoryOutputStream decoded(bytes, false);
+            if (juce::Base64::convertFromBase64(decoded, juce::String(encoded)))
+            {
+                decoded.flush();
+                installSampleBytes(pad, bytes.getData(), bytes.getSize(), embedded.sampleRate,
+                                   replacePad ? std::optional<std::size_t>{}
+                                              : std::optional<std::size_t>{ layer });
+            }
+        };
+        if (padState.customSampleLayered)
         {
-            decoded.flush();
-            installSampleBytes(pad, bytes.getData(), bytes.getSize());
+            installEmbedded(0, false);
+            installEmbedded(1, false);
         }
+        else
+            installEmbedded(0, true);
     }
 }
 

@@ -115,15 +115,29 @@ juce::var padToVar(const PadState& pad)
     auto result = object();
     set(result, "name", juce::String(pad.name));
     set(result, "factorySampleIds", arrayFromStrings(pad.factorySampleIds));
-    set(result, "customSampleName", juce::String(pad.customSampleName));
-    set(result, "customSampleSha256", juce::String(pad.customSampleSha256));
-    set(result, "customSampleBase64", juce::String(pad.customSampleBase64.value()));
+    const auto& primary = pad.customSamples[0];
+    set(result, "customSampleRate", primary.sampleRate);
+    set(result, "customSampleName", juce::String(primary.name));
+    set(result, "customSampleSha256", juce::String(primary.sha256));
+    set(result, "customSampleBase64", juce::String(primary.base64.value()));
+    if (pad.customSampleLayered || !pad.customSamples[1].empty())
+    {
+        const auto& secondary = pad.customSamples[1];
+        auto encoded = object();
+        set(encoded, "name", juce::String(secondary.name));
+        set(encoded, "sha256", juce::String(secondary.sha256));
+        set(encoded, "base64", juce::String(secondary.base64.value()));
+        set(encoded, "sampleRate", secondary.sampleRate);
+        set(result, "customSampleLayered", true);
+        set(result, "customSampleLayer2", encoded);
+    }
     set(result, "midiNote", static_cast<int>(pad.midiNote));
     set(result, "rootNote", static_cast<int>(pad.rootNote));
     set(result, "layerMix", pad.layerMix);
     set(result, "gain", pad.gain);
     set(result, "pan", pad.pan);
     set(result, "attackSeconds", pad.attackSeconds);
+    set(result, "releaseSeconds", pad.releaseSeconds);
     set(result, "attackNormalized", pad.attackNormalized);
     set(result, "damp", pad.damp);
     set(result, "pitchSemitones", pad.pitchSemitones);
@@ -271,6 +285,38 @@ std::string readString(const juce::var& parent, const char* name, const std::str
     return value.isVoid() ? fallback : value.toString().toStdString();
 }
 
+// Apply after resolving sequencer note identities: multiple pads may share
+// an output pitch without becoming the same drum.
+void readLegacyOutputMapping(const juce::var& sampler, KitState& kit)
+{
+    const auto mapping = get(sampler, "Mapping");
+    // Native presets without a mapping table receive this default output map.
+    // Apply it to note identities, not pad positions, just like an explicit map.
+    if (mapping.isVoid())
+    {
+        constexpr std::array<std::uint8_t, padCount> defaultNotes {
+            36, 38, 37, 39, 42, 46, 49, 51, 57, 55, 43, 41, 54, 40, 53, 56
+        };
+        for (auto& pad : kit.pads)
+            if (pad.midiNote >= 36 && pad.midiNote < 36 + padCount)
+                pad.midiNote = defaultNotes[pad.midiNote - 36];
+        return;
+    }
+    if (const auto* entries = get(mapping, "Mappings").getArray())
+        for (auto& pad : kit.pads)
+        {
+            const int index = static_cast<int>(pad.midiNote);
+            if (index >= entries->size()) continue;
+            const auto& entry = entries->getReference(index);
+            // Captured native note mappings use type 0. Other mapping types
+            // are not represented by PadState's note-only output contract.
+            if (readInt(entry, "type", 0) != 0) continue;
+            const int note = readInt(entry, "number", index);
+            if (note >= 0 && note <= 127)
+                pad.midiNote = static_cast<std::uint8_t>(note);
+        }
+}
+
 std::uint8_t legacyNoteToPadIndex(int note, const KitState& kit)
 {
     const auto matching = std::find_if(kit.pads.begin(), kit.pads.end(), [note](const PadState& pad) {
@@ -411,9 +457,22 @@ bool readPad(const juce::var& encoded, PadState& pad, int version)
     if (const auto* ids = get(encoded, "factorySampleIds").getArray())
         for (int index = 0; index < std::min(2, ids->size()); ++index)
             pad.factorySampleIds[static_cast<std::size_t>(index)] = ids->getReference(index).toString().toStdString();
-    pad.customSampleName = readString(encoded, "customSampleName");
-    pad.customSampleSha256 = readString(encoded, "customSampleSha256");
-    pad.customSampleBase64 = readString(encoded, "customSampleBase64");
+    auto& primary = pad.customSamples[0];
+    primary.sampleRate = readDouble(encoded, "customSampleRate", 0.0);
+    primary.name = readString(encoded, "customSampleName");
+    primary.sha256 = readString(encoded, "customSampleSha256");
+    primary.base64 = readString(encoded, "customSampleBase64");
+    pad.customSampleLayered = readBool(encoded, "customSampleLayered", false);
+    const auto secondary = get(encoded, "customSampleLayer2");
+    if (!secondary.isVoid())
+    {
+        if (!secondary.isObject()) return false;
+        auto& sample = pad.customSamples[1];
+        sample.name = readString(secondary, "name");
+        sample.sha256 = readString(secondary, "sha256");
+        sample.base64 = readString(secondary, "base64");
+        sample.sampleRate = readDouble(secondary, "sampleRate", 0.0);
+    }
     const int midiNote = readInt(encoded, version == 1 ? "note" : "midiNote", pad.midiNote);
     const int rootNote = readInt(encoded, "rootNote", pad.rootNote);
     if (midiNote < 0 || midiNote > 127 || rootNote < 0 || rootNote > 127)
@@ -424,6 +483,7 @@ bool readPad(const juce::var& encoded, PadState& pad, int version)
     pad.gain = readFloat(encoded, "gain", pad.gain);
     pad.pan = readFloat(encoded, "pan", pad.pan);
     pad.attackSeconds = readFloat(encoded, "attackSeconds", pad.attackSeconds);
+    pad.releaseSeconds = readFloat(encoded, "releaseSeconds", pad.releaseSeconds);
     pad.attackNormalized = readFloat(encoded, "attackNormalized", pad.attackNormalized);
     pad.damp = readFloat(encoded, "damp", pad.damp);
     pad.pitchSemitones = readFloat(encoded, "pitchSemitones", pad.pitchSemitones);
@@ -718,13 +778,37 @@ float legacyHighPass(const juce::var& params, float fallback)
     return bsl::normalizedPadHighPassCutoff(frequency);
 }
 
-void readLegacyPad(const juce::var& sourcePad, PadState& pad)
+bool decodeCanonicalBase64(const std::string&, juce::MemoryBlock&);
+
+bool readLegacyPad(const juce::var& sourcePad, PadState& pad)
 {
     pad.name = readString(sourcePad, "name", pad.name);
-    if (const auto* layers = get(sourcePad, "Layers").getArray())
+    const auto* layers = get(sourcePad, "Layers").getArray();
+    if (layers != nullptr && layers->size() > 2)
+        return false;
+    if (layers != nullptr)
         for (int layer = 0; layer < std::min(2, layers->size()); ++layer)
             pad.factorySampleIds[static_cast<std::size_t>(layer)] =
                 readString(get(get(layers->getReference(layer), "Sample"), "Binary"), "name");
+
+    bool hasEmbedded = false;
+    if (layers != nullptr)
+        for (int layer = 0; layer < layers->size(); ++layer)
+        {
+            const auto embedded = get(get(layers->getReference(layer), "Sample"), "FileBuffer");
+            if (embedded.isVoid()) continue;
+            auto& sample = pad.customSamples[static_cast<std::size_t>(layer)];
+            sample.name = readString(embedded, "name");
+            sample.base64 = readString(embedded, "data");
+            sample.sampleRate = readDouble(embedded, "sampleRate", 0.0);
+            if (!std::isfinite(sample.sampleRate) || sample.sampleRate <= 0.0)
+                return false;
+            juce::MemoryBlock bytes;
+            if (!decodeCanonicalBase64(sample.base64.value(), bytes)) return false;
+            sample.sha256 = juce::SHA256(bytes).toHexString().toStdString();
+            hasEmbedded = true;
+        }
+    pad.customSampleLayered = hasEmbedded && layers != nullptr && layers->size() > 1;
 
     const auto params = get(sourcePad, "Params");
     pad.layerMix = percentOrUnit(get(params, "LayerMix"), pad.layerMix);
@@ -734,6 +818,7 @@ void readLegacyPad(const juce::var& sourcePad, PadState& pad)
     pad.damp = percentOrUnit(get(params, "Length"), 0.0f);
     pad.attackNormalized = percentOrUnit(get(get(params, "ADSR"), "Attack"), 0.0f);
     pad.attackSeconds = pad.attackNormalized;
+    pad.releaseSeconds = legacyNumber(get(get(params, "ADSR"), "Release"), 0.03f);
     pad.gain = legacyLinearGain(get(params, "Volume"), pad.gain);
     const auto pitch = get(params, "Pitch");
     const auto configuredNote = get(params, "Note").isVoid() ? get(sourcePad, "Note")
@@ -750,7 +835,8 @@ void readLegacyPad(const juce::var& sourcePad, PadState& pad)
     pad.resonance = legacyResonance(get(filter, "Reso"), pad.resonance);
     const auto drive = get(params, "Drive");
     const auto driveEnable = get(get(params, "Enable"), "DriveEnable");
-    pad.driveEnabled = legacyEnabled(driveEnable.isVoid() ? get(drive, "Enable") : driveEnable, true);
+    // Native factory loading ignores the obsolete Drive.Enable and defaults to On.
+    pad.driveEnabled = legacyEnabled(driveEnable, true);
     pad.driveGainDb = std::clamp(legacyNumber(get(drive, "Gain"), 0.0f), 0.0f, 24.0f);
     pad.nativeDriveInsert = true;
     pad.compression = percentOrUnit(get(params, "Compressor"), 0.0f);
@@ -763,6 +849,7 @@ void readLegacyPad(const juce::var& sourcePad, PadState& pad)
     const auto distortionSend = get(aux, "Aux3");
     pad.independentDistortion = true;
     pad.distortionMix = percentOrUnit(distortionSend, 0.0f);
+    return true;
 }
 
 void readLegacyAuxiliaryConfiguration(const juce::var& params, KitState& kit)
@@ -871,29 +958,30 @@ bool validateAndNormalizeEmbedded(KitState& kit, int version)
     std::size_t totalBytes = 0;
     for (auto& pad : kit.pads)
     {
-        const bool hasAny = !pad.customSampleName.empty() || !pad.customSampleSha256.empty()
-                            || !pad.customSampleBase64.empty();
-        if (!hasAny)
-            continue;
-        if (pad.customSampleName.empty() || pad.customSampleSha256.empty()
-            || pad.customSampleBase64.empty())
+        if (!pad.customSampleLayered && !pad.customSamples[1].empty())
             return false;
-
-        juce::MemoryBlock decoded;
-        if (!decodeCanonicalBase64(pad.customSampleBase64.value(), decoded))
+        for (auto& sample : pad.customSamples)
         {
-            if (version != 1
-                || !decodeLegacyJuceBase64(pad.customSampleBase64.value(),
-                                           maximumEmbeddedSampleBytes - totalBytes, decoded))
+            if (sample.empty()) continue;
+            if (sample.name.empty() || sample.sha256.empty() || sample.base64.empty())
                 return false;
-            pad.customSampleBase64 = juce::Base64::toBase64(decoded.getData(), decoded.getSize())
-                                         .toStdString();
+
+            juce::MemoryBlock decoded;
+            if (!decodeCanonicalBase64(sample.base64.value(), decoded))
+            {
+                if (version != 1
+                    || !decodeLegacyJuceBase64(sample.base64.value(),
+                                               maximumEmbeddedSampleBytes - totalBytes, decoded))
+                    return false;
+                sample.base64 = juce::Base64::toBase64(decoded.getData(), decoded.getSize())
+                                    .toStdString();
+            }
+            if (!fitsEmbeddedSampleBudget(totalBytes, decoded.getSize()))
+                return false;
+            totalBytes += decoded.getSize();
+            if (juce::SHA256(decoded).toHexString().toStdString() != sample.sha256)
+                return false;
         }
-        if (!fitsEmbeddedSampleBudget(totalBytes, decoded.getSize()))
-            return false;
-        totalBytes += decoded.getSize();
-        if (juce::SHA256(decoded).toHexString().toStdString() != pad.customSampleSha256)
-            return false;
     }
     return true;
 }
@@ -949,18 +1037,21 @@ bool canReplaceEmbeddedSample(const KitState& kit, std::size_t replacementPad,
     for (std::size_t pad = 0; pad < kit.pads.size(); ++pad)
     {
         if (pad == replacementPad) continue;
-        const auto& encoded = kit.pads[pad].customSampleBase64.value();
-        if (encoded.empty()) continue;
-        // Active states use canonical Base64; full decoding and SHA validation
-        // remain the codec's responsibility. Count bytes without another copy.
-        if (encoded.size() % 4 != 0
-            || encoded.size() > ((maximumEmbeddedSampleBytes + 2u) / 3u) * 4u)
-            return false;
-        const auto padding = static_cast<std::size_t>(encoded.back() == '=')
-                           + static_cast<std::size_t>(encoded[encoded.size() - 2] == '=');
-        const auto bytes = encoded.size() / 4u * 3u - padding;
-        if (!fitsEmbeddedSampleBudget(retained, bytes)) return false;
-        retained += bytes;
+        for (const auto& sample : kit.pads[pad].customSamples)
+        {
+            const auto& encoded = sample.base64.value();
+            if (encoded.empty()) continue;
+            // Active states use canonical Base64; full decoding and SHA validation
+            // remain the codec's responsibility. Count bytes without another copy.
+            if (encoded.size() % 4 != 0
+                || encoded.size() > ((maximumEmbeddedSampleBytes + 2u) / 3u) * 4u)
+                return false;
+            const auto padding = static_cast<std::size_t>(encoded.back() == '=')
+                               + static_cast<std::size_t>(encoded[encoded.size() - 2] == '=');
+            const auto bytes = encoded.size() / 4u * 3u - padding;
+            if (!fitsEmbeddedSampleBudget(retained, bytes)) return false;
+            retained += bytes;
+        }
     }
     return fitsEmbeddedSampleBudget(retained, incomingBytes);
 }
@@ -1037,7 +1128,7 @@ bool decodeKitJson(const juce::String& json, KitState& kit, MasterState& master)
     auto validation = ProjectState::makeDefault();
     validation.kit = candidateKit;
     validation.master = candidateMaster;
-    if (!validation.isValid())
+    if (!validateContent(validation))
         return false;
     kit = std::move(candidateKit);
     master = candidateMaster;
@@ -1160,7 +1251,7 @@ bool importLegacyPresetJson(const juce::String& json, ProjectState& destination)
         const auto& sourcePattern = patterns->getReference(patternIndex);
         PatternState pattern;
         pattern.name = readString(sourcePattern, "name", "Pattern " + std::to_string(patternIndex + 1));
-        pattern.triggerNote = static_cast<std::uint8_t>(std::min(127, 12 + patternIndex));
+        pattern.triggerNote = static_cast<std::uint8_t>(std::min(127, 60 + patternIndex));
         const auto events = get(sourcePattern, "Events");
         const auto* bars = get(get(events, "LoopTime"), "Bars").getArray();
         const auto* lanes = get(events, "Sequences").getArray();
@@ -1220,7 +1311,7 @@ bool importLegacyPresetJson(const juce::String& json, ProjectState& destination)
         {
             const auto& sourcePad = pads->getReference(index);
             auto& pad = candidate.kit.pads[static_cast<std::size_t>(index)];
-            readLegacyPad(sourcePad, pad);
+            if (!readLegacyPad(sourcePad, pad)) return false;
         }
     }
     readLegacyMaster(get(sampler, "Params"), candidate.master);
@@ -1232,7 +1323,8 @@ bool importLegacyPresetJson(const juce::String& json, ProjectState& destination)
                 for (auto& slice : beat.slices)
                     slice.padIndex = legacyNoteToPadIndex(slice.padIndex, candidate.kit);
 
-    if (!candidate.normalizePatternTriggerNotes() || !candidate.isValid())
+    readLegacyOutputMapping(sampler, candidate.kit);
+    if (!candidate.normalizePatternTriggerNotes() || !validateContent(candidate))
         return false;
     destination = std::move(candidate);
     return true;
@@ -1250,14 +1342,15 @@ bool importLegacyKitJson(const juce::String& json, KitState& kit, MasterState& m
     {
         const auto& sourcePad = pads->getReference(index);
         auto& pad = candidateKit.pads[static_cast<std::size_t>(index)];
-        readLegacyPad(sourcePad, pad);
+        if (!readLegacyPad(sourcePad, pad)) return false;
     }
+    readLegacyOutputMapping(root, candidateKit);
     readLegacyMaster(get(root, "Params"), candidateMaster);
     readLegacyAuxiliaryConfiguration(get(root, "Params"), candidateKit);
     auto validation = ProjectState::makeDefault();
     validation.kit = candidateKit;
     validation.master = candidateMaster;
-    if (!validation.isValid())
+    if (!validateContent(validation))
         return false;
     kit = std::move(candidateKit);
     masterState = candidateMaster;

@@ -24,6 +24,7 @@ add_library(beat_scholar_core
     src/core/ProjectEditor.cpp
     src/core/Randomizer.cpp
     src/core/Sequencer.cpp
+    src/core/SequencerPlayback.cpp
     src/audio/AudioEngine.cpp
     src/audio/AuxDistortion.cpp
 )

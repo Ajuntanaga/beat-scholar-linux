@@ -1,5 +1,7 @@
+#include "native_dense_timing.h"
 #include "core/PatternScheduler.h"
 #include "core/Sequencer.h"
+#include "core/SequencerPlayback.h"
 
 #include <array>
 #include <cmath>
@@ -29,7 +31,7 @@ bsl::SchedulerTransport transport(std::int64_t sampleStart,
     return { 48000.0, 120.0, sampleStart, blockSize, true, ppq };
 }
 
-void testAllQuantizationModesUseTheNextBoundary()
+void testUnquantizedTriggerUsesEventOffset()
 {
     struct Case
     {
@@ -38,12 +40,7 @@ void testAllQuantizationModesUseTheNextBoundary()
     };
     constexpr std::array cases {
         Case { bsl::PatternQuantization::off, 100 },
-        Case { bsl::PatternQuantization::eighth, 12000 },
-        Case { bsl::PatternQuantization::quarter, 24000 },
-        Case { bsl::PatternQuantization::half, 48000 },
-        Case { bsl::PatternQuantization::whole, 96000 },
-        Case { static_cast<bsl::PatternQuantization>(5), 6000 },
-        Case { static_cast<bsl::PatternQuantization>(6), 3000 },
+        // Quantized callback timing is covered by captured fixtures below.
     };
 
     for (const auto& test : cases)
@@ -76,8 +73,8 @@ void testHostPpqOverridesSampleTimeline()
         bsl::PatternTrigger { 0, 1, bsl::PatternQuantization::quarter }
     };
     std::array<bsl::PatternRenderSegment, 3> segments {};
-    const auto count = scheduler.planBlock(transport(999999, 20000, 3.5), triggers, segments);
-    check(count == 2 && segments[1].sampleOffset == 12000,
+    const auto count = scheduler.planBlock(transport(999999, 20000, 3.1), triggers, segments);
+    check(count == 1 && segments[0].patternId == 0 && segments[0].sampleOffset == 0,
           "host PPQ, not absolute samples, chooses the boundary when PPQ is available");
 }
 
@@ -89,7 +86,7 @@ void testAbsoluteSampleAndBpmFallbackChoosesBoundary()
     };
     std::array<bsl::PatternRenderSegment, 3> segments {};
     const auto count = scheduler.planBlock(transport(12000, 20000), triggers, segments);
-    check(count == 2 && segments[1].sampleOffset == 12000,
+    check(count == 1 && segments[0].patternId == 1 && segments[0].sampleOffset == 0,
           "absolute samples and BPM provide the grid when host PPQ is absent");
 }
 
@@ -101,36 +98,37 @@ void testTempoChangesPreserveTheQuantizationGrid()
             {
                 bsl::PatternScheduler scheduler(0);
                 std::array<bsl::PatternRenderSegment, 4> segments {};
-                // Restart a pattern halfway through the first block. The
-                // quantization grid must keep transport phase, not pattern phase.
                 const std::array initialTriggers {
                     bsl::PatternTrigger { 6000, 3, bsl::PatternQuantization::off },
                     bsl::PatternTrigger { 6001, 1, bsl::PatternQuantization::quarter },
                 };
-                auto first = transport(0, 12000);
-                if (hostPpq)
-                    first.quarterNotePosition = 0.0;
+                // Start off-grid so the callback-level trigger remains pending.
+                auto first = transport(2400, 12000);
+                if (hostPpq) first.quarterNotePosition = 0.1;
                 scheduler.planBlock(first,
                     std::span(initialTriggers).first(queuedBeforeChange ? 2 : 1), segments);
                 check(scheduler.activePattern() == 3,
-                      "quantized trigger remains queued during the initial half beat");
+                      "quantized trigger remains queued before the next beat");
 
-                auto second = transport(12000, 40000);
+                auto second = transport(14400, 1000);
                 second.bpm = nextBpm;
-                if (hostPpq)
-                    second.quarterNotePosition = 0.5;
+                if (hostPpq) second.quarterNotePosition = 0.6;
                 const std::array trigger {
                     bsl::PatternTrigger { 0, 1, bsl::PatternQuantization::quarter }
                 };
-                const auto count = scheduler.planBlock(second,
+                scheduler.planBlock(second,
                     std::span(trigger).first(queuedBeforeChange ? 0 : 1), segments);
-                const auto expectedOffset = static_cast<int>(48000.0 * 60.0 / nextBpm * 0.5);
-                check(count == 2 && segments[1].patternId == 1
-                          && segments[1].sampleOffset == expectedOffset,
-                      "new and queued triggers retain the next beat across a tempo change");
-                check(count == 2 && std::abs(segments[0].phaseQuarterNotes - 0.25) < 1.0e-12
-                          && std::abs(segments[1].phaseQuarterNotes) < 1.0e-12,
-                      "pattern-relative phase stays separate from the transport grid");
+                check(scheduler.activePattern() == 3,
+                      "tempo change does not consume a boundary beyond this callback");
+                auto third = transport(15400, 20000);
+                third.bpm = nextBpm;
+                if (hostPpq)
+                    third.quarterNotePosition = 0.6 + 1000.0 / (48000.0 * 60.0 / nextBpm);
+                const auto count = scheduler.planBlock(third, {}, segments);
+                check(count == 1 && segments[0].patternId == 1
+                          && segments[0].sampleOffset == 0
+                          && std::abs(segments[0].phaseQuarterNotes) < 1.0e-12,
+                      "new and queued triggers switch at the callback containing the next beat");
             }
 }
 
@@ -143,8 +141,8 @@ void testLatestTriggerForOneBoundaryWins()
     };
     std::array<bsl::PatternRenderSegment, 4> segments {};
     const auto count = scheduler.planBlock(transport(0, 30000, 0.0), triggers, segments);
-    check(count == 2, "same-boundary triggers produce one change");
-    check(count == 2 && segments[1].sampleOffset == 24000 && segments[1].patternId == 2,
+    check(count == 1, "same-boundary triggers produce one change");
+    check(count == 1 && segments[0].sampleOffset == 0 && segments[0].patternId == 2,
           "last trigger targeting the boundary wins");
 }
 
@@ -159,8 +157,8 @@ void testBoundedCollectorRetainsTheLatestSameBoundaryTrigger()
     std::array<bsl::PatternRenderSegment, 3> segments {};
     const auto count = scheduler.planBlock(
         transport(0, 30000, 0.0), collector.triggers(), segments);
-    check(count == 2 && segments[1].sampleOffset == 24000
-              && segments[1].patternId == 65,
+    check(count == 1 && segments[0].sampleOffset == 0
+              && segments[0].patternId == 65,
           "bounded process-block collection retains the 65th and latest same-boundary trigger");
 }
 
@@ -173,7 +171,7 @@ void testMidBlockSplitAdvancesOldPhaseAndZerosNewPhase()
     check(count == 1, "initial block renders one pattern");
 
     const std::array trigger {
-        bsl::PatternTrigger { 1000, 4, bsl::PatternQuantization::eighth }
+        bsl::PatternTrigger { 6000, 4, bsl::PatternQuantization::off }
     };
     count = scheduler.planBlock(transport(6000, 10000, 0.25), trigger, segments);
     check(count == 2, "mid-block boundary splits old and new patterns");
@@ -226,7 +224,7 @@ void testSegmentedRenderingEmitsNewPatternOnlyAtBoundary()
             events[eventCount + event].sampleOffset += segments[index].sampleOffset;
         eventCount += count;
     }
-    check(eventCount == 1 && events[0].sampleOffset == 24000 && events[0].padIndex == 1,
+    check(eventCount == 1 && events[0].sampleOffset == 0 && events[0].padIndex == 1,
           "segmented render emits the new pattern at its boundary and never before it");
 }
 
@@ -237,12 +235,12 @@ void testPendingTriggerSurvivesUntilFutureBlock()
     const std::array trigger {
         bsl::PatternTrigger { 1, 1, bsl::PatternQuantization::quarter }
     };
-    auto count = scheduler.planBlock(transport(0, 12000, 0.0), trigger, segments);
+    auto count = scheduler.planBlock(transport(2400, 12000, 0.1), trigger, segments);
     check(count == 1 && segments[0].patternId == 0,
           "future boundary does not activate in an earlier block");
     const std::array noTriggers = std::array<bsl::PatternTrigger, 0> {};
-    count = scheduler.planBlock(transport(12000, 16000, 0.5), noTriggers, segments);
-    check(count == 2 && segments[1].sampleOffset == 12000 && segments[1].patternId == 1,
+    count = scheduler.planBlock(transport(14400, 16000, 0.6), noTriggers, segments);
+    check(count == 1 && segments[0].sampleOffset == 0 && segments[0].patternId == 1,
           "queued trigger activates in the block containing its boundary");
 }
 
@@ -253,7 +251,7 @@ void testStopClearsPendingAndPhaseState()
     const std::array trigger {
         bsl::PatternTrigger { 100, 1, bsl::PatternQuantization::whole }
     };
-    scheduler.planBlock(transport(0, 1000, 0.0), trigger, segments);
+    scheduler.planBlock(transport(0, 1000, 0.1), trigger, segments);
     auto stopped = transport(1000, 1000, 0.041666666666666664);
     stopped.playing = false;
     check(scheduler.planBlock(stopped, {}, segments) == 0,
@@ -271,7 +269,7 @@ void testTransportDiscontinuityClearsPendingAndPhaseState()
     const std::array trigger {
         bsl::PatternTrigger { 100, 1, bsl::PatternQuantization::whole }
     };
-    scheduler.planBlock(transport(0, 1000, 0.0), trigger, segments);
+    scheduler.planBlock(transport(0, 1000, 0.1), trigger, segments);
     const auto count = scheduler.planBlock(transport(50000, 1000, 8.0), {}, segments);
     check(count == 1 && segments[0].patternId == 0
               && std::abs(segments[0].phaseQuarterNotes - 8.0) < 1.0e-12,
@@ -335,6 +333,246 @@ void testHostStartAndSeekPhaseLockThePattern()
               && std::abs(segments[0].phaseQuarterNotes) < 1.0e-12,
           "explicit pattern trigger restarts its pattern at phase zero");
 }
+void testHostPhaseDoesNotAccumulateCallbackDrift()
+{
+    bsl::PatternScheduler scheduler(0);
+    std::array<bsl::PatternRenderSegment, 8> segments {};
+    double origin = 0.0;
+    bool exact = true;
+    for (int block = 0; block < 1000; ++block)
+    {
+        auto frame = transport(block * 64, 64, static_cast<double>(block * 64) / 48000.0 * 100.0 / 60.0);
+        frame.bpm = 100.0;
+        const std::array trigger { bsl::PatternTrigger { 0, 1, bsl::PatternQuantization::off } };
+        const bool switchPattern = block == 127;
+        if (switchPattern) origin = frame.quarterNotePosition;
+        const auto count = scheduler.planBlock(frame,
+            switchPattern ? std::span<const bsl::PatternTrigger>(trigger) : std::span<const bsl::PatternTrigger>(), segments);
+        exact = exact && count == 1 && segments[0].phaseQuarterNotes == frame.quarterNotePosition - origin;
+    }
+    check(exact, "host phase uses a fixed pattern origin without callback accumulation drift");
+}
+
+void testCapturedDenseTiming()
+{
+    for (int block : {128, 16384})
+    {
+        auto state = bsl::ProjectState::makeDefault();
+        auto& pattern = state.patterns[0];
+        pattern.bars = {bsl::BarState::make(1, 16)};
+        pattern.lanes.assign(1, bsl::LaneState::make(1));
+        pattern.lanes[0].beats[0] = bsl::BeatState::withSubdivision(45, 0, .5f);
+        bsl::SequencerPlayback playback;
+        std::vector<int> observed;
+        std::array<bsl::PlaybackEvent, 16> events;
+        for (int base = 0; base < 16384; base += block)
+        {
+            bsl::TransportFrame frame {48000.0, 300.0, base, block, true};
+            bsl::PlaybackCursor cursor;
+            while (!cursor.exhausted)
+            {
+                auto count = playback.renderBatch(state, frame, 0, events, cursor);
+                for (std::size_t i = 0; i < count; ++i)
+                {
+                    check((events[i].event.velocity != 0) == (observed.size() % 2 == 0),
+                        "dense native event polarity matches");
+                    observed.push_back(base + events[i].event.sampleOffset);
+                }
+            }
+        }
+        const auto& expected = block == 128 ? nativeDense128 : nativeDense16384;
+        check(std::equal(observed.begin(), observed.end(), expected.begin(), expected.end()),
+            "dense native onset and release samples match captured callback size");
+    }
+}
+
+void testCapturedCallbackReleaseLifecycle()
+{
+    struct Case { double swing; int quantum; std::array<int, 6> offsets; };
+    const std::array cases {
+        Case { -200, 64, { 0, 705, 754, 7264, 7510, 28168 } },
+        Case { -100, 64, { 0, 3073, 3200, 12545, 12800, 28417 } },
+        Case { 50, 64, { 0, 13487, 13673, 21728, 21877, 28669 } },
+        Case { 100, 64, { 0, 18102, 18254, 24237, 24339, 28720 } },
+        Case { 150, 64, { 0, 21632, 21743, 25895, 25962, 28750 } },
+        Case { 200, 64, { 0, 24274, 24349, 27028, 27069, 28770 } },
+        Case { 150, 128, { 0, 21743, 21743, 25895, 25962, 28750 } },
+    };
+    for (const auto& test : cases)
+        for (const std::size_t capacity : { 1U, 16U })
+        {
+            auto state = bsl::ProjectState::makeDefault();
+            for (auto& lane : state.patterns[0].lanes)
+                for (auto& beat : lane.beats)
+                    for (auto& slice : beat.slices) slice.enabled = false;
+            state.patterns[0].lanes[0].beats[0].slices.assign(3, { 0, 1.0f, true });
+            state.global.swingPercent = test.swing;
+            state.global.swingReference = bsl::SwingReference::quarter;
+            bsl::SequencerPlayback playback;
+            std::vector<std::pair<int, bool>> observed;
+            std::array<bsl::PlaybackEvent, 16> events;
+            for (int base = 0; base < 28800; base += test.quantum)
+            {
+                bsl::TransportFrame frame { 48000.0, 100.0, base, test.quantum, true };
+                frame.quarterNotePosition = static_cast<double>(base) / 48000.0 * 100.0 / 60.0;
+                frame.patternPhaseQuarterNotes = frame.quarterNotePosition;
+                bsl::PlaybackCursor cursor;
+                while (!cursor.exhausted)
+                {
+                    const auto count = playback.renderBatch(state, frame, 0,
+                        std::span(events).first(capacity), cursor);
+                    for (std::size_t i = 0; i < count; ++i)
+                        observed.emplace_back(base + events[i].event.sampleOffset, events[i].event.velocity == 0);
+                }
+            }
+            bool matches = observed.size() == test.offsets.size();
+            for (std::size_t i = 0; i < std::min(observed.size(), test.offsets.size()); ++i)
+                matches = matches && observed[i].first == test.offsets[i] && observed[i].second == (i % 2 == 1);
+            check(matches, "captured native triplet lifecycle matches at both callback and batch sizes");
+            if (!matches)
+            {
+                std::cerr << "swing=" << test.swing << " block=" << test.quantum << " batch=" << capacity << ':';
+                for (const auto& event : observed) std::cerr << ' ' << event.first << (event.second ? "off" : "on");
+                std::cerr << '\n';
+            }
+        }
+}
+
+void testCapturedOverlappingLanes()
+{
+    for (int shortLane : { 0, 1 })
+        for (std::size_t capacity : { 1U, 16U })
+        {
+            auto state = bsl::ProjectState::makeDefault();
+            for (auto& lane : state.patterns[0].lanes)
+                for (auto& beat : lane.beats)
+                    for (auto& slice : beat.slices) slice.enabled = false;
+            for (int lane = 0; lane < 2; ++lane)
+            {
+                auto& slices = state.patterns[0].lanes[lane].beats[0].slices;
+                slices.assign(lane == shortLane ? 4 : 1, { 0, 0.75f, false });
+                slices[0].enabled = true;
+            }
+            bsl::SequencerPlayback playback;
+            std::vector<std::pair<int, bool>> observed;
+            std::array<bsl::PlaybackEvent, 16> events;
+            for (int base = 0; base < 28800; base += 64)
+            {
+                bsl::TransportFrame frame { 48000.0, 100.0, base, 64, true };
+                frame.quarterNotePosition = static_cast<double>(base) / 48000.0 * 100.0 / 60.0;
+                frame.patternPhaseQuarterNotes = frame.quarterNotePosition;
+                bsl::PlaybackCursor cursor;
+                while (!cursor.exhausted)
+                {
+                    auto count = playback.renderBatch(state, frame, 0, std::span(events).first(capacity), cursor);
+                    for (std::size_t i = 0; i < count; ++i)
+                    {
+                        observed.emplace_back(base + events[i].event.sampleOffset, events[i].event.velocity == 0);
+                        if (events[i].event.velocity == 0)
+                            check(events[i].releaseVelocity == 95, "native release retains onset velocity");
+                    }
+                }
+            }
+            const std::vector<std::pair<int, bool>> expected {{0,false},{0,false},{7056,true},{28224,true}};
+            check(observed == expected, "native overlapping lanes release independently at either batch capacity");
+        }
+}
+
+void testCapturedWholePatternCallbackTiming()
+{
+    for (const auto block : {64, 257, 1024})
+        for (const auto input : {1001, 10001})
+        {
+            if (input == 10001 && block != 1024)
+                continue;
+            bsl::PatternScheduler scheduler(0);
+            std::array<bsl::PatternRenderSegment, 3> segments {};
+            int switched = -1;
+            for (int cursor = 0; cursor < 84000; cursor += block)
+            {
+                auto frame = transport(cursor, block,
+                    static_cast<double>(cursor) / 48000.0 * 140.0 / 60.0);
+                frame.bpm = 140.0;
+                const std::array trigger { bsl::PatternTrigger {
+                    input - cursor, 1, bsl::PatternQuantization::whole } };
+                const bool receive = input >= cursor && input < cursor + block;
+                const auto count = scheduler.planBlock(frame,
+                    receive ? std::span<const bsl::PatternTrigger>(trigger)
+                            : std::span<const bsl::PatternTrigger>(), segments);
+                for (std::size_t i = 0; i < count; ++i)
+                    if (switched < 0 && segments[i].patternId == 1)
+                        switched = cursor + segments[i].sampleOffset;
+            }
+            const int expected = input < block ? 0 : (82285 / block) * block;
+            check(switched == expected,
+                  "captured whole-pattern switch uses the containing callback start");
+        }
+}
+
+void testCapturedQuarterPatternCallbackTiming()
+{
+    for (const auto block : {1024})
+        for (const auto input : {1001, 10001})
+        {
+            if (input == 10001 && block != 1024)
+                continue;
+            bsl::PatternScheduler scheduler(0);
+            std::array<bsl::PatternRenderSegment, 3> segments {};
+            int switched = -1;
+            for (int cursor = 0; cursor < 84000; cursor += block)
+            {
+                auto frame = transport(cursor, block,
+                    static_cast<double>(cursor) / 48000.0 * 140.0 / 60.0);
+                frame.bpm = 140.0;
+                const std::array trigger { bsl::PatternTrigger {
+                    input - cursor, 1, bsl::PatternQuantization::quarter } };
+                const bool receive = input >= cursor && input < cursor + block;
+                const auto count = scheduler.planBlock(frame,
+                    receive ? std::span<const bsl::PatternTrigger>(trigger)
+                            : std::span<const bsl::PatternTrigger>(), segments);
+                for (std::size_t i = 0; i < count; ++i)
+                    if (switched < 0 && segments[i].patternId == 1)
+                        switched = cursor + segments[i].sampleOffset;
+            }
+            const int expected = input < block ? 0 : 20480;
+            check(switched == expected,
+                  "captured quarter-pattern switch uses the containing callback start");
+        }
+}
+
+void testCapturedRemainingPatternCallbackTiming()
+{
+    for (const auto mode : {bsl::PatternQuantization::eighth, bsl::PatternQuantization::half,
+                            bsl::PatternQuantization::sixteenth, bsl::PatternQuantization::thirtySecond})
+      for (const auto block : {1024})
+        for (const auto input : {10001})
+        {
+            if (input == 10001 && block != 1024)
+                continue;
+            bsl::PatternScheduler scheduler(0);
+            std::array<bsl::PatternRenderSegment, 3> segments {};
+            int switched = -1;
+            for (int cursor = 0; cursor < 84000; cursor += block)
+            {
+                auto frame = transport(cursor, block,
+                    static_cast<double>(cursor) / 48000.0 * 140.0 / 60.0);
+                frame.bpm = 140.0;
+                const std::array trigger { bsl::PatternTrigger {
+                    input - cursor, 1, mode } };
+                const bool receive = input >= cursor && input < cursor + block;
+                const auto count = scheduler.planBlock(frame,
+                    receive ? std::span<const bsl::PatternTrigger>(trigger)
+                            : std::span<const bsl::PatternTrigger>(), segments);
+                for (std::size_t i = 0; i < count; ++i)
+                    if (switched < 0 && segments[i].patternId == 1)
+                        switched = cursor + segments[i].sampleOffset;
+            }
+            const int expected = mode == bsl::PatternQuantization::half ? 40960 : 10240;
+            check(switched == expected,
+                  "captured remaining quantized-pattern switch uses the containing callback start");
+        }
+}
+
 void testAtomicResetRequestIsConsumedExactlyOnce()
 {
     bsl::AudioThreadResetRequest request;
@@ -349,7 +587,7 @@ void testAtomicResetRequestIsConsumedExactlyOnce()
 
 int main()
 {
-    testAllQuantizationModesUseTheNextBoundary();
+    testUnquantizedTriggerUsesEventOffset();
     testHostPpqOverridesSampleTimeline();
     testAbsoluteSampleAndBpmFallbackChoosesBoundary();
     testTempoChangesPreserveTheQuantizationGrid();
@@ -361,7 +599,14 @@ int main()
     testStopClearsPendingAndPhaseState();
     testTransportDiscontinuityClearsPendingAndPhaseState();
     testHostStartAndSeekPhaseLockThePattern();
+    testHostPhaseDoesNotAccumulateCallbackDrift();
+    testCapturedWholePatternCallbackTiming();
+    testCapturedQuarterPatternCallbackTiming();
+    testCapturedRemainingPatternCallbackTiming();
     testAtomicResetRequestIsConsumedExactlyOnce();
+    testCapturedDenseTiming();
+    testCapturedCallbackReleaseLifecycle();
+    testCapturedOverlappingLanes();
     if (failures != 0)
         return EXIT_FAILURE;
     std::cout << "All scheduler tests passed\n";

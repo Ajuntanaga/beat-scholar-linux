@@ -199,10 +199,33 @@ ProjectState ProjectState::makeDefault()
 
 ProjectState ProjectState::makeMainInit()
 {
-    // Public native references establish the musical structure below, but not
-    // a distinct hidden sample set. Keep the reconstruction's deterministic
-    // default kit/master values rather than inventing unavailable native data.
     auto state = makeDefault();
+    // Native sampler Init callbacks select these factory resources. Kick's
+    // body explicitly overrides the category selection with DW Sub.
+    const std::array<std::array<const char*, 2>, padCount> samples {{
+        {{ "SRC-DW_INST-BD_TYPE-Body_NAME-DW Sub.flac", "SRC-707_INST-BD_TYPE-Hit_NAME-SvN Kick.flac" }},
+        {{ "SRC-707_INST-Snare_TYPE-Body_NAME-SvN 1.flac", "SRC-707_INST-Snare_TYPE-Hit_NAME-SvN 2.flac" }},
+        {{ "SRC-707_INST-Rim_NAME-SvN Rim.flac", "" }},
+        {{ "SRC-707_INST-Clap_NAME-SvN Clap.flac", "" }},
+        {{ "SRC-707_INST-Hat_TYPE-Closed_NAME-SvN Hat 1.flac", "" }},
+        {{ "SRC-707_INST-Hat_TYPE-Open_NAME-SvNHat Open.flac", "" }},
+        {{ "SRC-707_INST-Cymbal_TYPE-Crash_NAME-SvN Crash.flac", "" }},
+        {{ "SRC-707_INST-Cymbal_TYPE-Ride_NAME-SvN Ride.flac", "" }},
+        {{ "SRC-808_INST-Cymbal_TYPE-Crash_NAME-GR8 Crash.flac", "" }},
+        {{ "SRC-707_INST-Tom_TYPE-Hi_NAME-SvN Tom Hi.flac", "" }},
+        {{ "SRC-707_INST-Tom_TYPE-Mid_NAME-SvN Tom Mid.flac", "" }},
+        {{ "SRC-707_INST-Tom_TYPE-Lo_NAME-SvN Tom Low.flac", "" }},
+        {{ "SRC-707_INST-Shaker_NAME-SvN Tambo.flac", "" }},
+        {{ "SRC-808_INST-Triangle_NAME-GR8 Beep.flac", "" }},
+        {{ "SRC-DW_INST-FX_NAME-Finger Snap.flac", "" }},
+        {{ "SRC-DW_INST-FX_NAME-Single Snap 1.flac", "" }},
+    }};
+    for (std::size_t pad = 0; pad < samples.size(); ++pad)
+    {
+        state.kit.pads[pad].layerMix = 0.5f;
+        for (std::size_t layer = 0; layer < samples[pad].size(); ++layer)
+            state.kit.pads[pad].factorySampleIds[layer] = samples[pad][layer];
+    }
     auto& pattern = state.patterns.front();
     pattern.name = "A";
     pattern.triggerNote = 60; // JUCE's middle-C-3 display labels MIDI 60 as C3.
@@ -246,12 +269,13 @@ bool ProjectState::isValid() const
                        && value.find('\0') == std::string::npos);
         };
         if (!basenameOnly(pad.factorySampleIds[0]) || !basenameOnly(pad.factorySampleIds[1])
-            || !basenameOnly(pad.customSampleName)
             || pad.midiNote > 127 || pad.rootNote > 127
             || !unit(pad.layerMix) || !std::isfinite(pad.gain) || pad.gain < 0.0f
             || pad.gain > 4.0f || !std::isfinite(pad.pan) || pad.pan < -1.0f || pad.pan > 1.0f
             || !std::isfinite(pad.attackSeconds) || pad.attackSeconds < 0.0f
             || pad.attackSeconds > 10.0f || !unit(pad.attackNormalized) || !unit(pad.damp)
+            || !std::isfinite(pad.releaseSeconds) || pad.releaseSeconds < 0.0f
+            || pad.releaseSeconds > 10.0f
             || !std::isfinite(pad.pitchSemitones) || pad.pitchSemitones < -12.0f
             || pad.pitchSemitones > 12.0f || !std::isfinite(pad.fineCents)
             || pad.fineCents < -100.0f || pad.fineCents > 100.0f || !unit(pad.highPass)
@@ -261,13 +285,17 @@ bool ProjectState::isValid() const
             || !unit(pad.compression) || !unit(pad.crush)
             || !unit(pad.reverb) || !unit(pad.room) || !unit(pad.delay) || !unit(pad.auxGain))
             return false;
-        const bool hasAnyCustom = !pad.customSampleName.empty()
-                                  || !pad.customSampleSha256.empty()
-                                  || !pad.customSampleBase64.empty();
-        if (hasAnyCustom
-            && (pad.customSampleName.empty() || pad.customSampleSha256.size() != 64
-                || pad.customSampleBase64.empty()))
+        if (!pad.customSampleLayered && !pad.customSamples[1].empty())
             return false;
+        for (const auto& sample : pad.customSamples)
+        {
+            if (!basenameOnly(sample.name) || !std::isfinite(sample.sampleRate)
+                || sample.sampleRate < 0.0)
+                return false;
+            if (!sample.empty()
+                && (sample.name.empty() || sample.sha256.size() != 64 || sample.base64.empty()))
+                return false;
+        }
     }
 
     std::array<bool, 128> triggerNotes {};
@@ -374,6 +402,19 @@ std::optional<std::size_t> ProjectState::padIndexForMidiNote(std::uint8_t note) 
     if (found == kit.pads.end())
         return std::nullopt;
     return static_cast<std::size_t>(std::distance(kit.pads.begin(), found));
+}
+
+std::optional<std::size_t> ProjectState::padIndexForInputMidiNote(std::uint8_t note) const noexcept
+{
+    // The native sampler uses a fixed input map. PadState::midiNote is the
+    // editable output map and must not change which incoming note plays a pad.
+    constexpr std::array<std::uint8_t, padCount> inputNotes {
+        36, 38, 37, 39, 42, 46, 49, 51, 57, 55, 43, 41, 54, 40, 53, 56
+    };
+    const auto found = std::find(inputNotes.begin(), inputNotes.end(), note);
+    if (found == inputNotes.end())
+        return std::nullopt;
+    return static_cast<std::size_t>(std::distance(inputNotes.begin(), found));
 }
 
 } // namespace bsl

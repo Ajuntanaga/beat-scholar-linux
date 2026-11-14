@@ -56,19 +56,28 @@ jobs:
           unzip -q /tmp/pluginval.zip -d tools/bin
           chmod +x tools/bin/pluginval
       - name: Configure and build VST3, standalone and tests
+        id: build
         run: |
           cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DBSL_BUILD_TESTS=ON -DBSL_BUILD_PLUGIN=ON \
             -DPython3_EXECUTABLE="$GITHUB_WORKSPACE/.venv/bin/python"
           cmake --build build/ci --parallel 2
       - name: Run core, audio, editor and actual VST3 suites
-        run: ctest --test-dir build/ci --output-on-failure --timeout 300 --parallel 1 --output-junit ctest.xml
+        run: ctest --test-dir build/ci --output-on-failure --timeout 300 --parallel 1 --output-junit "$GITHUB_WORKSPACE/build/ci/ctest.xml"
+      - name: Check captured host gate timing
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 5
+        run: |
+          xvfb-run -a build/ci/beat_scholar_editor_tests build/ci/host-gate-reference --host-gate-reference \
+            2>&1 | tee build/ci/host-gate-reference.log
       - name: Validate the VST3 at strictness 10
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         timeout-minutes: 10
         run: |
           xvfb-run -a tools/bin/pluginval --strictness-level 10 --validate-in-process \
             --validate 'build/ci/BeatScholarLinux_artefacts/Release/VST3/Beat Scholar Linux.vst3'
       - name: Check standalone settings and state recall
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         timeout-minutes: 5
         run: |
           xvfb-run -a -s '-screen 0 1600x1200x24' python tools/run_standalone_settings_test.py \
@@ -89,6 +98,9 @@ jobs:
             build/ci/editor-regression/**/*.json
             build/ci/actual-vst3-smoke/report.json
             build/ci/actual-vst3-midi/report.json
+            build/ci/actual-vst3-panic/results.json
+            build/ci/actual-vst3-panic/*.log
+            build/ci/host-gate-reference.log
             build/ci/standalone-settings/**/*.png
             build/ci/standalone-settings/**/*.json
             build/ci/standalone-settings/**/*.log

@@ -43,10 +43,14 @@ struct PadPlaybackSettings
 {
     float layerMix = 0.0f;
     float gain = 1.0f;
+    float outputTrim = 1.0f;
+    float layerInputGain = 1.0f;
     float pan = 0.0f;
     float attackSeconds = 0.0f;
+    float releaseSeconds = 0.03f;
     float attackNormalized = 0.0f;
     float damp = 0.0f;
+    bool lengthEnvelopeEnabled = true; // Disable only when isolating downstream DSP.
     float pitchSemitones = 0.0f;
     float fineCents = 0.0f;
     float highPass = 0.0f;
@@ -117,6 +121,8 @@ public:
     void noteOn(std::uint8_t midiNote, float velocity, std::size_t gateFrames = 0,
                 bool followsNoteOff = true, std::uint8_t midiChannel = 1) noexcept;
     void noteOff(std::uint8_t midiNote, std::uint8_t midiChannel = 1) noexcept;
+    void sequencerNoteOn(std::uint8_t midiNote, float velocity, std::size_t laneIndex = 0) noexcept;
+    void sequencerNoteOff(std::uint8_t midiNote, std::size_t laneIndex = 0) noexcept;
     void stopMidiChannel(std::uint8_t midiChannel, bool allSoundOff) noexcept;
     // Streaming callers clear once, then render monotonically between note events.
     void beginBlock(AudioBlock& output, std::size_t sampleCount) noexcept;
@@ -132,11 +138,22 @@ private:
     struct Voice
     {
         std::array<double, 2> positions {};
+        std::size_t pad = padCount;
+        std::uint64_t noteOnOrder = 0;
+        bool keyDown = true;
+        bool sequencerOwned = false;
+        std::size_t sequencerLane = 0;
         std::size_t elapsedFrames = 0;
         std::size_t gateFrames = 0;
         std::uint64_t hostNoteId = 0;
         std::uint8_t hostMidiChannel = 1;
         float velocity = 0.0f;
+        float lengthEnvelope = 1.0f;
+        std::size_t releaseFramesElapsed = 0;
+        float releaseStartLevel = 1.0f;
+        float releaseInputLevel = 1.0f;
+        float releaseInputStep = 0.0f;
+        bool releasing = false;
         std::array<std::array<float, 2>, 3> lowPassLeft {};
         std::array<std::array<float, 2>, 3> lowPassRight {};
         std::array<float, 2> highPassLeft {};
@@ -151,12 +168,17 @@ private:
         bool active = false;
     };
 
+    void startVoice(std::uint8_t midiNote, float velocity, std::size_t gateFrames,
+                    bool followsNoteOff, std::uint8_t midiChannel, bool sequencerOwned, std::size_t sequencerLane = 0) noexcept;
+    Voice& findVoiceToStart(std::size_t pad) noexcept;
     void renderPreparedRange(AudioBlock& output, std::size_t start, std::size_t end) noexcept;
     void clearMasterState() noexcept;
 
     std::array<std::array<SampleData, 2>, padCount> samples_;
-    std::array<std::array<Voice, 4>, padCount> voices_;
-    std::array<std::size_t, padCount> nextVoice_ {};
+    // Native voices form one shared pool, including their retained HPF state.
+    static constexpr std::size_t voiceCount = 24;
+    std::array<Voice, voiceCount> voices_;
+    std::uint64_t nextVoiceOrder_ = 0;
     std::array<std::uint64_t, padCount * 16> hostNotesStarted_ {};
     std::array<std::uint64_t, padCount * 16> hostNotesReleased_ {};
     std::array<PadPlaybackSettings, padCount> settings_;

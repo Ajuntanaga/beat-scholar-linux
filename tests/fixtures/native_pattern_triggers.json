@@ -1,0 +1,778 @@
+{
+  "source": "Isolated original Beat Scholar captures, native-trigger-midi-2026-11-13; pitch normalized to candidate pad 1; pre-stop events only",
+  "sample_rate": 48000,
+  "tempo": 140,
+  "block_size": 1024,
+  "active_frames": 105600,
+  "cases": [
+    {
+      "name": "exact-1024",
+      "trigger_on": 1001,
+      "trigger_off": 2001,
+      "expected": [
+        [
+          0,
+          "note_on",
+          95
+        ],
+        [
+          20160,
+          "note_off",
+          95
+        ],
+        [
+          20571,
+          "note_on",
+          95
+        ],
+        [
+          40731,
+          "note_off",
+          95
+        ],
+        [
+          41142,
+          "note_on",
+          95
+        ],
+        [
+          61302,
+          "note_off",
+          95
+        ],
+        [
+          61714,
+          "note_on",
+          95
+        ],
+        [
+          81874,
+          "note_off",
+          95
+        ]
+      ],
+      "quantization": "whole"
+    },
+    {
+      "name": "late-1024",
+      "trigger_on": 10001,
+      "trigger_off": 11001,
+      "expected": [
+        [
+          81920,
+          "note_on",
+          95
+        ],
+        [
+          102079,
+          "note_off",
+          95
+        ],
+        [
+          102491,
+          "note_on",
+          95
+        ]
+      ],
+      "quantization": "whole"
+    },
+    {
+      "name": "quarter-early-1024",
+      "trigger_on": 1001,
+      "trigger_off": 2001,
+      "expected": [
+        [
+          0,
+          "note_on",
+          95
+        ],
+        [
+          20160,
+          "note_off",
+          95
+        ],
+        [
+          20571,
+          "note_on",
+          95
+        ],
+        [
+          40731,
+          "note_off",
+          95
+        ],
+        [
+          41142,
+          "note_on",
+          95
+        ],
+        [
+          61302,
+          "note_off",
+          95
+        ],
+        [
+          61714,
+          "note_on",
+          95
+        ],
+        [
+          81874,
+          "note_off",
+          95
+        ]
+      ],
+      "quantization": "quarter"
+    },
+    {
+      "name": "quarter-late-1024",
+      "trigger_on": 10001,
+      "trigger_off": 11001,
+      "expected": [
+        [
+          20480,
+          "note_on",
+          95
+        ],
+        [
+          40640,
+          "note_off",
+          95
+        ],
+        [
+          41051,
+          "note_on",
+          95
+        ],
+        [
+          61211,
+          "note_off",
+          95
+        ],
+        [
+          61622,
+          "note_on",
+          95
+        ],
+        [
+          81782,
+          "note_off",
+          95
+        ],
+        [
+          82194,
+          "note_on",
+          95
+        ],
+        [
+          102354,
+          "note_off",
+          95
+        ]
+      ],
+      "quantization": "quarter"
+    },
+    {
+      "name": "eighth-late-1024",
+      "trigger_on": 10001,
+      "trigger_off": 11001,
+      "expected": [
+        [
+          10240,
+          "note_on",
+          95
+        ],
+        [
+          30399,
+          "note_off",
+          95
+        ],
+        [
+          30811,
+          "note_on",
+          95
+        ],
+        [
+          50971,
+          "note_off",
+          95
+        ],
+        [
+          51382,
+          "note_on",
+          95
+        ],
+        [
+          71542,
+          "note_off",
+          95
+        ],
+        [
+          71954,
+          "note_on",
+          95
+        ],
+        [
+          92114,
+          "note_off",
+          95
+        ]
+      ],
+      "quantization": "eighth"
+    },
+    {
+      "name": "half-late-1024",
+      "trigger_on": 10001,
+      "trigger_off": 11001,
+      "expected": [
+        [
+          40960,
+          "note_on",
+          95
+        ],
+        [
+          61120,
+          "note_off",
+          95
+        ],
+        [
+          61531,
+          "note_on",
+          95
+        ],
+        [
+          81691,
+          "note_off",
+          95
+        ],
+        [
+          82102,
+          "note_on",
+          95
+        ],
+        [
+          102262,
+          "note_off",
+          95
+        ],
+        [
+          102674,
+          "note_on",
+          95
+        ]
+      ],
+      "quantization": "half"
+    },
+    {
+      "name": "sixteenth-late-1024",
+      "trigger_on": 10001,
+      "trigger_off": 11001,
+      "expected": [
+        [
+          10240,
+          "note_on",
+          95
+        ],
+        [
+          30399,
+          "note_off",
+          95
+        ],
+        [
+          30811,
+          "note_on",
+          95
+        ],
+        [
+          50971,
+          "note_off",
+          95
+        ],
+        [
+          51382,
+          "note_on",
+          95
+        ],
+        [
+          71542,
+          "note_off",
+          95
+        ],
+        [
+          71954,
+          "note_on",
+          95
+        ],
+        [
+          92114,
+          "note_off",
+          95
+        ]
+      ],
+      "quantization": "sixteenth"
+    },
+    {
+      "name": "thirtySecond-late-1024",
+      "trigger_on": 10001,
+      "trigger_off": 11001,
+      "expected": [
+        [
+          10240,
+          "note_on",
+          95
+        ],
+        [
+          30399,
+          "note_off",
+          95
+        ],
+        [
+          30811,
+          "note_on",
+          95
+        ],
+        [
+          50971,
+          "note_off",
+          95
+        ],
+        [
+          51382,
+          "note_on",
+          95
+        ],
+        [
+          71542,
+          "note_off",
+          95
+        ],
+        [
+          71954,
+          "note_on",
+          95
+        ],
+        [
+          92114,
+          "note_off",
+          95
+        ]
+      ],
+      "quantization": "thirtySecond"
+    },
+    {
+      "name": "quarter-late-257",
+      "trigger_on": 10001,
+      "trigger_off": 11001,
+      "expected": [
+        [
+          20560,
+          "note_on",
+          95
+        ],
+        [
+          40720,
+          "note_off",
+          95
+        ],
+        [
+          41131,
+          "note_on",
+          95
+        ],
+        [
+          61291,
+          "note_off",
+          95
+        ],
+        [
+          61702,
+          "note_on",
+          95
+        ],
+        [
+          81862,
+          "note_off",
+          95
+        ],
+        [
+          82274,
+          "note_on",
+          95
+        ],
+        [
+          102434,
+          "note_off",
+          95
+        ]
+      ],
+      "block_size": 257,
+      "quantization": "quarter"
+    }
+  ],
+  "early_grid": {
+    "source": "Original isolated REAPER captures in native-trigger-midi-2026-11-13/early-grid; quarter-early-1024 reused from sibling capture. Only events before host stop; stop cleanup is a separate candidate requirement.",
+    "trigger_on": 1001,
+    "trigger_off": 2001,
+    "active_frames": 70001,
+    "cases": [
+      {
+        "name": "quarter-early-64",
+        "mode": "quarter",
+        "block": 64,
+        "events": [
+          [
+            20544,
+            "note_on",
+            95
+          ],
+          [
+            40704,
+            "note_off",
+            95
+          ],
+          [
+            41115,
+            "note_on",
+            95
+          ],
+          [
+            61275,
+            "note_off",
+            95
+          ],
+          [
+            61686,
+            "note_on",
+            95
+          ]
+        ]
+      },
+      {
+        "name": "quarter-early-257",
+        "mode": "quarter",
+        "block": 257,
+        "events": [
+          [
+            20560,
+            "note_on",
+            95
+          ],
+          [
+            40720,
+            "note_off",
+            95
+          ],
+          [
+            41131,
+            "note_on",
+            95
+          ],
+          [
+            61291,
+            "note_off",
+            95
+          ],
+          [
+            61702,
+            "note_on",
+            95
+          ]
+        ]
+      },
+      {
+        "name": "quarter-early-1024",
+        "mode": "quarter",
+        "block": 1024,
+        "events": [
+          [
+            0,
+            "note_on",
+            95
+          ],
+          [
+            20160,
+            "note_off",
+            95
+          ],
+          [
+            20571,
+            "note_on",
+            95
+          ],
+          [
+            40731,
+            "note_off",
+            95
+          ],
+          [
+            41142,
+            "note_on",
+            95
+          ],
+          [
+            61302,
+            "note_off",
+            95
+          ],
+          [
+            61714,
+            "note_on",
+            95
+          ]
+        ]
+      },
+      {
+        "name": "sixteenth-early-64",
+        "mode": "sixteenth",
+        "block": 64,
+        "events": [
+          [
+            5120,
+            "note_on",
+            95
+          ],
+          [
+            25280,
+            "note_off",
+            95
+          ],
+          [
+            25691,
+            "note_on",
+            95
+          ],
+          [
+            45851,
+            "note_off",
+            95
+          ],
+          [
+            46262,
+            "note_on",
+            95
+          ],
+          [
+            66422,
+            "note_off",
+            95
+          ],
+          [
+            66834,
+            "note_on",
+            95
+          ]
+        ]
+      },
+      {
+        "name": "sixteenth-early-257",
+        "mode": "sixteenth",
+        "block": 257,
+        "events": [
+          [
+            5140,
+            "note_on",
+            95
+          ],
+          [
+            25300,
+            "note_off",
+            95
+          ],
+          [
+            25711,
+            "note_on",
+            95
+          ],
+          [
+            45871,
+            "note_off",
+            95
+          ],
+          [
+            46282,
+            "note_on",
+            95
+          ],
+          [
+            66442,
+            "note_off",
+            95
+          ],
+          [
+            66854,
+            "note_on",
+            95
+          ]
+        ]
+      },
+      {
+        "name": "sixteenth-early-1024",
+        "mode": "sixteenth",
+        "block": 1024,
+        "events": [
+          [
+            0,
+            "note_on",
+            95
+          ],
+          [
+            20160,
+            "note_off",
+            95
+          ],
+          [
+            20571,
+            "note_on",
+            95
+          ],
+          [
+            40731,
+            "note_off",
+            95
+          ],
+          [
+            41142,
+            "note_on",
+            95
+          ],
+          [
+            61302,
+            "note_off",
+            95
+          ],
+          [
+            61714,
+            "note_on",
+            95
+          ]
+        ]
+      },
+      {
+        "name": "thirtySecond-early-64",
+        "mode": "thirtySecond",
+        "block": 64,
+        "events": [
+          [
+            2560,
+            "note_on",
+            95
+          ],
+          [
+            22720,
+            "note_off",
+            95
+          ],
+          [
+            23131,
+            "note_on",
+            95
+          ],
+          [
+            43291,
+            "note_off",
+            95
+          ],
+          [
+            43702,
+            "note_on",
+            95
+          ],
+          [
+            63862,
+            "note_off",
+            95
+          ],
+          [
+            64274,
+            "note_on",
+            95
+          ]
+        ]
+      },
+      {
+        "name": "thirtySecond-early-257",
+        "mode": "thirtySecond",
+        "block": 257,
+        "events": [
+          [
+            2570,
+            "note_on",
+            95
+          ],
+          [
+            22730,
+            "note_off",
+            95
+          ],
+          [
+            23141,
+            "note_on",
+            95
+          ],
+          [
+            43301,
+            "note_off",
+            95
+          ],
+          [
+            43712,
+            "note_on",
+            95
+          ],
+          [
+            63872,
+            "note_off",
+            95
+          ],
+          [
+            64284,
+            "note_on",
+            95
+          ]
+        ]
+      },
+      {
+        "name": "thirtySecond-early-1024",
+        "mode": "thirtySecond",
+        "block": 1024,
+        "events": [
+          [
+            0,
+            "note_on",
+            95
+          ],
+          [
+            20160,
+            "note_off",
+            95
+          ],
+          [
+            20571,
+            "note_on",
+            95
+          ],
+          [
+            40731,
+            "note_off",
+            95
+          ],
+          [
+            41142,
+            "note_on",
+            95
+          ],
+          [
+            61302,
+            "note_off",
+            95
+          ],
+          [
+            61714,
+            "note_on",
+            95
+          ]
+        ]
+      }
+    ]
+  }
+}

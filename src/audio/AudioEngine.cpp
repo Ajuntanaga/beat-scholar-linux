@@ -82,11 +82,14 @@ PadPlaybackSettings makePadPlaybackSettings(const PadState& state) noexcept
 {
     PadPlaybackSettings settings;
     settings.layerMix = state.layerMix;
-    // Native PadSynth applies a fixed -10.46 dB trim after compression.
-    // Keep the stored/UI volume linear and apply the trim only at playback.
-    settings.gain = state.gain * 0.3f;
+    // The native layer Volume endpoint is +6 dB before the insert chain.
+    // Pad volume and the 0.3 output trim follow compression.
+    settings.gain = state.gain;
+    settings.layerInputGain = 1.9952623844146729f; // Captured native float: 0x3fff64c2.
+    settings.outputTrim = 0.3f;
     settings.pan = state.pan;
     settings.attackSeconds = state.attackSeconds;
+    settings.releaseSeconds = state.releaseSeconds;
     settings.attackNormalized = state.attackNormalized;
     settings.damp = state.damp;
     settings.pitchSemitones = state.pitchSemitones;
@@ -207,7 +210,6 @@ void AudioEngine::prepare(double newSampleRate, std::size_t maximumBlockSize)
         send.assign(std::max<std::size_t>(1, maximumBlockSize), 0.0f);
     settings_.fill({});
     master_ = {};
-    nextVoice_.fill(0);
     const auto delayLength = std::max<std::size_t>(2, static_cast<std::size_t>(sampleRate_ * 0.5));
     for (auto& send : ambienceSends_)
         send.assign(std::max<std::size_t>(1, maximumBlockSize), 0.0f);
@@ -223,8 +225,8 @@ void AudioEngine::reset()
     padPeaks_.fill(0.0f);
     hostNotesStarted_.fill(0);
     hostNotesReleased_.fill(0);
-    for (auto& padVoices : voices_)
-        padVoices.fill({});
+    voices_.fill({});
+    nextVoiceOrder_ = 0;
     if (ambience_ != nullptr)
         ambience_->reset();
     padCompressors_.fill({});
@@ -263,7 +265,9 @@ void AudioEngine::setPadSample(std::size_t padIndex, SampleData sample)
         return;
     samples_[padIndex][0] = sample.isValid() ? std::move(sample) : SampleData {};
     samples_[padIndex][1] = {};
-    voices_[padIndex].fill({});
+    for (auto& voice : voices_)
+        if (voice.pad == padIndex)
+            voice = {};
 }
 
 void AudioEngine::setPadLayerSample(std::size_t padIndex, std::size_t layerIndex, SampleData sample)
@@ -271,7 +275,9 @@ void AudioEngine::setPadLayerSample(std::size_t padIndex, std::size_t layerIndex
     if (padIndex >= padCount || layerIndex >= 2)
         return;
     samples_[padIndex][layerIndex] = sample.isValid() ? std::move(sample) : SampleData {};
-    voices_[padIndex].fill({});
+    for (auto& voice : voices_)
+        if (voice.pad == padIndex)
+            voice = {};
 }
 
 void AudioEngine::setPadGainPan(std::size_t padIndex, float gain, float pan) noexcept
@@ -290,6 +296,8 @@ void AudioEngine::setPadSettings(std::size_t padIndex, PadPlaybackSettings setti
     settings.gain = std::clamp(settings.gain, 0.0f, 4.0f);
     settings.pan = std::clamp(settings.pan, -1.0f, 1.0f);
     settings.attackSeconds = std::clamp(settings.attackSeconds, 0.0f, 10.0f);
+    settings.releaseSeconds = std::isfinite(settings.releaseSeconds)
+        ? std::clamp(settings.releaseSeconds, 0.0f, 10.0f) : 0.03f;
     settings.attackNormalized = std::clamp(settings.attackNormalized, 0.0f, 1.0f);
     settings.damp = std::clamp(settings.damp, 0.0f, 1.0f);
     // The native Tune parameter is integer-valued, with nearest-even rounding.
@@ -327,8 +335,71 @@ void AudioEngine::setMasterSettings(MasterPlaybackSettings settings) noexcept
     master_ = settings;
 }
 
+AudioEngine::Voice& AudioEngine::findVoiceToStart(std::size_t pad) noexcept
+{
+    for (auto& voice : voices_)
+        if (!voice.active)
+            return voice;
+
+    // Native MPE stealing protects the first held lowest/highest pool slots.
+    // Within each priority tier, the oldest note wins, regardless of slot order.
+    Voice* lowest = nullptr;
+    Voice* highest = nullptr;
+    for (auto& voice : voices_)
+        if (voice.keyDown)
+        {
+            if (lowest == nullptr || voice.pad < lowest->pad)
+                lowest = &voice;
+            if (highest == nullptr || voice.pad > highest->pad)
+                highest = &voice;
+        }
+    if (highest == lowest)
+        highest = nullptr;
+    const auto priority = [&](const Voice& voice) {
+        if (voice.pad == pad) return 0;
+        if (&voice != lowest && &voice != highest)
+            return voice.keyDown ? 2 : 1;
+        return &voice == highest ? 3 : 4;
+    };
+    auto* oldest = &voices_.front();
+    for (auto& voice : voices_)
+        if (priority(voice) < priority(*oldest)
+            || (priority(voice) == priority(*oldest)
+                && voice.noteOnOrder < oldest->noteOnOrder))
+            oldest = &voice;
+    return *oldest;
+}
+
 void AudioEngine::noteOn(std::uint8_t midiNote, float velocity, std::size_t gateFrames,
                          bool followsNoteOff, std::uint8_t midiChannel) noexcept
+{
+    startVoice(midiNote, velocity, gateFrames, followsNoteOff, midiChannel, false);
+}
+
+void AudioEngine::sequencerNoteOn(std::uint8_t midiNote, float velocity, std::size_t laneIndex) noexcept
+{
+    sequencerNoteOff(midiNote, laneIndex);
+    startVoice(midiNote, velocity, 0, false, 1, true, laneIndex);
+}
+
+void AudioEngine::sequencerNoteOff(std::uint8_t midiNote, std::size_t laneIndex) noexcept
+{
+    if (midiNote < 36 || midiNote >= 36 + padCount)
+        return;
+    const auto pad = static_cast<std::size_t>(midiNote - 36);
+    for (auto& voice : voices_)
+        if (voice.active && voice.pad == pad && voice.sequencerOwned
+            && voice.sequencerLane == laneIndex)
+        {
+            voice.keyDown = false;
+            if (!settings_[pad].oneShot)
+                voice.releasing = true;
+        }
+}
+
+void AudioEngine::startVoice(std::uint8_t midiNote, float velocity, std::size_t gateFrames,
+                             bool followsNoteOff, std::uint8_t midiChannel,
+                             bool sequencerOwned, std::size_t sequencerLane) noexcept
 {
     if (midiNote < 36 || midiNote >= 36 + padCount || midiChannel < 1 || midiChannel > 16)
         return;
@@ -337,31 +408,47 @@ void AudioEngine::noteOn(std::uint8_t midiNote, float velocity, std::size_t gate
     const auto hostNoteId = gateFrames == 0 && followsNoteOff ? ++hostNotesStarted_[channelIndex] : 0;
     if (!samples_[pad][0].isValid() && !samples_[pad][1].isValid())
         return;
-    auto& padVoices = voices_[pad];
-    if (std::none_of(padVoices.begin(), padVoices.end(),
-                     [](const Voice& voice) { return voice.active; }))
+    // Native gated MIDI retriggers release the preceding held voice. One Shot
+    // hits remain polyphonic; scheduled gates and previews own their lifetimes.
+    if (hostNoteId != 0 && !settings_[pad].oneShot)
+        for (auto& voice : voices_)
+            if (voice.active && voice.pad == pad && voice.hostNoteId != 0
+                && voice.hostMidiChannel == midiChannel)
+            {
+                voice.keyDown = false;
+                voice.releasing = true;
+            }
+    if (std::none_of(voices_.begin(), voices_.end(),
+                     [pad](const Voice& voice) { return voice.active && voice.pad == pad; }))
         padDspResetPending_[pad] = true;
     if (settings_[pad].mono)
-        for (auto& voice : padVoices)
-            voice.active = false;
-    auto voiceIndex = nextVoice_[pad];
-    for (std::size_t index = 0; index < padVoices.size(); ++index)
-        if (!padVoices[index].active)
-        {
-            voiceIndex = index;
-            break;
-        }
-    padVoices[voiceIndex] = {};
+        for (auto& voice : voices_)
+            if (voice.pad == pad)
+                voice.active = false;
+    auto& voice = findVoiceToStart(pad);
+    // c97811 resets the native LPF on note start, but preserves the HPF. Its
+    // history belongs to this global voice, even when reassigned to another pad.
+    const auto highPassLeft = voice.highPassLeft;
+    const auto highPassRight = voice.highPassRight;
+    voice = {};
+    voice.highPassLeft = highPassLeft;
+    voice.highPassRight = highPassRight;
+    voice.pad = pad;
+    voice.noteOnOrder = ++nextVoiceOrder_;
     // A new native voice starts at the current Drive gain, even while bypassed.
     const float driveGain = 0.4f + 0.6f * (1.0f - padDriveAmount(settings_[pad].driveGainDb));
-    padVoices[voiceIndex].driveGainCurrent = driveGain;
-    padVoices[voiceIndex].driveGainTarget = driveGain;
-    padVoices[voiceIndex].velocity = std::clamp(velocity, 0.0f, 1.0f);
-    padVoices[voiceIndex].gateFrames = gateFrames;
-    padVoices[voiceIndex].hostNoteId = hostNoteId;
-    padVoices[voiceIndex].hostMidiChannel = midiChannel;
-    padVoices[voiceIndex].active = true;
-    nextVoice_[pad] = (voiceIndex + 1) % padVoices.size();
+    voice.driveGainCurrent = driveGain;
+    voice.driveGainTarget = driveGain;
+    // Native captures show a 5% floor for positive note velocities.
+    // Keep MIDI/host normalization outside this voice amplitude law.
+    const float normalizedVelocity = std::isfinite(velocity) ? std::clamp(velocity, 0.0f, 1.0f) : 0.0f;
+    voice.velocity = normalizedVelocity > 0.0f ? 0.05f + 0.95f * normalizedVelocity : 0.0f;
+    voice.gateFrames = gateFrames;
+    voice.sequencerOwned = sequencerOwned;
+    voice.sequencerLane = sequencerLane;
+    voice.hostNoteId = hostNoteId;
+    voice.hostMidiChannel = midiChannel;
+    voice.active = true;
 }
 
 void AudioEngine::noteOff(std::uint8_t midiNote, std::uint8_t midiChannel) noexcept
@@ -372,31 +459,37 @@ void AudioEngine::noteOff(std::uint8_t midiNote, std::uint8_t midiChannel) noexc
     const auto channelIndex = pad * 16 + midiChannel - 1;
     if (hostNotesReleased_[channelIndex] == hostNotesStarted_[channelIndex])
         return;
-    // Consume releases in note-on order even when an old voice has ended
-    // or been stolen, so its release cannot cut a newer note.
-    const auto releasedId = ++hostNotesReleased_[channelIndex];
-    if (!settings_[pad].oneShot)
-        for (auto& voice : voices_[pad])
-            if (voice.hostNoteId == releasedId && voice.hostMidiChannel == midiChannel)
-                voice.active = false;
+    ++hostNotesReleased_[channelIndex];
+    for (auto& voice : voices_)
+        if (voice.active && voice.pad == pad && voice.hostNoteId != 0
+            && voice.hostMidiChannel == midiChannel)
+        {
+            // MPE key state changes even when One Shot ignores the release.
+            voice.keyDown = false;
+            if (!settings_[pad].oneShot)
+                voice.releasing = true;
+        }
 }
 
 void AudioEngine::stopMidiChannel(std::uint8_t midiChannel, bool allSoundOff) noexcept
 {
     if (midiChannel < 1 || midiChannel > 16)
         return;
-    bool anyActive = false;
     for (std::size_t pad = 0; pad < padCount; ++pad)
     {
         const auto index = pad * 16 + midiChannel - 1;
         hostNotesReleased_[index] = hostNotesStarted_[index];
-        for (auto& voice : voices_[pad])
+    }
+    bool anyActive = false;
+    for (auto& voice : voices_)
+    {
+        if (voice.active && voice.hostMidiChannel == midiChannel)
         {
-            if (voice.hostMidiChannel == midiChannel
-                && (allSoundOff || (voice.hostNoteId != 0 && !settings_[pad].oneShot)))
+            voice.keyDown = false;
+            if (allSoundOff || (voice.hostNoteId != 0 && !settings_[voice.pad].oneShot))
                 voice.active = false;
-            anyActive = anyActive || voice.active;
         }
+        anyActive = anyActive || voice.active;
     }
     // Shared effects cannot be separated by MIDI channel. Clear residual tails
     // when the last voice is silenced, without resetting other channels' voices.
@@ -496,6 +589,24 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
             continue;
         }
 
+        std::array<Voice*, voiceCount> padVoiceStorage {};
+        std::size_t padVoiceCount = 0;
+        for (auto& voice : voices_)
+            if (voice.active && voice.pad == pad)
+                padVoiceStorage[padVoiceCount++] = &voice;
+        const std::span<Voice*> padVoices(padVoiceStorage.data(), padVoiceCount);
+
+        // Native layer mix runs from layer 2 to layer 1 with a -3 dB centre.
+        // Preserve the Volume range's float log/divide/exp order: an equivalent
+        // power curve rounds differently before the recursive filters.
+        const auto layerWeight = [](float amount) {
+            return amount > 0.0f
+                       ? std::exp(std::log(amount) / 1.0034332275390625f) : 0.0f;
+        };
+        const float layerAngle = std::clamp(settings.layerMix, 0.0f, 1.0f) * halfPi;
+        const float layerWeights[] {
+            layerWeight(std::sin(layerAngle)), layerWeight(std::cos(layerAngle))
+        };
         const float leftPan = std::cos((settings.pan + 1.0f) * 0.5f * halfPi);
         const float rightPan = std::sin((settings.pan + 1.0f) * 0.5f * halfPi);
 
@@ -506,6 +617,15 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                                         ? settings.attackSeconds
                                         : settings.attackNormalized;
         const auto attackFrames = static_cast<std::size_t>(attackSeconds * sampleRate_);
+        // Native Length fades linearly even at zero. Its full duration follows
+        // the longest loaded layer, independent of the layer crossfade position.
+        double longestLayerSeconds = 0.0;
+        for (const auto& sample : padSamples)
+            if (sample.isValid())
+                longestLayerSeconds = std::max(longestLayerSeconds,
+                    static_cast<double>(sample.length()) / sample.sampleRate);
+        const double lengthFrames = sampleRate_
+            * (0.01 + (longestLayerSeconds - 0.01) * (1.0 - settings.damp));
         const float lowPassFrequency = std::min(filterCutoffHz(settings.cutoff),
                                                 static_cast<float>(sampleRate_ * 0.499));
         const float lowPassG = std::tan(3.14159265358979323846f * lowPassFrequency
@@ -555,7 +675,9 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
         if (nativeDriveActive)
         {
             const auto rampFrames = static_cast<std::size_t>(sampleRate_ * 0.1);
-            for (auto& voice : voices_[pad])
+            for (auto* current : padVoices)
+            {
+                auto& voice = *current;
                 if (voice.active
                     && std::abs(drivePostGain - voice.driveGainTarget)
                            > std::numeric_limits<float>::epsilon()
@@ -569,6 +691,7 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                         voice.driveGainStep = (drivePostGain - voice.driveGainCurrent)
                                                   / static_cast<float>(rampFrames);
                 }
+            }
         }
         auto& compressor = padCompressors_[pad];
         compressor.setAmount(settings.compression, sampleRate_);
@@ -582,40 +705,64 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
             padDspResetPending_[pad] = false;
         }
         const auto crusher = crushParameters(settings.crush);
+        std::array<bool, voiceCount> finishedSamples {};
         for (std::size_t frame = start; frame < end; ++frame)
         {
             float dryLeft = 0.0f;
             float dryRight = 0.0f;
             const bool audible = !settings.muted && (!hasSolo || settings.solo);
-            for (auto& voice : voices_[pad])
+            for (auto* current : padVoices)
             {
+                auto& voice = *current;
                 // Each sequenced voice owns its gate so a shorter overlapping
                 // hit cannot cut off another voice on the same pad.
-                if (!settings.oneShot && voice.gateFrames > 0
-                    && voice.elapsedFrames >= voice.gateFrames)
-                    voice.active = false;
+                if (voice.gateFrames > 0 && voice.elapsedFrames >= voice.gateFrames)
+                {
+                    voice.keyDown = false;
+                    if (!settings.oneShot)
+                        voice.releasing = true;
+                }
                 if (!voice.active)
                 {
                     continue;
                 }
                     float envelope = 1.0f;
+                    float releaseInputGain = 1.0f;
                     if (attackFrames > 0)
                         envelope = std::min(1.0f, static_cast<float>(voice.elapsedFrames + 1)
                                                        / static_cast<float>(attackFrames));
-                    float lengthEnvelope = 1.0f;
-                    if (settings.damp > 0.0f)
+                    if (voice.releasing)
                     {
-                        constexpr double measuredMaximumLengthSeconds = 0.8604166666666667;
-                        constexpr double measuredLengthCurve = 0.45;
-                        const double decayFrames = sampleRate_ * measuredMaximumLengthSeconds
-                                                   * (1.0 - settings.damp);
-                        const double remaining = decayFrames > 0.0
-                            ? std::max(0.0, 1.0 - static_cast<double>(voice.elapsedFrames)
-                                                     / decayFrames)
-                            : 0.0;
-                        lengthEnvelope = static_cast<float>(std::pow(remaining,
-                                                                     measuredLengthCurve));
+                        if (voice.releaseFramesElapsed == 0)
+                        {
+                            voice.releaseStartLevel = attackFrames > 0
+                                ? std::min(1.0f, static_cast<float>(voice.elapsedFrames)
+                                    / static_cast<float>(attackFrames)) : 1.0f;
+                            voice.releaseInputStep = voice.releaseInputLevel
+                                / (static_cast<float>(sampleRate_) * 0.1f);
+                        }
+                        ++voice.releaseFramesElapsed;
+                        const double releaseFrames = settings.releaseSeconds * sampleRate_;
+                        const float remaining = releaseFrames > 0.0
+                            ? std::max(0.0f, 1.0f - static_cast<float>(
+                                static_cast<double>(voice.releaseFramesElapsed) / releaseFrames)) : 0.0f;
+                        // The native sampler has its own 100 ms float release
+                        // before the inserts. It keeps advancing after the pad's
+                        // output release reaches silence, preserving filter history.
+                        voice.releaseInputLevel = std::max(0.0f,
+                            voice.releaseInputLevel - voice.releaseInputStep);
+                        releaseInputGain = voice.releaseInputLevel;
+                        envelope = voice.releaseStartLevel * remaining;
                     }
+                    // Native updates a float accumulator before rendering each
+                    // frame; a closed-form fade loses its rate-dependent rounding.
+                    if (settings.lengthEnvelopeEnabled && settings.oneShot)
+                        voice.lengthEnvelope = std::max(0.0f, voice.lengthEnvelope
+                            - (lengthFrames > 0.0 ? static_cast<float>(1.0 / lengthFrames) : 1.0f));
+                    // Gated voices sustain; Length belongs to the One Shot envelope.
+                    const float lengthEnvelope = settings.lengthEnvelopeEnabled && settings.oneShot
+                        ? voice.lengthEnvelope : 1.0f;
+                    const float inputEnvelope = lengthEnvelope * releaseInputGain;
                     float left = 0.0f;
                     float right = 0.0f;
                     bool anyLayerPlaying = false;
@@ -625,32 +772,52 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                         const auto& sample = padSamples[layer];
                         if (!sample.isValid())
                             continue;
-                        const auto index = static_cast<std::size_t>(voice.positions[layer]);
-                        if (index >= sample.length() || lengthEnvelope <= 0.0f)
+                        if (voice.positions[layer] > 1.0
+                            || inputEnvelope <= 0.0f)
                             continue;
                         const float weight = !bothLayers ? 1.0f
-                            : (layer == 0 ? 1.0f - settings.layerMix : settings.layerMix);
-                        const auto nextIndex = std::min(index + 1, sample.length() - 1);
-                        const float fraction = static_cast<float>(voice.positions[layer]
-                                                                  - static_cast<double>(index));
-                        const float sourceLeft = sample.channels.front()[index]
-                            + (sample.channels.front()[nextIndex]
-                               - sample.channels.front()[index]) * fraction;
+                            : layerWeights[layer];
+                        // Native playback maps normalized phase onto the last source frame.
+                        // Emit the clamped endpoint once before advancing to the finished sentinel.
+                        const double position = voice.positions[layer]
+                            * static_cast<double>(sample.length() - 1);
+                        const auto index = static_cast<std::size_t>(position);
+                        const float fraction = static_cast<float>(position - static_cast<double>(index));
+                        const auto interpolate = [&](const auto& channel) {
+                            const float previous = channel[index > 0 ? index - 1 : 0];
+                            const float current = channel[index];
+                            const float next = channel[std::min(index + 1, sample.length() - 1)];
+                            const float following = channel[std::min(index + 2, sample.length() - 1)];
+                            // Preserve the native polynomial's float operation order.
+                            // Horner evaluation changes the input to recursive filters.
+                            const float squared = fraction * fraction;
+                            const float cubed = squared * fraction;
+                            const float quadratic = (4.0f * next
+                                + (previous + previous + current * -5.0f)) - following;
+                            const float linear = (current + current) + (next - previous) * fraction;
+                            const float cubic = (next * -3.0f + (current * 3.0f - previous)) + following;
+                            return (cubic * cubed + (quadratic * squared + linear)) * 0.5f;
+                        };
+                        const float sourceLeft = interpolate(sample.channels.front());
                         const float sourceRight = sample.channels.size() == 1
-                            ? sourceLeft
-                            : sample.channels[1][index]
-                                + (sample.channels[1][nextIndex] - sample.channels[1][index])
-                                    * fraction;
-                        left += sourceLeft * weight;
-                        right += sourceRight * weight;
-                        voice.positions[layer] += sample.sampleRate / sampleRate_ * pitchRatio;
+                            ? sourceLeft : interpolate(sample.channels[1]);
+                        // Each native layer applies its envelope and Volume
+                        // before summing into HPF, Drive and the other inserts.
+                        const float layerGain = weight * settings.layerInputGain;
+                        left += (sourceLeft * inputEnvelope) * layerGain;
+                        right += (sourceRight * inputEnvelope) * layerGain;
+                        voice.positions[layer] = voice.positions[layer] >= 1.0 ? 2.0
+                            : std::min(1.0, voice.positions[layer]
+                                + (1.0 / sampleRate_)
+                                    / (static_cast<double>(sample.length()) / sample.sampleRate)
+                                    * pitchRatio);
                         anyLayerPlaying = true;
                     }
+                    // The native outer voice runs its inserts over the remainder
+                    // of the current render span after the sampler finishes.
+                    // Retire it at the span boundary, preserving that final tail.
                     if (!anyLayerPlaying)
-                    {
-                        voice.active = false;
-                        continue;
-                    }
+                        finishedSamples[static_cast<std::size_t>(&voice - voices_.data())] = true;
                     if (settings.highPassEnabled)
                     {
                         left = highPass(left, voice.highPassLeft);
@@ -690,15 +857,18 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                     }
                     // Quantize the held raw sample with the current depth so
                     // automation changes the sound even between hold boundaries.
-                    left = crushQuantize(left, crusher.quantizationDivisor);
-                    right = crushQuantize(right, crusher.quantizationDivisor);
+                    if (crusher.quantizationDivisor != 0.0f)
+                    {
+                        left = crushQuantize(left, crusher.quantizationDivisor);
+                        right = crushQuantize(right, crusher.quantizationDivisor);
+                    }
                     if (settings.filterEnabled)
                     {
                         left = lowPass(left, voice.lowPassLeft);
                         right = lowPass(right, voice.lowPassRight);
                     }
-                    left *= envelope * lengthEnvelope;
-                    right *= envelope * lengthEnvelope;
+                    left *= envelope;
+                    right *= envelope;
                     if (audible)
                     {
                         dryLeft += left * leftPan * voice.velocity;
@@ -707,12 +877,14 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                     ++voice.elapsedFrames;
             }
 
-            // c7a000 compresses the panned sum of a pad's voices, then applies
-            // pad volume. All sends receive that post-compressor, post-volume signal.
-            compressor.process(dryLeft, dryRight);
+            // Pad volume follows the compressor; its detector sees the fixed boost.
+            // All sends receive the resulting post-volume, post-compressor signal.
             const float padOutputGain = padGain.next();
+            compressor.process(dryLeft, dryRight);
             dryLeft *= padOutputGain;
             dryRight *= padOutputGain;
+            dryLeft *= settings.outputTrim;
+            dryRight *= settings.outputTrim;
 
             const float parallelGain = auxGain.next();
             const float distortionGain = distortionSend.next();
@@ -744,12 +916,16 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                 padDelaySendRight_[frame - start] += dryRight * settings.delay;
             }
         }
-        if (settings.highPassEnabled)
-            for (auto& voice : voices_[pad])
-                for (auto* state : { &voice.highPassLeft, &voice.highPassRight })
+        for (auto* voice : padVoices)
+        {
+            if (finishedSamples[static_cast<std::size_t>(voice - voices_.data())])
+                voice->active = false;
+            if (settings.highPassEnabled)
+                for (auto* state : { &voice->highPassLeft, &voice->highPassRight })
                     for (auto& value : *state)
                         if (std::abs(value) <= 1.0e-8f)
                             value = 0.0f;
+        }
     }
 
     distortion_.process(distortionSends_[0].data(), distortionSends_[1].data(),

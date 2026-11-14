@@ -25,29 +25,68 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
                          juce::Colour tint, float stroke)
 {
     g.setColour(tint);
+    if (pad >= 9 && pad <= 12)
+    {
+        const float heightRatio = pad == 12 ? 1.0f : 0.85f;
+        const float width = std::min(icon.getWidth(), icon.getHeight() / heightRatio);
+        icon = icon.withSizeKeepingCentre(width, width * heightRatio);
+    }
     const auto drawDrum = [&g, stroke](juce::Rectangle<float> box, bool sticks) {
-        auto body = box.withSizeKeepingCentre(box.getWidth() * 0.68f, box.getHeight() * 0.50f);
-        g.drawEllipse(body.removeFromTop(body.getHeight() * 0.33f), stroke);
-        g.drawLine(body.getX(), body.getY(), body.getX(), body.getBottom(), stroke);
-        g.drawLine(body.getRight(), body.getY(), body.getRight(), body.getBottom(), stroke);
-        g.drawLine(body.getX(), body.getBottom(), body.getRight(), body.getBottom(), stroke);
+        // Samples & Sounds 2:35: shallow shell, lugs, and distinct strike marks.
+        const float width = std::min(box.getWidth(), box.getHeight());
+        box = box.withSizeKeepingCentre(width, width);
+        const auto point = [&box](float x, float y) {
+            return juce::Point<float>(box.getX() + box.getWidth() * x,
+                                      box.getY() + box.getHeight() * y);
+        };
+        const float lineWidth = stroke * 0.65f;
+        const auto shell = juce::Rectangle<float>(point(0.03f, 0.59f), point(0.97f, 0.91f));
+        g.drawRoundedRectangle(shell, width * 0.025f, lineWidth);
+        g.drawLine({ point(0.05f, 0.64f), point(0.95f, 0.64f) }, lineWidth);
+        g.drawLine({ point(0.05f, 0.87f), point(0.95f, 0.87f) }, lineWidth);
+        for (const float x : { 0.12f, 0.37f, 0.63f, 0.88f })
+            g.drawLine({ point(x, 0.69f), point(x, 0.82f) }, stroke);
         if (sticks)
         {
-            g.drawLine(box.getCentreX() - box.getWidth() * 0.22f, box.getY(),
-                       box.getCentreX() + box.getWidth() * 0.10f, box.getCentreY(), stroke);
-            g.drawLine(box.getCentreX() + box.getWidth() * 0.22f, box.getY(),
-                       box.getCentreX() - box.getWidth() * 0.10f, box.getCentreY(), stroke);
+            g.drawLine({ point(0.32f, 0.50f), point(1.0f, 0.27f) }, stroke);
+            g.drawLine({ point(0.18f, 0.40f), point(0.09f, 0.30f) }, lineWidth);
+            g.drawLine({ point(0.25f, 0.35f), point(0.22f, 0.20f) }, lineWidth);
+            g.drawLine({ point(0.33f, 0.35f), point(0.37f, 0.22f) }, lineWidth);
+        }
+        else
+        {
+            for (const float radius : { 0.12f, 0.20f, 0.28f })
+            {
+                juce::Path wave;
+                wave.addCentredArc(point(0.5f, 0.39f).x, point(0.5f, 0.39f).y,
+                                   width * radius, width * radius, 0.0f,
+                                   -juce::MathConstants<float>::pi * 0.30f,
+                                   juce::MathConstants<float>::pi * 0.30f, true);
+                g.strokePath(wave, juce::PathStrokeType(lineWidth));
+            }
+            g.drawLine({ point(0.13f, 0.49f), point(0.87f, 0.49f) }, lineWidth);
         }
     };
     const auto drawCymbal = [&g, stroke](juce::Rectangle<float> box, float tilt) {
+        const float slope = tilt / box.getHeight();
+        const float width = std::min(box.getWidth(), box.getHeight());
+        box = box.withSizeKeepingCentre(width, width);
         const auto centre = box.getCentre();
-        g.drawLine(centre.x, centre.y, centre.x, box.getBottom(), stroke);
-        g.drawLine(centre.x - box.getWidth() * 0.18f, box.getBottom(),
-                   centre.x + box.getWidth() * 0.18f, box.getBottom(), stroke);
-        g.drawLine(box.getX(), centre.y + tilt, box.getRight(), centre.y - tilt, stroke * 1.2f);
-        g.drawEllipse(box.withSizeKeepingCentre(box.getWidth() * 0.12f,
-                                                box.getHeight() * 0.10f)
-                          .translated(0.0f, -box.getHeight() * 0.11f), stroke);
+        const float rise = slope * width;
+        // Shallow disc and central bell, as in Samples & Sounds 2:35.
+        juce::Path disc;
+        disc.startNewSubPath(box.getX(), centre.y + rise);
+        disc.lineTo(centre.x - width * 0.10f, centre.y - width * 0.09f);
+        disc.lineTo(centre.x, centre.y - width * 0.15f);
+        disc.lineTo(centre.x + width * 0.10f, centre.y - width * 0.09f);
+        disc.lineTo(box.getRight(), centre.y - rise);
+        disc.lineTo(centre.x, centre.y + width * 0.07f);
+        disc.closeSubPath();
+        g.fillPath(disc);
+        g.drawLine(centre.x, centre.y - width * 0.23f,
+                   centre.x, centre.y - width * 0.15f, stroke * 0.65f);
+        g.drawLine(centre.x, centre.y + width * 0.07f,
+                   centre.x, box.getBottom(), stroke * 0.65f);
     };
     switch (pad)
     {
@@ -77,68 +116,231 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         case 2: drawDrum(icon, false); break;
         case 3:
         {
-            for (int finger = 0; finger < 4; ++finger)
-            {
-                const float x = icon.getX() + icon.getWidth() * (0.30f + finger * 0.11f);
-                g.drawLine(x, icon.getY() + icon.getHeight() * (0.12f + finger * 0.03f),
-                           x + icon.getWidth() * 0.10f, icon.getCentreY(), stroke);
-            }
-            juce::Path palm;
-            palm.addArc(icon.getX() + icon.getWidth() * 0.24f,
-                        icon.getCentreY() - icon.getHeight() * 0.08f,
-                        icon.getWidth() * 0.55f, icon.getHeight() * 0.55f,
-                        -0.4f, juce::MathConstants<float>::pi + 0.55f, true);
-            g.strokePath(palm, juce::PathStrokeType(stroke));
+            const float width = std::min(icon.getWidth(), icon.getHeight());
+            const auto box = icon.withSizeKeepingCentre(width, width);
+            const auto point = [&box, width](float x, float y) {
+                return juce::Point<float>(box.getX() + width * x, box.getY() + width * y);
+            };
+            // Rounded fingers and an angled palm, rather than a vertical comb.
+            juce::Path hand;
+            hand.startNewSubPath(point(0.34f, 0.51f));
+            hand.lineTo(point(0.61f, 0.22f));
+            hand.quadraticTo(point(0.68f, 0.16f), point(0.71f, 0.23f));
+            hand.lineTo(point(0.43f, 0.55f));
+            hand.lineTo(point(0.73f, 0.28f));
+            hand.quadraticTo(point(0.80f, 0.24f), point(0.81f, 0.32f));
+            hand.lineTo(point(0.52f, 0.62f));
+            hand.lineTo(point(0.80f, 0.39f));
+            hand.quadraticTo(point(0.87f, 0.36f), point(0.85f, 0.44f));
+            hand.lineTo(point(0.59f, 0.70f));
+            hand.lineTo(point(0.76f, 0.56f));
+            hand.quadraticTo(point(0.83f, 0.54f), point(0.80f, 0.62f));
+            hand.lineTo(point(0.48f, 0.91f));
+            hand.cubicTo(point(0.29f, 1.04f), point(0.09f, 0.85f), point(0.14f, 0.66f));
+            hand.lineTo(point(0.30f, 0.36f));
+            hand.quadraticTo(point(0.34f, 0.30f), point(0.38f, 0.37f));
+            hand.lineTo(point(0.30f, 0.56f));
+            g.strokePath(hand, juce::PathStrokeType(stroke * 0.65f,
+                         juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            juce::Path rearHand;
+            rearHand.startNewSubPath(point(0.20f, 0.87f));
+            rearHand.cubicTo(point(0.04f, 0.77f), point(0.05f, 0.65f), point(0.12f, 0.52f));
+            rearHand.lineTo(point(0.24f, 0.30f));
+            rearHand.quadraticTo(point(0.30f, 0.24f), point(0.33f, 0.32f));
+            rearHand.lineTo(point(0.54f, 0.15f));
+            rearHand.quadraticTo(point(0.60f, 0.11f), point(0.63f, 0.20f));
+            g.strokePath(rearHand, juce::PathStrokeType(stroke * 0.55f,
+                         juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            g.drawLine({ point(0.77f, 0.16f), point(0.80f, 0.04f) }, stroke * 0.55f);
+            g.drawLine({ point(0.83f, 0.20f), point(0.92f, 0.11f) }, stroke * 0.55f);
+            g.drawLine({ point(0.87f, 0.26f), point(0.99f, 0.23f) }, stroke * 0.55f);
             break;
         }
         case 4: drawCymbal(icon, 0.0f); break;
         case 5:
-            drawCymbal(icon.translated(0.0f, -icon.getHeight() * 0.08f), 0.0f);
-            g.drawLine(icon.getX(), icon.getCentreY() + icon.getHeight() * 0.10f,
-                       icon.getRight(), icon.getCentreY() + icon.getHeight() * 0.10f, stroke);
+        {
+            // Open hi-hat: two separated discs, not a disc over a straight bar.
+            const float width = std::min(icon.getWidth(), icon.getHeight());
+            const auto box = icon.withSizeKeepingCentre(width, width);
+            drawCymbal(box.translated(0.0f, -width * 0.08f), 0.0f);
+            const auto centre = box.getCentre();
+            juce::Path lowerDisc;
+            lowerDisc.startNewSubPath(box.getX(), centre.y + width * 0.10f);
+            lowerDisc.lineTo(centre.x, centre.y + width * 0.04f);
+            lowerDisc.lineTo(box.getRight(), centre.y + width * 0.10f);
+            lowerDisc.lineTo(centre.x, centre.y + width * 0.17f);
+            lowerDisc.closeSubPath();
+            g.fillPath(lowerDisc);
+            // Small vibration marks distinguish the open hat in the reference.
+            const auto point = [&box](float x, float y) {
+                return juce::Point<float>(box.getX() + box.getWidth() * x,
+                                          box.getY() + box.getHeight() * y);
+            };
+            for (const auto offset : { juce::Point<float>(0.03f, 0.23f),
+                                       juce::Point<float>(0.86f, 0.68f) })
+            {
+                juce::Path motion;
+                motion.startNewSubPath(point(offset.x, offset.y));
+                motion.lineTo(point(offset.x + 0.03f, offset.y + 0.06f));
+                motion.lineTo(point(offset.x + 0.09f, offset.y + 0.03f));
+                motion.lineTo(point(offset.x + 0.12f, offset.y + 0.09f));
+                g.strokePath(motion, juce::PathStrokeType(stroke * 0.55f));
+            }
             break;
+        }
         case 6: drawCymbal(icon, icon.getHeight() * 0.11f); break;
-        case 7: drawCymbal(icon, -icon.getHeight() * 0.04f); break;
-        case 8: drawCymbal(icon, icon.getHeight() * 0.14f); break;
-        case 9: drawDrum(icon.translated(-icon.getWidth() * 0.11f, 0.0f), false); break;
-        case 10: drawDrum(icon, false); break;
-        case 11: drawDrum(icon.translated(icon.getWidth() * 0.11f, 0.0f), false); break;
-        case 12:
-            g.drawEllipse(icon.withSizeKeepingCentre(icon.getWidth() * 0.25f, icon.getHeight() * 0.34f)
-                              .translated(-icon.getWidth() * 0.14f, -icon.getHeight() * 0.10f), stroke);
-            g.drawEllipse(icon.withSizeKeepingCentre(icon.getWidth() * 0.25f, icon.getHeight() * 0.34f)
-                              .translated(icon.getWidth() * 0.14f, icon.getHeight() * 0.08f), stroke);
-            g.drawLine(icon.getCentreX() - icon.getWidth() * 0.07f, icon.getCentreY(),
-                       icon.getX() + icon.getWidth() * 0.16f, icon.getBottom(), stroke);
-            g.drawLine(icon.getCentreX() + icon.getWidth() * 0.08f, icon.getCentreY(),
-                       icon.getRight() - icon.getWidth() * 0.10f, icon.getY(), stroke);
+        case 7:
+        {
+            const float width = std::min(icon.getWidth(), icon.getHeight());
+            const auto box = icon.withSizeKeepingCentre(width, width);
+            // Leave room for the pedal below the stand, as in Samples & Sounds.
+            drawCymbal(box.withTrimmedBottom(width * 0.18f), -width * 0.04f);
+            const auto point = [&box, width](float x, float y) {
+                return juce::Point<float>(box.getX() + width * x, box.getY() + width * y);
+            };
+            juce::Path pedal;
+            pedal.startNewSubPath(point(0.48f, 0.76f));
+            pedal.lineTo(point(0.54f, 0.79f));
+            pedal.lineTo(point(0.40f, 0.98f));
+            pedal.lineTo(point(0.35f, 0.96f));
+            pedal.closeSubPath();
+            g.fillPath(pedal);
+            g.drawLine({ point(0.55f, 0.78f), point(0.64f, 0.81f) }, stroke * 0.65f);
             break;
+        }
+        case 8: drawCymbal(icon, icon.getHeight() * 0.14f); break;
+        case 9:
+        case 10:
+        case 11:
+        {
+            // Samples & Sounds 2:35: the same kit, with the selected tom filled.
+            const auto box = [&icon](float x, float y, float w, float h) {
+                return juce::Rectangle<float>(icon.getX() + x * icon.getWidth(),
+                                              icon.getY() + y * icon.getHeight(),
+                                              w * icon.getWidth(), h * icon.getHeight());
+            };
+            const auto tom = [&g, stroke, &box](float x, float y, float w, float h,
+                                               bool selected) {
+                const auto shell = box(x, y, w, h);
+                const float rimHeight = shell.getHeight() * 0.32f;
+                juce::Path body;
+                body.startNewSubPath(shell.getX(), shell.getY() + rimHeight * 0.5f);
+                body.lineTo(shell.getX(), shell.getBottom() - rimHeight * 0.5f);
+                body.cubicTo(shell.getX(), shell.getBottom() + rimHeight * 0.15f,
+                             shell.getRight(), shell.getBottom() + rimHeight * 0.15f,
+                             shell.getRight(), shell.getBottom() - rimHeight * 0.5f);
+                body.lineTo(shell.getRight(), shell.getY() + rimHeight * 0.5f);
+                if (selected)
+                {
+                    body.closeSubPath();
+                    g.fillPath(body);
+                    g.fillEllipse(shell.withHeight(rimHeight));
+                }
+                else
+                {
+                    g.strokePath(body, juce::PathStrokeType(stroke * 0.65f));
+                    g.drawEllipse(shell.withHeight(rimHeight), stroke * 0.65f);
+                }
+            };
+            tom(0.02f, 0.08f, 0.32f, 0.30f, pad == 9);
+            tom(0.40f, 0.08f, 0.32f, 0.30f, pad == 10);
+            g.drawEllipse(box(0.16f, 0.47f, 0.44f, 0.47f), stroke * 0.65f);
+            tom(0.65f, 0.48f, 0.33f, 0.41f, pad == 11);
+            g.drawLine(icon.getX() + icon.getWidth() * 0.21f, icon.getBottom() - stroke,
+                       icon.getX() + icon.getWidth() * 0.16f, icon.getBottom(), stroke * 0.65f);
+            g.drawLine(icon.getX() + icon.getWidth() * 0.56f, icon.getBottom() - stroke,
+                       icon.getX() + icon.getWidth() * 0.61f, icon.getBottom(), stroke * 0.65f);
+            break;
+        }
+        case 12:
+        {
+            // Paired maracas: heads above, handles angled inward, with a rim gap.
+            for (const float side : { -1.0f, 1.0f })
+            {
+                const auto centre = juce::Point<float>(icon.getCentreX() + side * icon.getWidth() * 0.28f,
+                                                       icon.getY() + icon.getHeight() * (side < 0 ? 0.22f : 0.43f));
+                const auto rotation = juce::AffineTransform::rotation(side * 0.48f, centre.x, centre.y);
+                const auto head = juce::Rectangle<float>(icon.getWidth() * 0.25f,
+                                                         icon.getHeight() * 0.35f).withCentre(centre);
+                juce::Path upper, handle;
+                upper.addEllipse(head);
+                // Clip the two halves separately so the stripe stays transparent.
+                {
+                    juce::Graphics::ScopedSaveState saved(g);
+                    g.addTransform(rotation);
+                    g.reduceClipRegion(head.withHeight(head.getHeight() * 0.47f).toNearestInt());
+                    g.fillPath(upper);
+                }
+                {
+                    juce::Graphics::ScopedSaveState saved(g);
+                    g.addTransform(rotation);
+                    g.reduceClipRegion(head.withTrimmedTop(head.getHeight() * 0.57f).toNearestInt());
+                    g.fillPath(upper);
+                }
+                handle.addRoundedRectangle(centre.x - icon.getWidth() * 0.026f,
+                                           head.getBottom() + icon.getHeight() * 0.03f,
+                                           icon.getWidth() * 0.052f, icon.getHeight() * 0.37f,
+                                           icon.getWidth() * 0.026f);
+                g.fillPath(handle, rotation);
+            }
+            break;
+        }
         case 13:
         {
+            const float width = std::min(icon.getWidth(), icon.getHeight());
+            const auto box = icon.withSizeKeepingCentre(width, width);
+            const auto point = [&box, width](float x, float y) {
+                return juce::Point<float>(box.getX() + width * x, box.getY() + width * y);
+            };
+            // The reference triangle has an open lower-right corner and a beater.
             juce::Path triangle;
-            triangle.startNewSubPath(icon.getCentreX(), icon.getY() + icon.getHeight() * 0.12f);
-            triangle.lineTo(icon.getX() + icon.getWidth() * 0.18f, icon.getBottom() - icon.getHeight() * 0.12f);
-            triangle.lineTo(icon.getRight() - icon.getWidth() * 0.18f, icon.getBottom() - icon.getHeight() * 0.12f);
-            triangle.closeSubPath();
-            g.strokePath(triangle, juce::PathStrokeType(stroke));
-            g.drawLine(icon.getRight() - icon.getWidth() * 0.12f, icon.getY(),
-                       icon.getCentreX() + icon.getWidth() * 0.12f, icon.getCentreY(), stroke);
+            triangle.startNewSubPath(point(0.81f, 0.85f));
+            triangle.lineTo(point(0.12f, 0.85f));
+            triangle.lineTo(point(0.51f, 0.17f));
+            triangle.lineTo(point(0.87f, 0.77f));
+            g.strokePath(triangle, juce::PathStrokeType(stroke * 0.85f,
+                         juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            g.drawEllipse(juce::Rectangle<float>(width * 0.08f, width * 0.08f)
+                              .withCentre(point(0.51f, 0.12f)), stroke * 0.55f);
+            g.setColour(tint.withMultipliedAlpha(0.6f));
+            g.drawLine({ point(0.55f, 0.55f), point(0.94f, 0.27f) }, stroke * 0.65f);
+            g.setColour(tint);
+            g.fillEllipse(juce::Rectangle<float>(width * 0.09f, width * 0.09f)
+                              .withCentre(point(0.55f, 0.55f)));
             break;
         }
         case 14:
-            for (float factor : { 0.82f, 0.58f, 0.32f })
-                g.drawEllipse(icon.withSizeKeepingCentre(icon.getWidth() * factor,
-                                                         icon.getHeight() * factor), stroke);
-            break;
-        default:
-            for (int star = 0; star < 5; ++star)
+        {
+            const float width = std::min(icon.getWidth(), icon.getHeight());
+            for (int ring = 0; ring < 4; ++ring)
             {
-                const float x = icon.getX() + icon.getWidth() * (0.18f + (star % 3) * 0.31f);
-                const float y = icon.getY() + icon.getHeight() * (0.25f + (star / 3) * 0.42f);
-                g.drawLine(x - 3.0f, y, x + 3.0f, y, stroke);
-                g.drawLine(x, y - 3.0f, x, y + 3.0f, stroke);
+                const float diameter = width * (0.82f - ring * 0.20f);
+                g.setColour(tint.withMultipliedAlpha(0.18f + ring * 0.27f));
+                g.drawEllipse(icon.withSizeKeepingCentre(diameter, diameter), stroke * 0.85f);
             }
             break;
+        }
+        default:
+        {
+            const float width = std::min(icon.getWidth(), icon.getHeight());
+            const auto box = icon.withSizeKeepingCentre(width, width);
+            // Unevenly spaced, varied sparkles from Samples & Sounds 2:35.
+            const float sparkles[][3] = {
+                { 0.41f, 0.12f, 0.070f }, { 0.73f, 0.28f, 0.045f },
+                { 0.13f, 0.45f, 0.085f }, { 0.45f, 0.50f, 0.040f },
+                { 0.73f, 0.57f, 0.090f }, { 0.96f, 0.39f, 0.030f },
+                { 0.30f, 0.81f, 0.060f }, { 0.69f, 0.80f, 0.045f }
+            };
+            for (const auto& sparkle : sparkles)
+            {
+                juce::Path star;
+                star.addStar({ box.getX() + width * sparkle[0],
+                               box.getY() + width * sparkle[1] },
+                             4, width * sparkle[2] * 0.38f, width * sparkle[2]);
+                g.fillPath(star);
+            }
+            break;
+        }
     }
 }
 

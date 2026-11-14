@@ -39,7 +39,7 @@ PatternScheduler::PatternScheduler(PatternId activePattern) noexcept
 void PatternScheduler::clearTimelineState() noexcept
 {
     pendingCount_ = 0;
-    phaseQuarterNotes_ = 0.0;
+    patternOriginQuarterNotes_ = 0.0;
 }
 
 void PatternScheduler::reset(PatternId activePattern) noexcept
@@ -116,7 +116,7 @@ std::size_t PatternScheduler::planBlock(const SchedulerTransport& transport,
         clearTimelineState();
         // Starting/seeking the DAW follows its timeline. A MIDI-triggered
         // switch below still deliberately starts the new pattern at zero.
-        phaseQuarterNotes_ = blockQuarterNote;
+        patternOriginQuarterNotes_ = 0.0;
     }
 
     wasPlaying_ = true;
@@ -126,11 +126,15 @@ std::size_t PatternScheduler::planBlock(const SchedulerTransport& transport,
         const auto offset = std::clamp(source.sampleOffset, 0, transport.blockSize);
         const double grid = gridQuarterNotes(source.quantization);
         PendingTrigger trigger;
+        // Captured quantized pattern triggers consume MIDI at callback granularity,
+        // including an input inside the first callback of a bar.
+        trigger.atCallbackStart = source.quantization != PatternQuantization::off;
         trigger.patternId = source.patternId;
         trigger.sequence = ++nextSequence_;
         const double eventPpq = blockQuarterNote
                                 + static_cast<double>(offset) / samplesPerQuarter;
-        trigger.targetQuarterNote = boundaryAtOrAfter(eventPpq, grid);
+        trigger.targetQuarterNote = boundaryAtOrAfter(
+            trigger.atCallbackStart ? blockQuarterNote : eventPpq, grid);
         addOrReplace(trigger);
     }
 
@@ -147,7 +151,7 @@ std::size_t PatternScheduler::planBlock(const SchedulerTransport& transport,
         {
             due[dueCount++] = {
                 static_cast<std::int32_t>(std::clamp<std::int64_t>(
-                    relative, 0, transport.blockSize)),
+                    pending.atCallbackStart ? 0 : relative, 0, transport.blockSize)),
                 pending.patternId,
                 pending.sequence
             };
@@ -180,7 +184,9 @@ std::size_t PatternScheduler::planBlock(const SchedulerTransport& transport,
 
     std::size_t segmentCount = 0;
     std::int32_t cursor = 0;
-    double phase = phaseQuarterNotes_;
+    // Derive phase from the current host timeline, preserving its precision.
+    // Accumulating callback durations drifts from host PPQ at sample boundaries.
+    double phase = blockQuarterNote - patternOriginQuarterNotes_;
     const auto appendSegment = [&](std::int32_t start, std::int32_t end,
                                    PatternId pattern, double startPhase) {
         if (end <= start || segmentCount >= destination.size())
@@ -194,12 +200,12 @@ std::size_t PatternScheduler::planBlock(const SchedulerTransport& transport,
         appendSegment(cursor, offset, activePattern_, phase);
         phase += static_cast<double>(offset - cursor) / samplesPerQuarter;
         activePattern_ = changes[index].patternId;
+        patternOriginQuarterNotes_ = blockQuarterNote
+            + static_cast<double>(offset) / samplesPerQuarter;
         phase = 0.0;
         cursor = offset;
     }
     appendSegment(cursor, transport.blockSize, activePattern_, phase);
-    phaseQuarterNotes_ = phase
-                         + static_cast<double>(transport.blockSize - cursor) / samplesPerQuarter;
 
     expectedSampleStart_ = transport.absoluteSampleStart + transport.blockSize;
     expectedQuarterNote_ = blockQuarterNote
