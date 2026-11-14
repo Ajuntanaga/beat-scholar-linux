@@ -9,6 +9,10 @@ on:
         required: true
         type: boolean
         default: false
+      upload_candidate:
+        description: 'Save source-built candidates and three synthetic quantization menu previews for one day'
+        type: boolean
+        default: false
       upload_reports:
         description: 'Upload diagnostic reports for one day (uses artifact storage allowance)'
         type: boolean
@@ -84,6 +88,29 @@ jobs:
             'build/ci/BeatScholarLinux_artefacts/Release/Standalone/Beat Scholar Linux' \
             build/ci/standalone-settings --midi-host build/ci/tools/actual_vst3_host \
             --plugin 'build/ci/BeatScholarLinux_artefacts/Release/VST3/Beat Scholar Linux.vst3'
+      - name: Package source-built candidates and synthetic menu previews
+        if: ${{ success() && inputs.upload_candidate }}
+        run: |
+          # Explicit files only: no factory content, reference media or host captures.
+          tar -czf build/ci/source-candidate.tar.gz -C build/ci \
+            'BeatScholarLinux_artefacts/Release/Standalone/Beat Scholar Linux' \
+            'BeatScholarLinux_artefacts/Release/VST3/Beat Scholar Linux.vst3/Contents/x86_64-linux/Beat Scholar Linux.so' \
+            'BeatScholarLinux_artefacts/Release/VST3/Beat Scholar Linux.vst3/Contents/Resources/moduleinfo.json' \
+            tools/actual_vst3_host \
+            editor-regression/tutorial-header-factory-menu-0.png \
+            editor-regression/tutorial-header-factory-menu-6.png \
+            editor-regression/tutorial-header-factory-menu-12.png
+          sha256sum build/ci/source-candidate.tar.gz > build/ci/source-candidate.sha256
+      - name: Save source-built candidates only
+        if: ${{ success() && inputs.upload_candidate }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: source-candidate-${{ github.sha }}
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            build/ci/source-candidate.tar.gz
+            build/ci/source-candidate.sha256
       - name: Save diagnostics only
         if: ${{ always() && inputs.upload_reports }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
