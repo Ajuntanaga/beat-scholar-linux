@@ -963,12 +963,12 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
         const auto crusher = crushParameters(master_.crush);
         if (masterEnabled_)
             masterCompressor_.setAmount(master_.compression, sampleRate_);
-        // Native master LPF: two serial TPT stages, Q 0.1..2.5. Match the pad
-        // filter's Nyquist guard for host rates below the native cutoff range.
-        const float frequency = std::min(filterCutoffHz(master_.cutoff),
-                                          static_cast<float>(sampleRate_ * 0.499));
-        const float g = std::tan(3.14159265358979323846f * frequency
-                                 / static_cast<float>(sampleRate_));
+        // Native master LPF: two serial TPT stages, Q 0.1..2.5. Original-plugin
+        // captures at 48 and 96 kHz retain a 44.1 kHz coefficient rate, including
+        // after a cutoff retune. Preserve that response independently of the host.
+        constexpr float masterFilterRate = 44100.0f;
+        const float frequency = filterCutoffHz(master_.cutoff);
+        const float g = std::tan(3.14159265358979323846f * frequency / masterFilterRate);
         const float inverseQ = 1.0f / (0.1f + 2.4f * master_.resonance);
         const float h = 1.0f / (1.0f + inverseQ * g + g * g);
         const auto lowPass = [g, inverseQ, h](float input, auto& stages) {
