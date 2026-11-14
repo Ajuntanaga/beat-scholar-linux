@@ -210,6 +210,8 @@ juce::var projectToVar(const ProjectState& state)
     set(global, "auditionDuringPlayback", state.global.auditionDuringPlayback);
     set(global, "kitLocked", state.global.kitLocked);
     set(global, "multiOutput", state.global.multiOutput);
+    if (state.global.quantization)
+        set(global, "quantization", quantizationName(*state.global.quantization));
     set(root, "global", global);
 
     auto master = object();
@@ -584,6 +586,18 @@ bool projectFromVar(const juce::var& root, ProjectState& state)
     candidate.global.auditionDuringPlayback = readBool(global, "auditionDuringPlayback", true);
     candidate.global.kitLocked = readBool(global, "kitLocked", false);
     candidate.global.multiOutput = readBool(global, "multiOutput", false);
+    candidate.global.quantization.reset();
+    if (global.hasProperty("quantization"))
+    {
+        const auto value = get(global, "quantization");
+        if (!value.isString()) return false;
+        for (const auto choice : { PatternQuantization::whole, PatternQuantization::half,
+                                  PatternQuantization::quarter, PatternQuantization::eighth,
+                                  PatternQuantization::sixteenth, PatternQuantization::thirtySecond })
+            if (value.toString() == quantizationName(choice))
+                candidate.global.quantization = choice;
+        if (!candidate.global.quantization) return false;
+    }
 
     readMaster(get(root, "master"), candidate.master, version);
     if (!readRandomizer(get(root, "randomizer"), candidate.randomizer))
@@ -1238,7 +1252,24 @@ bool importLegacyPresetJson(const juce::String& json, ProjectState& destination)
         && !importLegacyRandomizerJson(json, candidate.randomizer))
         return false;
     candidate.global.swingPercent = legacyNumber(get(get(root, "Params"), "Swing"), 0.0f);
-    const auto transport = get(get(get(root, "Seq"), "Seq"), "Transport");
+    const auto sequencer = get(get(root, "Seq"), "Seq");
+    const auto live = get(get(sequencer, "Slots"), "Live");
+    if (live.hasProperty("quantize"))
+    {
+        const auto value = get(live, "quantize");
+        if (!value.isDouble() && !value.isInt() && !value.isInt64()) return false;
+        const std::array<std::pair<double, PatternQuantization>, 6> choices {{
+            {4.0, PatternQuantization::whole}, {2.0, PatternQuantization::half},
+            {1.0, PatternQuantization::quarter}, {0.5, PatternQuantization::eighth},
+            {0.25, PatternQuantization::sixteenth}, {0.125, PatternQuantization::thirtySecond}
+        }};
+        const auto found = std::find_if(choices.begin(), choices.end(), [&value](const auto& choice) {
+            return static_cast<double>(value) == choice.first;
+        });
+        if (found == choices.end()) return false;
+        candidate.global.quantization = found->second;
+    }
+    const auto transport = get(sequencer, "Transport");
     candidate.global.beatsPerMinute = legacyNumber(get(get(transport, "BPM"), "value"), 120.0f);
 
     const auto sequenceRoot = get(get(root, "Seq"), "Patterns");

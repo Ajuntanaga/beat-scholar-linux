@@ -370,7 +370,7 @@ std::vector<std::uint8_t> constantPcm16Wav(int sampleRate, int frames)
 }
 
 std::vector<float> renderSequencedGateCase(int sampleRate, int blockSize, bool oneShot,
-                                           bool useHostClock = false)
+                                           bool useHostClock = false, std::vector<int>* releases = nullptr)
 {
     // A 4/4 pattern has just one enabled one-slice beat at time zero.  Its
     // native gate is 98% of one beat; the pattern cannot
@@ -435,6 +435,10 @@ std::vector<float> renderSequencedGateCase(int sampleRate, int blockSize, bool o
         clock.info.setPpqPosition(static_cast<double>(rendered) / sampleRate * bpm / 60.0);
         midi.clear();
         processor.processBlock(buffer, midi);
+        if (releases != nullptr)
+            for (const auto metadata : midi)
+                if (metadata.getMessage().isNoteOff())
+                    releases->push_back(rendered + metadata.samplePosition);
         for (int frame = 0; frame < frames; ++frame)
             output.push_back(buffer.getSample(0, frame));
         rendered += frames;
@@ -545,15 +549,31 @@ void testSequencedOneShotGateUsesBeatDurationAcrossRatesAndBlocks()
     for (const auto sampleRate : rates)
     for (const auto blockSize : blockSizes)
     {
-        const auto gate = static_cast<std::size_t>(std::llround(sampleRate * 0.5 * 0.98)); // Native gate at 120 BPM
-        const auto gated = renderSequencedGateCase(sampleRate, blockSize, false);
+        // Standalone integrates its own clock. Check the musical-duration and
+        // audio/MIDI alignment contracts here; exact original host timestamps
+        // are checked separately against captures below.
+        const auto nominalGate = static_cast<int>(std::llround(sampleRate * 0.5 * 0.98));
+        std::vector<int> releases;
+        const auto gated = renderSequencedGateCase(sampleRate, blockSize, false, false, &releases);
         const auto oneShot = renderSequencedGateCase(sampleRate, blockSize, true);
+        check(releases.size() == 1, "standalone single beat emits exactly one release");
+        if (releases.size() != 1)
+            continue;
+        const auto release = releases.front();
+        check(std::abs(release - nominalGate) <= 1,
+              "standalone release is within one sample of the 98-percent beat duration");
+        if (release <= 0 || release + 1 >= static_cast<int>(gated.size()))
+        {
+            check(false, "standalone release falls inside the rendered beat");
+            continue;
+        }
+        const auto gate = static_cast<std::size_t>(release);
         check(std::abs(gated[gate - 1]) > 0.1f,
-              "sequenced non-One-Shot renders until the final native gate frame");
+              "standalone non-One-Shot remains audible until its MIDI release");
         check(std::abs(gated[gate]) < 1.0e-6f && std::abs(gated[gate + 1]) < 1.0e-6f,
-              "sequenced non-One-Shot stops exactly at the native 98-percent gate");
+              "standalone non-One-Shot stops exactly at its MIDI release");
         check(std::abs(oneShot[gate]) > 0.1f && std::abs(oneShot[gate + 1]) > 0.1f,
-              "sequenced One Shot continues beyond the beat gate");
+              "standalone One Shot continues beyond the beat gate");
     }
 }
 
@@ -826,7 +846,7 @@ private:
                 {
                     auto& pattern = state.patterns[i];
                     pattern.triggerNote = static_cast<std::uint8_t>(12 + i);
-                    pattern.quantization = bsl::PatternQuantization::quarter;
+                    state.global.quantization = bsl::PatternQuantization::quarter;
                     pattern.bars = {{4, 4}};
                     pattern.lanes = {bsl::LaneState::make(4)};
                     for (auto& beat : pattern.lanes[0].beats)
@@ -1940,8 +1960,10 @@ private:
         {
             auto& state = processor_.projectState();
             state.ui.patternMode = step_ != 22;
-            state.activePattern = 0;
-            state.patterns[0].quantization = values[step_ == 18 ? choice : (choice + 1) % values.size()];
+            state.activePattern = step_ < 18 ? static_cast<std::size_t>(step_ % 2) : 0;
+            state.patterns[0].quantization = bsl::PatternQuantization::off;
+            state.patterns[1].quantization = bsl::PatternQuantization::thirtySecond;
+            state.global.quantization = values[step_ == 18 ? choice : (choice + 1) % values.size()];
             const int width = step_ < 18 ? std::array<int, 3>{960, 1280, 1920}[step_ / 6] : 1280;
             editor_->setSize(width, width * 9 / 16);
             if (factory)
@@ -1986,7 +2008,16 @@ private:
             {
                 const char* title = factory ? (step_ == 23 ? "Wav Body" : "Wav Hit") : labels[choice];
                 if (!factory)
+                {
                     check(item(*menu, "Off") == nullptr, label + " excludes unsupported Off choice");
+                    for (std::size_t i = 0; i < values.size(); ++i)
+                    {
+                        auto* entry = item(*menu, labels[i]);
+                        check(entry != nullptr && entry->getCurrentState().isChecked()
+                                  == (before_.global.quantization == values[i]),
+                              label + " shows the shared value regardless of active pattern");
+                    }
+                }
                 if (factory)
                 {
                     check(item(*menu, "Wrong Pad") == nullptr && item(*menu, "Not Audio") == nullptr
@@ -2007,7 +2038,7 @@ private:
         {
             auto expected = before_;
             const bool edits = step_ < 18 || factory;
-            if (step_ < 18) expected.patterns[0].quantization = values[choice];
+            if (step_ < 18) expected.global.quantization = values[choice];
             if (factory)
                 expected.kit.pads[0].factorySampleIds[static_cast<std::size_t>(step_ - 23)] = step_ == 23
                     ? "test_INST-BD_TYPE-Body_NAME-Wav Body.wav" : "test_INST-BD_TYPE-Hit_NAME-Wav Hit.WAV";
@@ -5416,7 +5447,7 @@ void testQueuedPatternsSurviveStructuralEdits()
             auto& pattern = state.patterns[i];
             pattern.name = std::string(1, static_cast<char>('A' + i));
             pattern.triggerNote = static_cast<std::uint8_t>(12 + i);
-            pattern.quantization = bsl::PatternQuantization::quarter;
+            state.global.quantization = bsl::PatternQuantization::quarter;
             pattern.lanes = { bsl::LaneState::make(4) };
             for (auto& beat : pattern.lanes[0].beats)
                 beat = bsl::BeatState::withSubdivision(1, static_cast<std::uint8_t>(i), 0.8f);
@@ -5588,7 +5619,7 @@ void testShiftExportPreservesPlayingAndQueuedPatterns()
         {
             auto& pattern = state.patterns[i];
             pattern.triggerNote = static_cast<std::uint8_t>(12 + i);
-            pattern.quantization = bsl::PatternQuantization::quarter;
+            state.global.quantization = bsl::PatternQuantization::quarter;
             pattern.lanes = { bsl::LaneState::make(4) };
             for (auto& beat : pattern.lanes.front().beats)
                 beat = bsl::BeatState::withSubdivision(1, static_cast<std::uint8_t>(i), 0.8f);
@@ -5651,7 +5682,8 @@ void testDirectPatternClickOverridesMidiSwitch()
         for (std::size_t i = 0; i < state.patterns.size(); ++i)
         {
             state.patterns[i].triggerNote = static_cast<std::uint8_t>(12 + i);
-            state.patterns[i].quantization = queued ? bsl::PatternQuantization::quarter : bsl::PatternQuantization::off;
+            state.global.quantization = queued ? std::optional {bsl::PatternQuantization::quarter} : std::nullopt;
+            state.patterns[i].quantization = bsl::PatternQuantization::off;
             state.patterns[i].lanes = { bsl::LaneState::make(4) };
             for (auto& beat : state.patterns[i].lanes[0].beats)
                 beat = bsl::BeatState::withSubdivision(1, static_cast<std::uint8_t>(i), 0.8f);
@@ -5696,6 +5728,7 @@ void testDirectPatternClickOverridesMidiSwitch()
               "replace clicked pattern before audio consumes selection");
         processor->projectState().activePattern = 0;
         processor->projectState().patterns[1].triggerNote = 13;
+        processor->projectState().global.quantization.reset();
         processor->projectState().patterns[1].quantization = bsl::PatternQuantization::off;
         processor->markProjectDirty();
         processor->publishProjectStateIfNeeded();

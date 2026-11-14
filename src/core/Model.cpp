@@ -246,6 +246,11 @@ bool ProjectState::isValid() const
         || global.defaultVelocity < 0.0f || global.defaultVelocity > 1.0f)
         return false;
 
+    if (global.quantization
+        && (static_cast<int>(*global.quantization) <= static_cast<int>(PatternQuantization::off)
+            || static_cast<int>(*global.quantization) > static_cast<int>(PatternQuantization::thirtySecond)))
+        return false;
+
     const auto unit = [](float value) {
         return std::isfinite(value) && value >= 0.0f && value <= 1.0f;
     };

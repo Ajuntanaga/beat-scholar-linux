@@ -42,6 +42,8 @@ enum class PatternQuantization
 
 struct GlobalState
 {
+    // Absent only for older reconstruction states with per-pattern timing.
+    std::optional<PatternQuantization> quantization = PatternQuantization::whole;
     double swingPercent = 0.0;
     SwingReference swingReference = SwingReference::quarter;
     double beatsPerMinute = 120.0;
@@ -107,6 +109,7 @@ struct PatternState
 {
     std::string name = "Pattern 1";
     std::uint8_t triggerNote = 12;
+    // Legacy fallback when GlobalState::quantization is absent.
     PatternQuantization quantization = PatternQuantization::whole;
     std::vector<BarState> bars;
     std::vector<LaneState> lanes;

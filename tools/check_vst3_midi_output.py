@@ -55,7 +55,8 @@ def main() -> int:
     cases = []
 
     def run_case(name: str, project: dict, active_frames: int, inputs: list[tuple],
-                 expected: list[tuple], block: int, tempo: float = TEMPO, *, pre_stop_only: bool = False) -> None:
+                 expected: list[tuple], block: int, tempo: float = TEMPO, *, pre_stop_only: bool = False,
+                 legacy_immediate: bool = False) -> None:
         case_dir = args.artifacts_dir / f'{name}-{block}'
         case_dir.mkdir(exist_ok=True)
         preset = case_dir / 'state.json'
@@ -79,14 +80,27 @@ def main() -> int:
             actual = canonical(report['output_midi_events'])
             if pre_stop_only:
                 actual = [event for event in actual if event[0] < active_frames]
-            if actual != sorted(expected):
+            if legacy_immediate:
+                # Off is candidate-only compatibility, not a native mode. The
+                # trigger and host stop must be exact; the intervening musical
+                # grid allows one sample for continuous-clock quantization.
+                wanted = sorted(expected)
+                matches = len(actual) == len(wanted) and all(
+                    event[1:] == target[1:] and abs(event[0] - target[0]) <=
+                    (0 if target[0] in (1001, active_frames) else 1)
+                    for event, target in zip(actual, wanted))
+            else:
+                matches = actual == sorted(expected)
+            if not matches:
                 errors.append('MIDI events differ from expected sample positions, notes, velocities or gates')
             sample_rate, audio = read_pcm24(output)
             if sample_rate != SAMPLE_RATE or audio.any():
                 errors.append('sampler-disabled MIDI mode must output silent audio')
         result = {'name': name, 'block_size': block, 'host_tempo': tempo, 'pass': not errors, 'errors': errors,
                   'expected': sorted(expected), 'actual': canonical(report.get('output_midi_events', [])),
-                  'host_report': str(case_dir / 'host.json'), 'pre_stop_only': pre_stop_only}
+                  'host_report': str(case_dir / 'host.json'), 'pre_stop_only': pre_stop_only,
+                  'timing_contract': ('legacy compatibility: exact trigger/stop, other events within one sample'
+                                      if legacy_immediate else 'exact expected event samples')}
         cases.append(result)
         print(f"{name}/{block}: {'PASS' if not errors else 'FAIL: ' + '; '.join(errors)}", flush=True)
 
@@ -194,8 +208,9 @@ def main() -> int:
     for capture in captures['cases']:
         triggered = copy.deepcopy(state)
         target = copy.deepcopy(triggered['patterns'][0])
-        target.update(name='Captured target', triggerNote=61,
-                      quantization=capture['quantization'])
+        triggered['global']['quantization'] = capture['quantization']
+        # Deliberately conflicting legacy fields prove the shared setting wins.
+        target.update(name='Captured target', triggerNote=61, quantization='off')
         target['lanes'][0]['beats'] = [beat(1) for _ in range(4)]
         triggered['patterns'].append(target)
         for pattern in triggered['patterns']:
@@ -216,7 +231,11 @@ def main() -> int:
                                    ('thirtySecond', 0.125)]:
         triggered = copy.deepcopy(state)
         target = copy.deepcopy(triggered['patterns'][0])
-        target.update(name='Triggered', triggerNote=13, quantization=quantization)
+        if quantization == 'off':
+            triggered['global'].pop('quantization', None)  # Older reconstruction compatibility.
+        else:
+            triggered['global']['quantization'] = quantization
+        target.update(name='Triggered', triggerNote=13, quantization='off')
         target['lanes'][0]['beats'] = [beat(1) for _ in range(4)]
         triggered['patterns'].append(target)
         switch = 1001 if quarters is None else rounded(quarters * FRAMES_PER_QUARTER)
@@ -240,8 +259,9 @@ def main() -> int:
                 # candidate to release its outstanding note when this host stops.
                 if block_expected and block_expected[-1][1] == 'note_on':
                     block_expected.append(note(active, 'note_off', 61, 95))
-            run_case('pattern-' + quantization, triggered, active,
-                     [(1001, 13, 127), (2001, 13, 0)], block_expected, block)
+            run_case(('legacy-pattern-' if quarters is None else 'pattern-') + quantization, triggered, active,
+                     [(1001, 13, 127), (2001, 13, 0)], block_expected, block,
+                     legacy_immediate=quarters is None)
 
     report = {'status': 'pass' if all(c['pass'] for c in cases) else 'fail',
               'module_sha256': digest, 'host_tempo': TEMPO, 'saved_tempo': 120,

@@ -3573,21 +3573,22 @@ void BeatScholarLinuxEditor::showPatternQuantizationMenu()
     const auto& state = processor_.projectState();
     const auto index = state.activePattern;
     if (index >= state.patterns.size()) return;
-    auto menu = quantizationMenu(state.patterns[index].quantization);
+    auto menu = quantizationMenu(state.global.quantization.value_or(state.patterns[index].quantization));
     menu.setLookAndFeel(&lookAndFeel_);
     const auto bounds = designRect(getWidth(), getHeight(), 1161.0f, 88.0f, 99.0f, 18.0f);
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(localAreaToGlobal(bounds)),
         [safe = juce::Component::SafePointer<BeatScholarLinuxEditor>(this),
          revision = processor_.restoredStateRevision(), index,
          identity = state.patterns[index].runtimeId](int result) {
-            if (safe == nullptr || result < 10 || result > 16
+            if (safe == nullptr || result < 11 || result > 16
                 || safe->processor_.restoredStateRevision() != revision) return;
             auto& patterns = safe->processor_.projectState().patterns;
             if (index >= patterns.size() || patterns[index].runtimeId != identity) return;
             const auto value = static_cast<bsl::PatternQuantization>(result - 10);
-            if (patterns[index].quantization == value) return;
+            auto& global = safe->processor_.projectState().global;
+            if (global.quantization == value) return;
             safe->processor_.projectEditor().checkpoint();
-            patterns[index].quantization = value;
+            global.quantization = value;
             safe->updateControlsFromState();
             safe->repaint();
         });
@@ -3610,8 +3611,6 @@ void BeatScholarLinuxEditor::showPatternMenu(std::size_t patternIndex)
     menu.addSeparator();
     menu.addItem(2, "Trigger note down");
     menu.addItem(3, "Trigger note up");
-    menu.addSubMenu("Trigger quantization",
-                    quantizationMenu(processor_.projectState().patterns[patternIndex].quantization));
     menu.setLookAndFeel(&lookAndFeel_);
     menu.showMenuAsync({}, [safe = juce::Component::SafePointer<BeatScholarLinuxEditor>(this), revision = processor_.restoredStateRevision(),
                             patternIndex](int result) {
@@ -3666,14 +3665,6 @@ void BeatScholarLinuxEditor::showPatternMenu(std::size_t patternIndex)
             safe->processor_.projectEditor().removePattern(patternIndex);
         else if (result == 9)
             safe->processor_.projectEditor().duplicatePattern(patternIndex);
-        else if (result >= 10 && result <= 16)
-        {
-            if (state.patterns[patternIndex].quantization
-                == static_cast<bsl::PatternQuantization>(result - 10)) return;
-            safe->processor_.projectEditor().checkpoint();
-            state.patterns[patternIndex].quantization =
-                static_cast<bsl::PatternQuantization>(result - 10);
-        }
         safe->updateControlsFromState();
         safe->repaint();
     });

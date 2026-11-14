@@ -294,6 +294,66 @@ void testExtendedPatternQuantizationCodecRoundTrips()
               "extended pattern quantization reads its stable text name");
     }
 }
+void testSharedQuantizationRecallAndLegacyCompatibility()
+{
+    using Q = bsl::PatternQuantization;
+    auto source = bsl::ProjectState::makeDefault();
+    check(source.global.quantization == Q::whole, "new projects quantize all pattern triggers to 4/4");
+    source.patterns[0].quantization = Q::off;
+    auto second = source.patterns[0];
+    second.triggerNote = 13;
+    second.quantization = Q::thirtySecond;
+    source.patterns.push_back(second);
+    for (const auto value : {Q::whole, Q::half, Q::quarter, Q::eighth, Q::sixteenth, Q::thirtySecond})
+    {
+        source.global.quantization = value;
+        auto restored = bsl::ProjectState::makeDefault();
+        const auto matches = [&] {
+            return restored.global.quantization == value
+                && restored.patterns.size() == 2
+                && restored.patterns[0].quantization == Q::off
+                && restored.patterns[1].quantization == Q::thirtySecond;
+        };
+        check(bsl::statecodec::decodePresetJson(bsl::statecodec::encodePresetJson(source), restored)
+                  && matches(), "preset recall retains the shared setting and legacy pattern fields");
+        const auto host = bsl::statecodec::encode(source);
+        check(bsl::statecodec::decode(host.getData(), host.getSize(), restored) && matches(),
+              "host recall retains every shared quantization choice");
+    }
+
+    auto old = juce::JSON::parse(bsl::statecodec::encodePresetJson(source));
+    old.getProperty("global", {}).getDynamicObject()->removeProperty("quantization");
+    auto restored = bsl::ProjectState::makeDefault();
+    check(bsl::statecodec::decodePresetJson(juce::JSON::toString(old), restored)
+              && !restored.global.quantization && restored.patterns[0].quantization == Q::off
+              && restored.patterns[1].quantization == Q::thirtySecond,
+          "older projects retain distinct per-pattern timing including Off");
+    const auto oldSaved = bsl::statecodec::encodePresetJson(restored);
+    check(!juce::JSON::parse(oldSaved).getProperty("global", {}).hasProperty("quantization"),
+          "saving an older project does not invent a shared setting");
+    const auto oldHost = bsl::statecodec::encode(restored);
+    restored = source;
+    check(bsl::statecodec::decode(oldHost.getData(), oldHost.getSize(), restored)
+              && !restored.global.quantization && restored.patterns[0].quantization == Q::off
+              && restored.patterns[1].quantization == Q::thirtySecond,
+          "older per-pattern timing survives host save and reload");
+
+    const auto before = bsl::statecodec::encodePresetJson(restored);
+    for (const auto& invalid : {juce::var("off"), juce::var("unknown"), juce::var(4), juce::var()})
+    {
+        old.getProperty("global", {}).getDynamicObject()->setProperty("quantization", invalid);
+        check(!bsl::statecodec::decodePresetJson(juce::JSON::toString(old), restored)
+                  && bsl::statecodec::encodePresetJson(restored) == before,
+              "invalid supplied shared quantization is rejected without changing state");
+    }
+    for (const auto invalid : {Q::off, static_cast<Q>(-1), static_cast<Q>(7)})
+    {
+        source.global.quantization = invalid;
+        check(!source.isValid() && bsl::statecodec::encodePresetJson(source).isEmpty(),
+              "invalid shared quantization cannot be published");
+    }
+}
+
 void testDuplicateNativePatternTriggersAreNormalizedOnLoad()
 {
     auto source = bsl::ProjectState::makeDefault();
@@ -339,6 +399,7 @@ juce::String makeVersionOnePreset()
         bsl::BeatState::withSubdivision(2, 0, 0.75f);
     auto root = juce::JSON::parse(bsl::statecodec::encodePresetJson(source));
     root.getDynamicObject()->setProperty("schemaVersion", 1);
+    root.getProperty("global", {}).getDynamicObject()->removeProperty("quantization");
     if (auto* pads = root.getProperty("pads", {}).getArray())
         for (auto& encodedPad : *pads)
         {
@@ -602,6 +663,34 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
     auto state = bsl::ProjectState::makeDefault();
     check(bsl::statecodec::importLegacyPresetJson(json, state), "legacy preset JSON imports");
     check(state.isValid(), "legacy preset is validated before publication");
+    check(state.global.quantization == bsl::PatternQuantization::whole,
+          "original presets without a quantize field default to shared 4/4");
+    auto quantized = juce::JSON::parse(json);
+    auto sequence = juce::JSON::parse(R"({"Slots":{"Live":{"quantize":4.0}}})");
+    quantized.getProperty("Seq", {}).getDynamicObject()->setProperty("Seq", sequence);
+    auto* live = sequence.getProperty("Slots", {}).getProperty("Live", {}).getDynamicObject();
+    using Q = bsl::PatternQuantization;
+    const std::array<std::pair<double, Q>, 6> quantizationCases {{
+        {4.0, Q::whole}, {2.0, Q::half}, {1.0, Q::quarter},
+        {0.5, Q::eighth}, {0.25, Q::sixteenth}, {0.125, Q::thirtySecond}
+    }};
+    auto quantizedState = state;
+    for (const auto [nativeValue, expected] : quantizationCases)
+    {
+        live->setProperty("quantize", nativeValue);
+        check(bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(quantized), quantizedState)
+                  && quantizedState.global.quantization == expected,
+              "original preset imports each shared quantize value in quarter-note units");
+    }
+    const auto beforeInvalidQuantize = bsl::statecodec::encodePresetJson(quantizedState);
+    for (const auto& invalid : {juce::var(0.0), juce::var(3.0), juce::var("1"), juce::var(false)})
+    {
+        live->setProperty("quantize", invalid);
+        check(!bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(quantized), quantizedState)
+                  && bsl::statecodec::encodePresetJson(quantizedState) == beforeInvalidQuantize,
+              "unsupported original quantize values reject atomically instead of inventing Off");
+    }
+
     check(state.kit.pads[1].midiNote == 38 && state.kit.pads[4].midiNote == 42,
           "legacy absent output map uses native default drum mapping");
     auto mapped = juce::JSON::parse(json);
@@ -1194,6 +1283,7 @@ int main()
     testDuplicateNativePatternTriggersAreNormalizedOnLoad();
     testCorruptStateIsRejectedAtomically();
     testExtendedPatternQuantizationCodecRoundTrips();
+    testSharedQuantizationRecallAndLegacyCompatibility();
     testVersionOneMigrationDecouplesPadIdentityFromMidi();
     testMalformedEmbeddedDataAndSampleNamesAreRejectedAtomically();
     testOutOfRangeMidiNotesAreRejectedBeforeEncoding();

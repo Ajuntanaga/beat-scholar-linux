@@ -413,7 +413,7 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                 patternTriggerCollector_.push({
                     std::clamp(metadata.samplePosition, 0, samplesInBlock),
                     found->runtimeId,
-                    found->quantization
+                    state.global.quantization.value_or(found->quantization)
                 });
             }
         }
