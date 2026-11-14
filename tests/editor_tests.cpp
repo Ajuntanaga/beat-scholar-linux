@@ -5,6 +5,7 @@
 #include <juce_cryptography/juce_cryptography.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_graphics/juce_graphics.h>
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <memory>
@@ -5199,7 +5200,13 @@ void testStandaloneTransportIgnoresDeviceClock(const juce::File& output)
               "standalone Pause stops sequencing while the device clock advances");
     check(editor->keyPressed(juce::KeyPress(juce::KeyPress::spaceKey)),
           "standalone Space resumes playback");
-    for (int block = 0; block < 49; ++block)
+    // Shared playback chases a held slice on resume, then preserves its grid.
+    // The hosted original capture below establishes that lifecycle; it does
+    // not independently establish the original standalone transport caller.
+    check(render() == 1, "standalone Resume retriggers the paused active slice");
+    check(!midi.isEmpty() && (*midi.begin()).samplePosition == 0,
+          "standalone Resume retrigger occurs at callback start");
+    for (int block = 0; block < 48; ++block)
         check(render() == 0, "standalone Resume preserves the paused musical position");
     check(render() == 1, "standalone tempo uses the local 120 BPM quarter-note interval");
     stop->onClick();
@@ -5218,6 +5225,66 @@ void testStandaloneTransportIgnoresDeviceClock(const juce::File& output)
               "Space in numeric entry does not toggle transport");
         if (entry != nullptr) entry->onEscapeKey();
     }
+    processor->setPlayHead(nullptr);
+    processor->releaseResources();
+}
+
+void testHostedPauseResumeMatchesCapturedLifecycle()
+{
+    struct HostClock final : juce::AudioPlayHead
+    {
+        PositionInfo info;
+        juce::Optional<PositionInfo> getPosition() const override { return info; }
+    } clock;
+    auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
+    auto state = makeBypassTestProject(0);
+    state.global.sequencerEnabled = true;
+    state.global.samplerEnabled = false;
+    state.global.beatsPerMinute = 20.0;
+    state.kit.pads[0].midiNote = 36;
+    state.patterns[0].lanes = { bsl::LaneState::make(4) };
+    state.patterns[0].lanes[0].beats[0] = bsl::BeatState::withSubdivision(1, 0, 64.0f / 127.0f);
+    const auto bytes = bsl::statecodec::encode(state);
+    processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
+    processor->disableNonMainBuses();
+    processor->setRateAndBufferSizeDetails(48000, 256);
+    processor->prepareToPlay(48000, 256);
+    processor->setPlayHead(&clock);
+    clock.info.setBpm(20.0);
+    juce::AudioBuffer<float> audio(2, 256);
+    juce::MidiBuffer midi;
+    // Original REAPER capture, 2026-11-14: actual callbacks are 256 frames.
+    // REAPER rewinds buffered play position when pausing. Preserve that input,
+    // repeated stopped callbacks, and MIDI note-off velocity in this replay.
+    // Fields: capture phase, playing, callback start, offset, status, packed data.
+    using Event = std::array<int, 6>;
+    std::vector<Event> events;
+    const auto render = [&](int phase, bool playing, int start) {
+        clock.info.setIsPlaying(playing);
+        clock.info.setTimeInSamples(start);
+        clock.info.setPpqPosition(start / 48000.0 * 20.0 / 60.0);
+        midi.clear();
+        processor->processBlock(audio, midi);
+        for (const auto metadata : midi)
+        {
+            const auto message = metadata.getMessage();
+            if (message.isNoteOnOrOff())
+            {
+                const auto* data = message.getRawData();
+                events.push_back({ phase, playing ? 1 : 0, start, metadata.samplePosition,
+                                   data[0], data[1] | (data[2] << 8) });
+            }
+        }
+    };
+    render(1, false, 0);
+    for (int start = 0; start <= 23552; start += 256) render(1, true, start);
+    for (int block = 0; block < 1385; ++block) render(2, false, 23040);
+    render(3, false, 23040);
+    for (int start = 23040; start <= 179712; start += 256) render(3, true, start);
+    check(events == std::vector<Event> {
+              {1, 1, 0, 0, 144, 16420}, {2, 0, 23040, 0, 128, 16420},
+              {3, 1, 23040, 0, 144, 16420}, {3, 1, 141056, 64, 128, 16420}},
+          "captured hosted Pause releases once; Resume retriggers once and retains the original gate end");
     processor->setPlayHead(nullptr);
     processor->releaseResources();
 }
@@ -5717,9 +5784,15 @@ void testDirectPatternClickOverridesMidiSwitch()
                         notesAfterClick.emplace_back(block * 1024 + event.samplePosition,
                                                      event.getMessage().getNoteNumber());
         }
-        check(notesAfterClick == std::vector<std::pair<int, int>> { {24000, 36} },
+        // Off exists only in older reconstruction states, not the native menu.
+        // Pin its shared held-slice chase as compatibility behavior; the exact
+        // native direct-selection caller has not been captured for this case.
+        const std::vector<std::pair<int, int>> expected = queued
+            ? std::vector<std::pair<int, int>> {{24000, 36}}
+            : std::vector<std::pair<int, int>> {{1024, 36}, {24000, 36}};
+        check(notesAfterClick == expected,
               queued ? "clicking active pattern cancels a queued MIDI switch"
-                     : "clicking displayed pattern overrides a MIDI switch before timer feedback");
+                     : "legacy Off click restores the displayed pattern, chases its held slice and preserves host phase");
         check(processor->takeRequestedPatternForUi() == -1 && processor->projectState().activePattern == 0,
               "late MIDI feedback cannot restore the overridden selection");
         processor->selectPatternFromUi(1);
@@ -6427,6 +6500,7 @@ int main(int argc, char** argv)
     testModifiedArrangementContextMenusDoNotEdit(output);
     testSequencerMidiNotesHaveFiniteLifetimes();
     testStandaloneTransportIgnoresDeviceClock(output);
+    testHostedPauseResumeMatchesCapturedLifecycle();
     testHostedTransportRemainsHostControlled(output);
     testMidiExportUsesTheActiveTempo(output);
     testStandaloneRestoresMultiOutputAsStereo();
