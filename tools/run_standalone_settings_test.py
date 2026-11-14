@@ -319,8 +319,9 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
                 host = json.loads(proc.stdout)
                 pitch = flam['pads'][beats[0][0]['padIndex']]['midiNote']
                 velocity = rounded(beats[0][0]['velocity'] * 127)
-                expected_midi = [note(0, 'note_on', pitch, velocity), note(4704, 'note_off', pitch),
-                                 note(4800, 'note_on', pitch, velocity), note(9504, 'note_off', pitch)]
+                # Five slices at host 120 BPM: 4800 samples each, with native 98% gates.
+                expected_midi = [note(0, 'note_on', pitch, velocity), note(4704, 'note_off', pitch, velocity),
+                                 note(4800, 'note_on', pitch, velocity), note(9504, 'note_off', pitch, velocity)]
                 if canonical(host['output_midi_events']) != sorted(expected_midi):
                     raise RuntimeError('Actual VST3 MIDI did not match the UI-created two-hit, five-slice flam')
                 rate, audio = read_pcm24(rendered)

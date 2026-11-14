@@ -184,8 +184,7 @@ juce::PopupMenu quantizationMenu(bsl::PatternQuantization current)
     juce::PopupMenu menu;
     for (const auto value : { bsl::PatternQuantization::whole, bsl::PatternQuantization::half,
                              bsl::PatternQuantization::quarter, bsl::PatternQuantization::eighth,
-                             bsl::PatternQuantization::sixteenth, bsl::PatternQuantization::thirtySecond,
-                             bsl::PatternQuantization::off })
+                             bsl::PatternQuantization::sixteenth, bsl::PatternQuantization::thirtySecond })
         menu.addItem(10 + static_cast<int>(value), quantizationLabel(value), true, value == current);
     return menu;
 }

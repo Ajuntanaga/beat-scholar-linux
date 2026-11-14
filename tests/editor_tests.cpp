@@ -1926,26 +1926,23 @@ private:
     }
     void timerCallback() override
     {
-        // Seven real choices at three scales, then no-op, cancel, host recall,
+        // Six reference choices at three scales, then no-op, cancel, host recall,
         // changed pattern identity, Bars mode, and both factory sample layers.
-        const bool factory = step_ >= 26;
-        const int choice = step_ < 21 ? step_ % 7 : 0;
-        const std::array<bsl::PatternQuantization, 7> values {
+        const bool factory = step_ >= 23;
+        const int choice = step_ < 18 ? step_ % 6 : 0;
+        const std::array<bsl::PatternQuantization, 6> values {
             bsl::PatternQuantization::whole, bsl::PatternQuantization::half,
             bsl::PatternQuantization::quarter, bsl::PatternQuantization::eighth,
-            bsl::PatternQuantization::sixteenth, bsl::PatternQuantization::thirtySecond,
-            bsl::PatternQuantization::off };
-        const std::array<const char*, 7> labels {"4/4", "2/4", "1/4", "1/8", "1/16", "1/32", "Off"};
+            bsl::PatternQuantization::sixteenth, bsl::PatternQuantization::thirtySecond };
+        const std::array<const char*, 6> labels {"4/4", "2/4", "1/4", "1/8", "1/16", "1/32"};
         const auto label = juce::String("header/factory menu case ") + juce::String(step_);
         if (phase_ == 0)
         {
             auto& state = processor_.projectState();
-            state.ui.patternMode = step_ != 25;
+            state.ui.patternMode = step_ != 22;
             state.activePattern = 0;
-            state.patterns[0].quantization = step_ == 21 ? values[choice]
-                : values[choice] == bsl::PatternQuantization::off ? bsl::PatternQuantization::whole
-                                                                : bsl::PatternQuantization::off;
-            const int width = step_ < 21 ? std::array<int, 3>{960, 1280, 1920}[step_ / 7] : 1280;
+            state.patterns[0].quantization = values[step_ == 18 ? choice : (choice + 1) % values.size()];
+            const int width = step_ < 18 ? std::array<int, 3>{960, 1280, 1920}[step_ / 6] : 1280;
             editor_->setSize(width, width * 9 / 16);
             if (factory)
             {
@@ -1955,7 +1952,7 @@ private:
                         if (auto* button = dynamic_cast<juce::Button*>(child)) buttons.push_back(button);
                 std::sort(buttons.begin(), buttons.end(), [](auto* a, auto* b) { return a->getX() < b->getX(); });
                 check(buttons.size() == 2, label + " exposes both sample knobs");
-                if (buttons.size() == 2) buttons[static_cast<std::size_t>(step_ - 26)]->onClick();
+                if (buttons.size() == 2) buttons[static_cast<std::size_t>(step_ - 23)]->onClick();
             }
             else
             {
@@ -1970,8 +1967,8 @@ private:
         else if (phase_ == 1)
         {
             auto* menu = juce::Component::getCurrentlyModalComponent();
-            check((menu != nullptr) == (step_ != 25), label + " opens only the intended menu");
-            if (step_ == 23)
+            check((menu != nullptr) == (step_ != 22), label + " opens only the intended menu");
+            if (step_ == 20)
             {
                 auto recalled = before_;
                 recalled.patterns[0].name = "Host recalled";
@@ -1980,21 +1977,23 @@ private:
                 before_ = processor_.projectState();
                 revision_ = processor_.projectEditor().revision();
             }
-            else if (step_ == 24)
+            else if (step_ == 21)
             {
                 std::swap(processor_.projectState().patterns[0], processor_.projectState().patterns[1]);
                 before_ = processor_.projectState();
             }
-            if (menu != nullptr && step_ != 22)
+            if (menu != nullptr && step_ != 19)
             {
-                const char* title = factory ? (step_ == 26 ? "Wav Body" : "Wav Hit") : labels[choice];
+                const char* title = factory ? (step_ == 23 ? "Wav Body" : "Wav Hit") : labels[choice];
+                if (!factory)
+                    check(item(*menu, "Off") == nullptr, label + " excludes unsupported Off choice");
                 if (factory)
                 {
                     check(item(*menu, "Wrong Pad") == nullptr && item(*menu, "Not Audio") == nullptr
-                              && item(*menu, step_ == 26 ? "Wav Hit" : "Wav Body") == nullptr,
+                              && item(*menu, step_ == 23 ? "Wav Hit" : "Wav Body") == nullptr,
                           label + " excludes other pads, other layer and non-audio files");
                 }
-                if (step_ == 0 || step_ == 7 || step_ == 14 || factory)
+                if (step_ == 0 || step_ == 6 || step_ == 12 || factory)
                     saveVisual(*menu, output_, ("tutorial-header-factory-menu-" + juce::String(step_) + ".png").toRawUTF8());
                 auto* action = item(*menu, title);
                 check(action != nullptr && action->getActions().invoke(juce::AccessibilityActionType::press),
@@ -2007,10 +2006,10 @@ private:
         else
         {
             auto expected = before_;
-            const bool edits = step_ < 21 || factory;
-            if (step_ < 21) expected.patterns[0].quantization = values[choice];
+            const bool edits = step_ < 18 || factory;
+            if (step_ < 18) expected.patterns[0].quantization = values[choice];
             if (factory)
-                expected.kit.pads[0].factorySampleIds[static_cast<std::size_t>(step_ - 26)] = step_ == 26
+                expected.kit.pads[0].factorySampleIds[static_cast<std::size_t>(step_ - 23)] = step_ == 23
                     ? "test_INST-BD_TYPE-Body_NAME-Wav Body.wav" : "test_INST-BD_TYPE-Hit_NAME-Wav Hit.WAV";
             check(bsl::statecodec::encode(processor_.projectState()) == bsl::statecodec::encode(expected),
                   label + " changes exactly the selected setting or rejects stale/cancelled input");
@@ -2022,7 +2021,7 @@ private:
                       label + " restores all state with one undo");
             juce::PopupMenu::dismissAllActiveMenus();
             phase_ = 0;
-            if (++step_ == 28)
+            if (++step_ == 25)
             {
                 stopTimer();
                 window_.setVisible(false);
