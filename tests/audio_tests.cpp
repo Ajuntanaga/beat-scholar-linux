@@ -286,6 +286,46 @@ void testNativeInputReleaseIndependentOfPadRelease()
           "finished input release cannot restart during a longer output release");
 }
 
+void testNativeReleaseStepPrecision()
+{
+    // Native d063c0 computes the step in double precision, then stores float.
+    // These final levels come from its SUBSS recurrence at 48 kHz, sustain 1,
+    // release float(0.1). A float-only denominator loses one bit in the step.
+    constexpr std::array<float, 5> levels {
+        0.000643830862827599f, 0.0004354975535534322f,
+        0.00022716422972735018f, 1.8830905901268125e-5f, 0.0f
+    };
+    for (const std::size_t blockSize : { 1u, 64u })
+    {
+        bsl::AudioEngine engine;
+        prepareDryEngine(engine, 48000.0, blockSize);
+        auto settings = dryPadSettings();
+        settings.oneShot = false;
+        settings.pan = -1.0f;
+        settings.releaseSeconds = 0.2f;
+        engine.setPadSettings(0, settings);
+        engine.setPadSample(0, { 48000.0, { std::vector<float>(24000, 1.0f) } });
+        auto block = makeBlock(34, blockSize);
+        engine.noteOn(36, 1.0f);
+        engine.process(block, blockSize);
+        engine.noteOff(36);
+        for (std::size_t offset = 0; offset < 4801; offset += blockSize)
+        {
+            const auto count = std::min(blockSize, std::size_t { 4801 } - offset);
+            engine.process(block, count);
+            for (std::size_t frame = 0; frame < count; ++frame)
+            {
+                const auto elapsed = offset + frame + 1;
+                if (elapsed < 4797) continue;
+                const float outputFade = 1.0f - static_cast<float>(
+                    static_cast<double>(elapsed) / (settings.releaseSeconds * 48000.0));
+                check(block[0][frame] == levels[elapsed - 4797] * outputFade,
+                      "sampler release tail preserves native step precision across blocks");
+            }
+        }
+    }
+}
+
 void testNativeGlobalVoicePoolAndMonoOwnership()
 {
     bsl::AudioEngine engine;
@@ -3192,6 +3232,7 @@ int main()
     testNativeLayerGainPrecedesHighPass();
     testNativeHighPassSurvivesVoiceReuseAcrossPads();
     testNativeSilentReleaseAdvancesHighPass();
+    testNativeReleaseStepPrecision();
     testNativeInputReleaseIndependentOfPadRelease();
     testNativeGlobalVoicePoolAndMonoOwnership();
     testNativeVelocityAmplitude();

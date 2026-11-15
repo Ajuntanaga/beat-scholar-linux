@@ -738,8 +738,11 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                             voice.releaseStartLevel = attackFrames > 0
                                 ? std::min(1.0f, static_cast<float>(voice.elapsedFrames)
                                     / static_cast<float>(attackFrames)) : 1.0f;
-                            voice.releaseInputStep = voice.releaseInputLevel
-                                / (static_cast<float>(sampleRate_) * 0.1f);
+                            // Native computes the rate in double, then stores float.
+                            // Float-only division changes the final release samples.
+                            voice.releaseInputStep = static_cast<float>(
+                                static_cast<double>(voice.releaseInputLevel)
+                                / (sampleRate_ * static_cast<double>(0.1f)));
                         }
                         ++voice.releaseFramesElapsed;
                         const double releaseFrames = settings.releaseSeconds * sampleRate_;
