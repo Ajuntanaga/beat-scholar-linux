@@ -478,6 +478,56 @@ float renderAuditionEnergy(std::initializer_list<float> velocities)
     return energy;
 }
 
+void testEmptyPadRestoreIsSilent()
+{
+    // The unused-layer endpoint awaits a valid original-plugin fixture.
+    // Assert only empty-pad silence and playback with the loaded layer selected.
+    for (const int fixture : { 0, 2 })
+    {
+        const bool secondLayerLoaded = fixture != 0;
+        BeatScholarLinuxProcessor processor;
+        processor.setRateAndBufferSizeDetails(48000, 256);
+        processor.prepareToPlay(48000, 256);
+        auto project = bsl::ProjectState::makeDefault();
+        project.global.sequencerEnabled = false;
+        for (auto& pad : project.kit.pads)
+        {
+            pad.factorySampleIds = {};
+            pad.customSamples = {};
+        }
+        if (secondLayerLoaded)
+        {
+            const auto wav = constantPcm16Wav(48000, 4096);
+            const juce::MemoryBlock bytes(wav.data(), wav.size());
+            auto& pad = project.kit.pads[0];
+            pad.customSampleLayered = true;
+            pad.customSamples[1].name = "second-layer.wav";
+            pad.customSamples[1].sha256 = juce::SHA256(bytes).toHexString().toStdString();
+            pad.customSamples[1].base64 = juce::Base64::toBase64(bytes.getData(), bytes.getSize()).toStdString();
+            pad.layerMix = 0.0f; // Select the populated second layer.
+        }
+        const auto encoded = bsl::statecodec::encode(project);
+        processor.setStateInformation(encoded.getData(), static_cast<int>(encoded.getSize()));
+        processor.stopStandalone();
+        settleMainGain(processor, 256);
+        juce::AudioBuffer<float> audio(processor.getTotalNumOutputChannels(), 256);
+        juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1, project.kit.pads[0].midiNote,
+                                             static_cast<juce::uint8>(100)), 0);
+        processor.processBlock(audio, midi);
+        float peak = 0.0f;
+        for (int channel = 0; channel < audio.getNumChannels(); ++channel)
+            peak = std::max(peak, audio.getMagnitude(channel, 0, audio.getNumSamples()));
+        if (fixture == 2)
+            check(peak > 0.01f, "restoring an empty first layer preserves audible second-layer playback");
+        else
+            check(peak == 0.0f,
+                  "restoring an empty pad clears the fallback sample and renders silence");
+        processor.releaseResources();
+    }
+}
+
+
 void testHostNoteOffKeepsMidiChannelsIndependent()
 {
     // The same pad can be played simultaneously by tracks on different MIDI
@@ -6171,6 +6221,15 @@ void testRenderedLevelMetersAndLayout(const juce::File& output)
 {
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
     processor->projectState().global.sequencerEnabled = false;
+    // Meter assertions need an explicit signal, independent of empty-pad behavior.
+    const auto wav = constantPcm16Wav(48000, 4096);
+    const juce::MemoryBlock bytes(wav.data(), wav.size());
+    auto& pad = processor->projectState().kit.pads[0];
+    pad.factorySampleIds = {};
+    pad.customSamples = {};
+    pad.customSamples[0].name = "meter-signal.wav";
+    pad.customSamples[0].sha256 = juce::SHA256(bytes).toHexString().toStdString();
+    pad.customSamples[0].base64 = juce::Base64::toBase64(bytes.getData(), bytes.getSize()).toStdString();
     processor->markProjectDirty();
     processor->publishProjectStateIfNeeded();
     processor->setRateAndBufferSizeDetails(48000, 64);
@@ -6524,6 +6583,7 @@ int main(int argc, char** argv)
     testSequencedOneShotGateUsesBeatDurationAcrossRatesAndBlocks();
     testSequencedOneShotGateMatchesCapturedHostTiming();
     testPadAuditionsPreserveRepeatedHits();
+    testEmptyPadRestoreIsSilent();
     testHostNoteOffKeepsMidiChannelsIndependent();
     testMixedMeterGeometry(output);
     testBarHeaderActions(output);

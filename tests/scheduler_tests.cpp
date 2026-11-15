@@ -9,6 +9,7 @@
 #include <iostream>
 #include <limits>
 #include <span>
+#include <string>
 #include <string_view>
 
 namespace {
@@ -353,6 +354,63 @@ void testHostPhaseDoesNotAccumulateCallbackDrift()
     check(exact, "host phase uses a fixed pattern origin without callback accumulation drift");
 }
 
+void testCapturedSimultaneousOrder()
+{
+    // Synthetic original-plugin capture: four lanes, twelve triplets per lane,
+    // one disabled slice. Muting lane 1 and soloing the other lanes agree.
+    const std::array<std::string_view, 12> all {
+        "0231", "0312", "0312", "0312", "031", "0123",
+        "1203", "1203", "2013", "2013", "1203", "1203"
+    };
+    const std::array<std::string_view, 12> filtered {
+        "032", "032", "032", "032", "03", "023",
+        "203", "023", "023", "203", "203", "203"
+    };
+    for (int mode = 0; mode < 3; ++mode)
+        for (std::size_t capacity : { 1U, 16U })
+        {
+            auto state = bsl::ProjectState::makeDefault();
+            auto& pattern = state.patterns[0];
+            pattern.bars = { bsl::BarState::make(4, 4) };
+            pattern.lanes.assign(4, bsl::LaneState::make(4));
+            for (std::size_t lane = 0; lane < 4; ++lane)
+            {
+                for (auto& beat : pattern.lanes[lane].beats)
+                    beat = bsl::BeatState::withSubdivision(3, static_cast<std::uint8_t>(lane), .5f);
+                pattern.lanes[lane].muted = mode == 1 && lane == 1;
+                pattern.lanes[lane].solo = mode == 2 && lane != 1;
+            }
+            pattern.lanes[2].beats[1].slices[1].enabled = false;
+            const auto plans = bsl::SequencerPlayback::prepareProject(state);
+            bsl::SequencerPlayback playback;
+            std::array<bsl::PlaybackEvent, 16> events;
+            std::array<std::string, 12> observed;
+            for (int base = 0; base < 115200; base += 32)
+            {
+                bsl::TransportFrame frame { 48000.0, 100.0, base, 32, true };
+                frame.quarterNotePosition = static_cast<double>(base) / 48000.0 * 100.0 / 60.0;
+                frame.patternPhaseQuarterNotes = frame.quarterNotePosition;
+                bsl::PlaybackCursor cursor;
+                while (!cursor.exhausted)
+                {
+                    const auto count = playback.renderBatch(state, frame, 0, plans[0],
+                        std::span(events).first(capacity), cursor);
+                    for (std::size_t i = 0; i < count; ++i)
+                    {
+                        if (events[i].event.velocity == 0) continue;
+                        const int absolute = base + events[i].event.sampleOffset;
+                        check(absolute % 9600 == 0, "simultaneous triplet onsets match native sample positions");
+                        observed[static_cast<std::size_t>(absolute / 9600)] +=
+                            static_cast<char>('0' + events[i].laneIndex);
+                    }
+                }
+            }
+            const auto& expected = mode == 0 ? all : filtered;
+            check(std::equal(observed.begin(), observed.end(), expected.begin(), expected.end()),
+                "simultaneous note order matches native with disabled slices, mute and solo");
+        }
+}
+
 void testCapturedDenseTiming()
 {
     for (int block : {128, 16384})
@@ -362,6 +420,7 @@ void testCapturedDenseTiming()
         pattern.bars = {bsl::BarState::make(1, 16)};
         pattern.lanes.assign(1, bsl::LaneState::make(1));
         pattern.lanes[0].beats[0] = bsl::BeatState::withSubdivision(45, 0, .5f);
+        const auto plan = bsl::SequencerPlayback::preparePattern(state.patterns[0]);
         bsl::SequencerPlayback playback;
         std::vector<int> observed;
         std::array<bsl::PlaybackEvent, 16> events;
@@ -371,7 +430,7 @@ void testCapturedDenseTiming()
             bsl::PlaybackCursor cursor;
             while (!cursor.exhausted)
             {
-                auto count = playback.renderBatch(state, frame, 0, events, cursor);
+                auto count = playback.renderBatch(state, frame, 0, plan, events, cursor);
                 for (std::size_t i = 0; i < count; ++i)
                 {
                     check((events[i].event.velocity != 0) == (observed.size() % 2 == 0),
@@ -408,6 +467,7 @@ void testCapturedCallbackReleaseLifecycle()
             state.patterns[0].lanes[0].beats[0].slices.assign(3, { 0, 1.0f, true });
             state.global.swingPercent = test.swing;
             state.global.swingReference = bsl::SwingReference::quarter;
+            const auto plan = bsl::SequencerPlayback::preparePattern(state.patterns[0]);
             bsl::SequencerPlayback playback;
             std::vector<std::pair<int, bool>> observed;
             std::array<bsl::PlaybackEvent, 16> events;
@@ -419,7 +479,7 @@ void testCapturedCallbackReleaseLifecycle()
                 bsl::PlaybackCursor cursor;
                 while (!cursor.exhausted)
                 {
-                    const auto count = playback.renderBatch(state, frame, 0,
+                    const auto count = playback.renderBatch(state, frame, 0, plan,
                         std::span(events).first(capacity), cursor);
                     for (std::size_t i = 0; i < count; ++i)
                         observed.emplace_back(base + events[i].event.sampleOffset, events[i].event.velocity == 0);
@@ -453,6 +513,7 @@ void testCapturedOverlappingLanes()
                 slices.assign(lane == shortLane ? 4 : 1, { 0, 0.75f, false });
                 slices[0].enabled = true;
             }
+            const auto plan = bsl::SequencerPlayback::preparePattern(state.patterns[0]);
             bsl::SequencerPlayback playback;
             std::vector<std::pair<int, bool>> observed;
             std::array<bsl::PlaybackEvent, 16> events;
@@ -464,7 +525,7 @@ void testCapturedOverlappingLanes()
                 bsl::PlaybackCursor cursor;
                 while (!cursor.exhausted)
                 {
-                    auto count = playback.renderBatch(state, frame, 0, std::span(events).first(capacity), cursor);
+                    auto count = playback.renderBatch(state, frame, 0, plan, std::span(events).first(capacity), cursor);
                     for (std::size_t i = 0; i < count; ++i)
                     {
                         observed.emplace_back(base + events[i].event.sampleOffset, events[i].event.velocity == 0);
@@ -604,6 +665,7 @@ int main()
     testCapturedQuarterPatternCallbackTiming();
     testCapturedRemainingPatternCallbackTiming();
     testAtomicResetRequestIsConsumedExactlyOnce();
+    testCapturedSimultaneousOrder();
     testCapturedDenseTiming();
     testCapturedCallbackReleaseLifecycle();
     testCapturedOverlappingLanes();

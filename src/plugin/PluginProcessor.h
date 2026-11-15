@@ -116,6 +116,7 @@ private:
     std::array<bsl::PatternRenderSegment,
                bsl::PatternScheduler::maximumPendingTriggers + 1> renderSegments_ {};
     std::array<bsl::ProjectState, 3> stateSnapshots_;
+    std::array<std::vector<bsl::PatternPlaybackPlan>, 3> playbackPlans_;
     std::atomic<int> publishedStateIndex_ { 0 };
     std::atomic<int> readingStateIndex_ { -1 };
     std::atomic<bsl::PatternId> audioPattern_ { 0 };

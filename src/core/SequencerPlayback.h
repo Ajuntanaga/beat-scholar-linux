@@ -27,14 +27,29 @@ struct PlaybackCursor
     bool exhausted = false;
 };
 
+// Prepared on the publishing thread, in the original whole-pattern tie order.
+// Keeping this beside the immutable project snapshot avoids sorting/allocation
+// in the audio callback. Swing and MIDI mapping still use the live snapshot.
+struct PlaybackStep
+{
+    double start = 0;
+    double end = 0;
+    std::size_t laneIndex = 0;
+    std::uint8_t pad = 0;
+    std::uint8_t velocity = 0;
+};
+using PatternPlaybackPlan = std::vector<PlaybackStep>;
+
 // Callback-aware native note ownership. Each batch rescans from the callback's
 // initial state so bounded caller storage never drops dense or simultaneous hits.
 class SequencerPlayback
 {
 public:
+    static PatternPlaybackPlan preparePattern(const PatternState&);
+    static std::vector<PatternPlaybackPlan> prepareProject(const ProjectState&);
     void reset() noexcept { notes_ = {}; }
     std::size_t renderBatch(const ProjectState&, const TransportFrame&, std::size_t patternIndex,
-                            std::span<PlaybackEvent>, PlaybackCursor&) noexcept;
+                            std::span<const PlaybackStep>, std::span<PlaybackEvent>, PlaybackCursor&) noexcept;
 private:
     struct Note
     {

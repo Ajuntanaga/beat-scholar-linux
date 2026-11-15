@@ -149,8 +149,11 @@ BeatScholarLinuxProcessor::BeatScholarLinuxProcessor()
     loadFactoryKitIfAvailable();
     syncParametersFromProject();
     sequencerPlayback_.reset();
-    for (auto& snapshot : stateSnapshots_)
-        snapshot = projectEditor_.state();
+    for (std::size_t index = 0; index < stateSnapshots_.size(); ++index)
+    {
+        stateSnapshots_[index] = projectEditor_.state();
+        playbackPlans_[index] = bsl::SequencerPlayback::prepareProject(stateSnapshots_[index]);
+    }
     const auto& state = projectEditor_.state();
     lastPublishedActivePattern_ = state.patterns[state.activePattern].runtimeId;
     audioPattern_.store(lastPublishedActivePattern_);
@@ -208,6 +211,7 @@ void BeatScholarLinuxProcessor::publishProjectStateIfNeeded()
         ++target;
     stateSnapshots_[static_cast<std::size_t>(target)] = projectEditor_.state();
     const auto& snapshot = stateSnapshots_[static_cast<std::size_t>(target)];
+    playbackPlans_[static_cast<std::size_t>(target)] = bsl::SequencerPlayback::prepareProject(snapshot);
     const auto activePattern = snapshot.patterns[snapshot.activePattern].runtimeId;
     publishedStateIndex_.store(target, std::memory_order_release);
     if (activePattern != lastPublishedActivePattern_)
@@ -556,10 +560,13 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
 
     const auto playSequencerFrame = [&](const bsl::TransportFrame& playbackFrame,
                                          std::size_t patternIndex, int baseOffset) {
+        const auto& plans = playbackPlans_[static_cast<std::size_t>(snapshotIndex)];
+        const auto plan = patternIndex < plans.size()
+            ? std::span<const bsl::PlaybackStep>(plans[patternIndex]) : std::span<const bsl::PlaybackStep>();
         bsl::PlaybackCursor cursor;
         while (!cursor.exhausted)
         {
-            const auto count = sequencerPlayback_.renderBatch(state, playbackFrame, patternIndex,
+            const auto count = sequencerPlayback_.renderBatch(state, playbackFrame, patternIndex, plan,
                                                                sequencerEvents_, cursor);
             for (std::size_t index = 0; index < count; ++index)
             {
@@ -1076,6 +1083,13 @@ void BeatScholarLinuxProcessor::loadBuiltInPreviewKit(std::optional<std::size_t>
     for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
     {
         if (onlyPad && pad != *onlyPad) continue;
+        const auto& state = projectEditor_.state().kit.pads[pad];
+        if (state.factorySampleIds[0].empty() && state.customSamples[0].base64.empty())
+        {
+            // An empty first layer must stay empty even when layer two is loaded.
+            audioEngine_.setPadSample(pad, {});
+            continue;
+        }
         bsl::SampleData sample;
         sample.sampleRate = rate;
         sample.channels.resize(1);

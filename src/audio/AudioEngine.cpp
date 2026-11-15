@@ -406,8 +406,8 @@ void AudioEngine::startVoice(std::uint8_t midiNote, float velocity, std::size_t 
     const auto pad = static_cast<std::size_t>(midiNote - 36);
     const auto channelIndex = pad * 16 + midiChannel - 1;
     const auto hostNoteId = gateFrames == 0 && followsNoteOff ? ++hostNotesStarted_[channelIndex] : 0;
-    if (!samples_[pad][0].isValid() && !samples_[pad][1].isValid())
-        return;
+    // Empty pads reserve a pool voice too: their inserts advance retained
+    // state until renderRange retires the voice at the span boundary.
     // Native gated MIDI retriggers release the preceding held voice. One Shot
     // hits remain polyphonic; scheduled gates and previews own their lifetimes.
     if (hostNoteId != 0 && !settings_[pad].oneShot)
@@ -430,9 +430,17 @@ void AudioEngine::startVoice(std::uint8_t midiNote, float velocity, std::size_t 
     // history belongs to this global voice, even when reassigned to another pad.
     const auto highPassLeft = voice.highPassLeft;
     const auto highPassRight = voice.highPassRight;
+    // Native 11318c56: note start at 0x180c97520 also leaves the crusher
+    // state at voice+0x680 intact. Its hold phase belongs to the pool slot.
+    const auto crushLeft = voice.crushLeft;
+    const auto crushRight = voice.crushRight;
+    const auto crushFramesElapsed = voice.crushFramesElapsed;
     voice = {};
     voice.highPassLeft = highPassLeft;
     voice.highPassRight = highPassRight;
+    voice.crushLeft = crushLeft;
+    voice.crushRight = crushRight;
+    voice.crushFramesElapsed = crushFramesElapsed;
     voice.pad = pad;
     voice.noteOnOrder = ++nextVoiceOrder_;
     // A new native voice starts at the current Drive gain, even while bypassed.
@@ -581,8 +589,7 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                                      ? auxiliaryTaper(settings.distortionMix, 12.0f) : 0.0f,
                                  static_cast<std::size_t>(sampleRate_ * 0.1));
         const std::size_t target = routingMode_ == RoutingMode::stereo ? 0 : 2 + pad * 2;
-        if ((!padSamples[0].isValid() && !padSamples[1].isValid())
-            || target + 1 >= output.size())
+        if (target + 1 >= output.size())
         {
             for (std::size_t frame = start; frame < end; ++frame)
             { auxGain.next(); distortionSend.next(); }
@@ -918,7 +925,19 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
         }
         for (auto* voice : padVoices)
         {
-            if (finishedSamples[static_cast<std::size_t>(voice - voices_.data())])
+            // Native layers retire at the end of the span in which normalized
+            // phase reaches one. The endpoint can repeat inside that span, but
+            // must not leak into the next span, even if another layer survives.
+            bool anyLayerRemaining = false;
+            for (std::size_t layer = 0; layer < padSamples.size(); ++layer)
+            {
+                if (voice->positions[layer] >= 1.0)
+                    voice->positions[layer] = 2.0;
+                anyLayerRemaining |= padSamples[layer].isValid()
+                    && voice->positions[layer] < 1.0;
+            }
+            if (!anyLayerRemaining
+                || finishedSamples[static_cast<std::size_t>(voice - voices_.data())])
                 voice->active = false;
             if (settings.highPassEnabled)
                 for (auto* state : { &voice->highPassLeft, &voice->highPassRight })

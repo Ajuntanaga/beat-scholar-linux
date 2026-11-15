@@ -116,31 +116,84 @@ void testNativeNormalizedCubicPlayback()
 
 void testNativeNonzeroSampleEndpoint()
 {
-    // Original FileBuffer WAV capture: endpoint-five-native/factory-{0,1}.f32.
-    // Normalize the captured gain by the known final source value (0.125).
-    // Native double phase accumulation reaches just below 1, then clamps to 1;
-    // both frames play the nonzero endpoint before the silent sentinel.
+    // Original 64-frame captures: endpoint-five-native and endpoint-five-boundary64.
+    // At onset offset 58 only six frames remain in the render span. Completion
+    // retires the layer there; the repeated endpoint survives only within a span.
     constexpr float expected[] { 0.0f, 0.236f, -0.017f, 0.101f,
                                  0.483f, 0.125f, 0.125f, 0.0f, 0.0f };
-    for (const std::size_t blockSize : { 1u, 7u })
+    for (const std::size_t firstSpan : { 6u, 64u })
     {
         bsl::AudioEngine engine;
-        prepareDryEngine(engine, 48000.0, blockSize);
+        prepareDryEngine(engine, 48000.0, 64);
         auto settings = dryPadSettings();
         settings.oneShot = false;
         engine.setPadSettings(0, settings);
         engine.setPadSample(0, { 48000.0, { { 0.0f, 0.25f, -0.125f, 0.5f, 0.125f } } });
         engine.noteOn(36, 1.0f);
-        for (std::size_t offset = 0; offset < std::size(expected); offset += blockSize)
+        std::size_t offset = 0;
+        for (const auto count : { firstSpan, std::size_t { 64 } })
         {
-            const auto count = std::min(blockSize, std::size(expected) - offset);
             auto block = makeBlock(34, count);
             engine.process(block, count);
             for (std::size_t frame = 0; frame < count; ++frame)
-                check(std::abs(block[0][frame] - expected[offset + frame] * 0.7071067811865475f) < 3e-7f,
-                      "nonzero sample endpoint matches original held-note capture across blocks");
+            {
+                const auto absolute = offset + frame;
+                const float value = absolute < std::size(expected)
+                    && !(firstSpan == 6 && absolute >= 6) ? expected[absolute] : 0.0f;
+                check(std::abs(block[0][frame] - value * 0.7071067811865475f) < 3e-7f,
+                      "nonzero sample endpoint matches native render-span retirement");
+            }
+            offset += count;
         }
     }
+}
+
+void testCompletedLayerRetiresWhileOtherLayerContinues()
+{
+    // Regression for per-layer retirement: a surviving layer must neither keep
+    // the completed endpoint audible nor be retired along with the short layer.
+    for (const std::size_t shortLayer : { 0u, 1u })
+        for (const std::size_t firstSpan : { 6u, 64u })
+        {
+            bsl::AudioEngine mixed, control;
+            for (auto* engine : { &mixed, &control })
+            {
+                prepareDryEngine(*engine, 48000.0, 64);
+                auto settings = dryPadSettings();
+                settings.oneShot = false;
+                settings.layerMix = 0.5f;
+                engine->setPadSettings(0, settings);
+                engine->setPadLayerSample(0, 1 - shortLayer,
+                    { 48000.0, { std::vector<float>(256, 0.25f) } });
+            }
+            mixed.setPadLayerSample(0, shortLayer,
+                { 48000.0, { { 0.0f, 0.25f, -0.125f, 0.5f, 0.125f } } });
+            control.setPadLayerSample(0, shortLayer,
+                { 48000.0, { std::vector<float>(5, 0.0f) } });
+            mixed.noteOn(36, 1.0f);
+            control.noteOn(36, 1.0f);
+            auto lead = makeBlock(34, firstSpan);
+            auto controlLead = makeBlock(34, firstSpan);
+            mixed.process(lead, firstSpan);
+            control.process(controlLead, firstSpan);
+            check(std::abs(lead[0][4] - controlLead[0][4]) > 0.1f,
+                  "short layer contributes before retirement");
+            for (int span = 0; span < 2; ++span)
+            {
+                auto output = makeBlock(34, 64);
+                auto reference = makeBlock(34, 64);
+                mixed.process(output, 64);
+                control.process(reference, 64);
+                for (const auto channel : { 0u, 1u })
+                    for (std::size_t frame = 0; frame < 64; ++frame)
+                    {
+                        check(reference[channel][frame] > 0.1f,
+                              "long layer remains audible after short layer completion");
+                        check(std::abs(output[channel][frame] - reference[channel][frame]) < 3e-7f,
+                              "completed layer cannot repeat its endpoint in later spans");
+                    }
+            }
+        }
 }
 
 void testNativeLayerGainPrecedesHighPass()
@@ -1876,6 +1929,59 @@ void testNativePadCrusherMappingAndAutomation()
             check(matches, "pad crusher matches native nonlinear hold/depth in both channels across blocks");
         }
 
+    {
+        bsl::AudioEngine retrigger;
+        prepareDryEngine(retrigger, 48000.0, 64);
+        retrigger.setRoutingMode(bsl::RoutingMode::multi);
+        auto settings = dryPadSettings();
+        settings.layerInputGain = inputGain;
+        settings.outputTrim = outputGain;
+        settings.filterEnabled = false;
+        settings.pan = -1.0f;
+        settings.crush = 0.5f; // Two-frame hold.
+        settings.mono = true; // Retrigger reuses the same pool slot.
+        retrigger.setPadSettings(0, settings);
+        std::vector<float> samples(128, 0.75f / inputGain);
+        samples[0] = 0.25f / inputGain;
+        retrigger.setPadSample(0, { 48000.0, { samples } });
+        retrigger.noteOn(36, 1.0f);
+        auto first = makeBlock(34, 1);
+        retrigger.process(first, 1);
+        retrigger.noteOn(36, 1.0f);
+        auto next = makeBlock(34, 2);
+        retrigger.process(next, 2);
+        check(std::abs(next[2][0] - 0.25f * outputGain) < 1.0e-6f
+                  && std::abs(next[2][1] - 0.75f * outputGain) < 1.0e-6f,
+              "native pad crusher preserves hold phase when a voice is retriggered");
+    }
+
+    {
+        bsl::AudioEngine engine;
+        prepareDryEngine(engine, 48000.0, 64);
+        engine.setRoutingMode(bsl::RoutingMode::multi);
+        auto settings = dryPadSettings();
+        settings.layerInputGain = inputGain;
+        settings.outputTrim = outputGain;
+        settings.filterEnabled = false;
+        settings.pan = -1.0f;
+        settings.crush = 0.5f;
+        engine.setPadSettings(0, settings);
+        engine.setPadSettings(1, settings);
+        std::vector<float> samples(128, 0.75f / inputGain);
+        samples[0] = 0.25f / inputGain;
+        engine.setPadSample(1, { 48000.0, { samples } });
+        engine.noteOn(36, 1.0f);
+        auto empty = makeBlock(34, 1);
+        engine.process(empty, 1);
+        check(empty[2][0] == 0.0f, "fresh empty-pad voice renders silence");
+        engine.noteOn(37, 1.0f);
+        auto next = makeBlock(34, 2);
+        engine.process(next, 2);
+        check(next[4][0] == 0.0f
+                  && std::abs(next[4][1] - 0.75f * outputGain) < 1.0e-6f,
+              "empty-pad voice advances retained crusher phase and retires for reuse");
+    }
+
     for (const auto [input, expected] : std::array {
              std::pair { 0.125f, 0.0f }, std::pair { -0.125f, 0.0f },
              std::pair { 0.375f, 0.5f }, std::pair { -0.375f, -0.5f },
@@ -3189,6 +3295,7 @@ int main()
 {
     testNativeNormalizedCubicPlayback();
     testNativeNonzeroSampleEndpoint();
+    testCompletedLayerRetiresWhileOtherLayerContinues();
     testNativeLayerGainPrecedesHighPass();
     testNativeHighPassSurvivesVoiceReuseAcrossPads();
     testNativeSilentReleaseAdvancesHighPass();

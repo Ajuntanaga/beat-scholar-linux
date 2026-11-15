@@ -56,9 +56,9 @@ if(BSL_BUILD_TESTS)
 
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     add_test(NAME beat_scholar_factory_migration_tests
-             COMMAND ${Python3_EXECUTABLE} -m unittest tests/test_migrate_factory_content.py)
+             COMMAND ${Python3_EXECUTABLE} -m unittest discover -s tests -p test_migrate_factory_content.py)
     add_test(NAME beat_scholar_effect_parity_unit_tests
-             COMMAND ${Python3_EXECUTABLE} -m unittest tests/test_measure_effect_parity.py)
+             COMMAND ${Python3_EXECUTABLE} -m unittest discover -s tests -p test_measure_effect_parity.py)
     set_tests_properties(beat_scholar_factory_migration_tests
                          PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     set_tests_properties(beat_scholar_effect_parity_unit_tests
