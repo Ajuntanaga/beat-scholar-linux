@@ -4075,6 +4075,81 @@ void testAutonomousManualRegressions()
 
 std::unique_ptr<BeatScholarLinuxProcessor> makeProcessorForWrapper(juce::AudioProcessor::WrapperType wrapper);
 
+void testMainInitRetainsLiveControls(const juce::File& output)
+{
+    const auto previous = juce::SystemStats::getEnvironmentVariable("XDG_DATA_HOME", "");
+    const auto xdg = output.getChildFile("init-live-controls-xdg");
+    setenv("XDG_DATA_HOME", xdg.getFullPathName().toRawUTF8(), 1);
+    for (const auto wrapper : { juce::AudioProcessor::wrapperType_Standalone,
+                               juce::AudioProcessor::wrapperType_VST3 })
+    {
+        auto processor = makeProcessorForWrapper(wrapper);
+        auto& state = processor->projectState();
+        state.ui.presetFile = "Edited.bslpreset";
+        state.ui.kitFile = "Edited.bslkit";
+        state.ui.randomizerFile = "Retained.bslrandomizer";
+        state.global.kitLocked = false;
+        state.global.quantization = bsl::PatternQuantization::eighth;
+        state.global.sequencerEnabled = false;
+        state.global.samplerEnabled = false;
+        state.global.auxEnabled = false;
+        state.global.masterEnabled = false;
+        state.randomizer.selectedPads = { 2, 9, 15 };
+        state.randomizer.selectedSubdivisions = { 3, 7 };
+        state.randomizer.noteSelectionEnabled = false;
+        state.randomizer.slicingEnabled = false;
+        state.randomizer.triggeringEnabled = false;
+        state.randomizer.velocityEnabled = false;
+        state.randomizer.fillEmptyOnly = true;
+        state.randomizer.triggerChance = 0.17f;
+        state.randomizer.spacing = 0.23f;
+        state.randomizer.minimumVelocity = 0.21f;
+        state.randomizer.maximumVelocity = 0.81f;
+        const auto randomizer = bsl::statecodec::encodeRandomizerJson(state.randomizer);
+        for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        {
+            state.kit.pads[pad].muted = pad % 2 == 0;
+            state.kit.pads[pad].solo = pad % 3 == 0;
+        }
+        state.kit.pads[0].midiNote = 48;
+        state.kit.pads[0].pitchSemitones = 7.0f;
+        state.global.swingReference = bsl::SwingReference::eighth;
+        auto* bpm = processor->parameters().getParameter("bpm");
+        auto* swing = processor->parameters().getParameter("swing");
+        bpm->setValueNotifyingHost(bpm->convertTo0to1(137.0f));
+        swing->setValueNotifyingHost(swing->convertTo0to1(42.0f));
+        processor->resetPresetToInit();
+        const auto& initialized = processor->projectState();
+        check(bsl::statecodec::encodeRandomizerJson(initialized.randomizer) == randomizer
+                  && initialized.ui.randomizerFile == "Retained.bslrandomizer",
+              "Main Init retains randomizer settings and identity in both wrappers");
+        check(!initialized.global.sequencerEnabled && !initialized.global.samplerEnabled
+                  && !initialized.global.auxEnabled && !initialized.global.masterEnabled
+                  && initialized.global.quantization == bsl::PatternQuantization::eighth,
+              "Main Init retains module switches and quantization in both wrappers");
+        for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+            check(initialized.kit.pads[pad].muted == (pad % 2 == 0)
+                      && initialized.kit.pads[pad].solo == (pad % 3 == 0),
+                  "Unlocked Main Init retains every drum mute and solo state");
+        check(initialized.ui.presetFile.empty() && initialized.ui.kitFile.empty()
+                  && initialized.kit.pads[0].midiNote == 36
+                  && initialized.kit.pads[0].pitchSemitones == 0.0f
+                  && initialized.global.swingReference == bsl::SwingReference::quarter
+                  && processor->parameters().getRawParameterValue("bpm")->load() == 100.0f
+                  && processor->parameters().getRawParameterValue("swing")->load() == 0.0f,
+              "Retained live controls do not prevent Main Init from resetting musical content");
+        const auto expected = bsl::statecodec::encode(initialized);
+        juce::MemoryBlock saved;
+        processor->getStateInformation(saved);
+        auto recalled = makeProcessorForWrapper(wrapper);
+        recalled->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+        check(bsl::statecodec::encode(recalled->projectState()) == expected,
+              "Main Init live controls survive standalone and VST3 state recall");
+    }
+    if (previous.isEmpty()) unsetenv("XDG_DATA_HOME");
+    else setenv("XDG_DATA_HOME", previous.toRawUTF8(), 1);
+}
+
 void testMainAndKitInitContract(const juce::File& output)
 {
     const auto previous = juce::SystemStats::getEnvironmentVariable("XDG_DATA_HOME", "");
@@ -6671,6 +6746,7 @@ int main(int argc, char** argv)
     testLegacyPresetKitIdentity(output);
     testContentNavigationSkipsMalformedFiles(output);
     testMasterUndoPreservesHostAutomation();
+    testMainInitRetainsLiveControls(output);
     testMainAndKitInitContract(output);
     testKitHistoryRestoresBypassesWithoutResettingGlobalAutomation(output);
     testSampleUndoRestoresAudibleData(output);

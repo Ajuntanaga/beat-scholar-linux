@@ -952,6 +952,20 @@ void BeatScholarLinuxProcessor::resetPresetToInit()
     initialized.ui.midiNoteNames = current.ui.midiNoteNames;
     initialized.ui.midiFlats = current.ui.midiFlats;
     initialized.ui.middleCOctave = current.ui.middleCOctave;
+
+    // Main Init replaces musical content while retaining live performance controls.
+    initialized.randomizer = std::move(current.randomizer);
+    initialized.ui.randomizerFile = std::move(current.ui.randomizerFile);
+    initialized.global.quantization = current.global.quantization;
+    initialized.global.sequencerEnabled = current.global.sequencerEnabled;
+    initialized.global.samplerEnabled = current.global.samplerEnabled;
+    initialized.global.auxEnabled = current.global.auxEnabled;
+    initialized.global.masterEnabled = current.global.masterEnabled;
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+    {
+        initialized.kit.pads[pad].muted = current.kit.pads[pad].muted;
+        initialized.kit.pads[pad].solo = current.kit.pads[pad].solo;
+    }
     if (current.global.kitLocked)
     {
         initialized.kit = std::move(current.kit);
