@@ -220,8 +220,22 @@ ProjectState ProjectState::makeMainInit()
         {{ "SRC-DW_INST-FX_NAME-Finger Snap.flac", "" }},
         {{ "SRC-DW_INST-FX_NAME-Single Snap 1.flac", "" }},
     }};
+    constexpr std::array<const char*, padCount> names {
+        "Kick", "Snare", "Rim", "Clap", "Hi Hat Closed", "Hi Hat Open", "Crash 1", "Ride",
+        "Crash 2", "Tom Hi", "Tom Mid", "Tom Low", "Shaker", "Triangle", "FX 1", "FX 2"
+    };
+    constexpr std::array<std::uint8_t, padCount> outputNotes {
+        36, 38, 37, 39, 42, 46, 49, 51, 57, 55, 43, 41, 54, 40, 53, 56
+    };
+    state.global.beatsPerMinute = 100.0;
+    state.master.distortionReturn = 0.79f;
     for (std::size_t pad = 0; pad < samples.size(); ++pad)
     {
+        state.kit.pads[pad].name = names[pad];
+        state.kit.pads[pad].midiNote = outputNotes[pad];
+        state.kit.pads[pad].rootNote = 36;
+        state.kit.pads[pad].driveEnabled = true;
+        state.kit.pads[pad].independentDistortion = true;
         state.kit.pads[pad].layerMix = 0.5f;
         for (std::size_t layer = 0; layer < samples[pad].size(); ++layer)
             state.kit.pads[pad].factorySampleIds[layer] = samples[pad][layer];
@@ -230,6 +244,13 @@ ProjectState ProjectState::makeMainInit()
     pattern.name = "A";
     pattern.triggerNote = 60; // JUCE's middle-C-3 display labels MIDI 60 as C3.
     pattern.lanes.resize(3);
+    for (auto& lane : pattern.lanes)
+    {
+        lane.name.clear();
+        for (auto& beat : lane.beats)
+            for (auto& slice : beat.slices)
+                slice.padIndex = 0;
+    }
     return state;
 }
 

@@ -974,6 +974,23 @@ void BeatScholarLinuxProcessor::resetPresetToInit()
 void BeatScholarLinuxProcessor::resetKitToInit()
 {
     auto initialized = bsl::ProjectState::makeMainInit();
+    // The sampler's Init cache is populated after the initial Clear SvN load.
+    // Use the owner's local factory kit, then apply the sampler initializer's
+    // four overrides. Keep the neutral Main Init fallback without factory data.
+    const auto kitFile = bsl::dataRoot().getChildFile("Factory/Kits/Classic/Clear SvN.json");
+    auto kit = initialized.kit;
+    auto master = initialized.master;
+    if (readableStateFile(kitFile)
+        && bsl::statecodec::importLegacyKitJson(kitFile.loadFileAsString(), kit, master)
+        && validEmbeddedAudio(kit))
+    {
+        kit.pads[0].factorySampleIds[0] = initialized.kit.pads[0].factorySampleIds[0];
+        kit.pads[0].driveGainDb = 0.0f;
+        kit.pads[0].damp = 0.36f;
+        kit.pads[5].highPass = bsl::normalizedPadHighPassCutoff(711.0f);
+        initialized.kit = std::move(kit);
+        initialized.master = master;
+    }
     copyParameterValuesToState(projectEditor_.state());
     projectEditor_.checkpoint(bsl::HistoryParameters::kit);
     projectEditor_.state().kit = std::move(initialized.kit);

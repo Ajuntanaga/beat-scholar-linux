@@ -30,6 +30,35 @@ void testMainInitFactorySamples()
 {
     const auto state = bsl::ProjectState::makeMainInit();
     check(state.isValid(), "Main Init remains valid with factory assignments");
+    check(state.global.beatsPerMinute == 100.0 && state.global.swingPercent == 0.0
+              && state.global.swingReference == bsl::SwingReference::quarter,
+          "Main Init restores native tempo and swing defaults");
+    check(state.master.distortionReturn == 0.79f && state.master.distortion == 0.0f,
+          "Main Init uses the native Aux3 return without enabling a master insert");
+    constexpr std::array<std::uint8_t, bsl::padCount> outputNotes {
+        36, 38, 37, 39, 42, 46, 49, 51, 57, 55, 43, 41, 54, 40, 53, 56
+    };
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+    {
+        check(state.kit.pads[pad].midiNote == outputNotes[pad]
+                  && state.kit.pads[pad].rootNote == 36,
+              "Main Init restores mapped output notes and C1 pitch roots");
+        check(state.kit.pads[pad].driveEnabled && state.kit.pads[pad].driveGainDb == 0.0f
+                  && state.kit.pads[pad].independentDistortion
+                  && state.kit.pads[pad].distortionMix == 0.0f,
+              "Main Init enables neutral drive and independent Aux3 sends");
+    }
+    check(state.kit.pads[4].name == "Hi Hat Closed" && state.kit.pads[5].name == "Hi Hat Open"
+              && state.kit.pads[6].name == "Crash 1" && state.kit.pads[15].name == "FX 2",
+          "Main Init uses the native pad labels");
+    for (const auto& lane : state.patterns[0].lanes)
+    {
+        check(lane.name.empty(), "Main Init leaves lane names empty");
+        for (const auto& beat : lane.beats)
+            for (const auto& slice : beat.slices)
+                check(!slice.enabled && slice.padIndex == 0 && slice.velocity == 0.8f,
+                      "Main Init empty cells retain pad zero and default velocity");
+    }
     check(state.kit.pads[0].factorySampleIds[0] == "SRC-DW_INST-BD_TYPE-Body_NAME-DW Sub.flac",
           "Init kick uses explicit DW Sub override");
     check(state.kit.pads[0].factorySampleIds[1] == "SRC-707_INST-BD_TYPE-Hit_NAME-SvN Kick.flac"

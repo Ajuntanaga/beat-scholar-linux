@@ -4073,8 +4073,13 @@ void testAutonomousManualRegressions()
 
 
 
-void testMainAndKitInitContract()
+std::unique_ptr<BeatScholarLinuxProcessor> makeProcessorForWrapper(juce::AudioProcessor::WrapperType wrapper);
+
+void testMainAndKitInitContract(const juce::File& output)
 {
+    const auto previous = juce::SystemStats::getEnvironmentVariable("XDG_DATA_HOME", "");
+    const auto xdg = output.getChildFile("init-contract-xdg");
+    setenv("XDG_DATA_HOME", xdg.getFullPathName().toRawUTF8(), 1);
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
     auto& state = processor->projectState();
     state.ui.selectedPad = 2;
@@ -4116,6 +4121,10 @@ void testMainAndKitInitContract()
               && processor->projectState().kit.pads[0].name != "Locked drum"
               && processor->parameters().getRawParameterValue("pad1LpfBypass")->load() == 0.0f,
           "Unlocked Main Init resets kit identity and parameters");
+    {
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        saveVisual(*editor, output, "main-init.png");
+    }
 
     processor->projectState().patterns[0].name = "Keep sequence";
     processor->projectState().patterns[0].lanes[0].beats[0].slices[0].enabled = true;
@@ -4130,7 +4139,7 @@ void testMainAndKitInitContract()
     for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
         check(processor->projectState().kit.pads[pad].factorySampleIds
                   == expectedInit.kit.pads[pad].factorySampleIds,
-              "Kit Init and Main Init share native factory assignments");
+              "Kit Init without local factory content uses neutral Main assignments");
     const auto after = bsl::statecodec::encode(processor->projectState());
     check(processor->projectState().patterns[0].name == "Keep sequence"
               && processor->projectState().patterns[0].lanes[0].beats[0].slices[0].enabled
@@ -4153,6 +4162,72 @@ void testMainAndKitInitContract()
     recalled->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
     check(bsl::statecodec::encode(recalled->projectState()) == after,
           "Initialized kit and retained sequence survive host recall");
+
+    // Synthetic owner-local kit: no factory preset contents are shipped by this test.
+    const auto factory = bsl::dataRoot().getChildFile("Factory/Kits/Classic/Clear SvN.json");
+    check(factory.getParentDirectory().createDirectory().wasOk(), "create Kit Init fixture directory");
+    juce::Array<juce::var> fixturePads;
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        fixturePads.add(juce::JSON::parse(R"json({"name":"Synthetic Init pad",
+            "Layers":[{"Sample":{"Binary":{"name":"synthetic-body.flac"}}},
+                      {"Sample":{"Binary":{"name":"synthetic-hit.flac"}}}],
+            "Params":{"Drive":{"Gain":"7dB"},"Length":0.13,"Hipass":"321Hz",
+                      "LayerMix":0.23,"Aux":{"Aux1":0.27,"Aux2":0.31},
+                      "Pitch":{"Root":36},"Pan":0.61}})json"));
+    juce::DynamicObject::Ptr padsObject = new juce::DynamicObject();
+    padsObject->setProperty("Pads", juce::var(fixturePads));
+    juce::DynamicObject::Ptr fixture = new juce::DynamicObject();
+    fixture->setProperty("Pads", juce::var(padsObject.get()));
+    fixture->setProperty("Params", juce::JSON::parse(R"json({"Delay":"63%"})json"));
+    check(factory.replaceWithText(juce::JSON::toString(juce::var(fixture.get()))),
+          "write synthetic Kit Init fixture");
+    for (const auto wrapper : { juce::AudioProcessor::wrapperType_Standalone,
+                               juce::AudioProcessor::wrapperType_VST3 })
+    {
+        auto target = makeProcessorForWrapper(wrapper);
+        target->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+        target->resetKitToInit();
+        const auto& kit = target->projectState().kit;
+        check(kit.pads[0].factorySampleIds[0] == expectedInit.kit.pads[0].factorySampleIds[0]
+                  && kit.pads[0].factorySampleIds[1] == "synthetic-hit.flac"
+                  && kit.pads[0].driveGainDb == 0.0f && kit.pads[0].damp == 0.36f
+                  && std::abs(bsl::padHighPassCutoffHz(kit.pads[5].highPass) - 711.0f) < 0.01f,
+              "Kit Init applies the four sampler initializer overrides in both wrappers");
+        check(kit.pads[1].name == "Synthetic Init pad"
+                  && kit.pads[1].factorySampleIds[0] == "synthetic-body.flac"
+                  && kit.pads[1].driveGainDb == 7.0f && kit.pads[1].damp == 0.13f
+                  && kit.pads[1].layerMix == 0.23f && kit.pads[1].room == 0.27f
+                  && kit.pads[1].reverb == 0.31f
+                  && std::abs(bsl::padHighPassCutoffHz(kit.pads[1].highPass) - 321.0f) < 0.01f
+                  && target->projectState().master.distortionReturn == 0.63f,
+              "Kit Init retains local kit voicing and auxiliary return instead of Main defaults");
+        check(target->projectState().patterns[0].name == "Keep sequence"
+                  && target->projectState().patterns[0].lanes[0].beats[0].slices[0].enabled
+                  && target->projectState().ui.presetFile == "Keep main.bslpreset"
+                  && target->projectState().ui.kitFile.empty()
+                  && std::abs(target->parameters().getRawParameterValue("swing")->load() - 42.0f) < 1e-5f,
+              "Voiced Kit Init preserves sequence, main identity and global automation");
+        const auto voiced = bsl::statecodec::encode(target->projectState());
+        check(target->restoreProjectHistory(false)
+                  && bsl::statecodec::encode(target->projectState()) == after,
+              "Voiced Kit Init undo restores the preceding kit");
+        check(target->restoreProjectHistory(true)
+                  && bsl::statecodec::encode(target->projectState()) == voiced,
+              "Voiced Kit Init redo restores local voicing and initializer overrides");
+        juce::MemoryBlock voicedSaved;
+        target->getStateInformation(voicedSaved);
+        auto hostRecall = makeProcessorForWrapper(wrapper);
+        hostRecall->setStateInformation(voicedSaved.getData(), static_cast<int>(voicedSaved.getSize()));
+        check(bsl::statecodec::encode(hostRecall->projectState()) == voiced,
+              "Voiced Kit Init survives standalone and VST3 state recall");
+    }
+    check(factory.replaceWithText("invalid kit"), "write invalid Kit Init fixture");
+    processor->resetKitToInit();
+    check(bsl::statecodec::encodeKitJson(processor->projectState().kit, processor->projectState().master)
+              == bsl::statecodec::encodeKitJson(expectedInit.kit, expectedInit.master),
+          "Invalid local Kit Init content falls back without partially applying data");
+    if (previous.isEmpty()) unsetenv("XDG_DATA_HOME");
+    else setenv("XDG_DATA_HOME", previous.toRawUTF8(), 1);
 }
 
 void testKitHistoryRestoresBypassesWithoutResettingGlobalAutomation(const juce::File& output)
@@ -6538,7 +6613,7 @@ int main(int argc, char** argv)
     testLegacyPresetKitIdentity(output);
     testContentNavigationSkipsMalformedFiles(output);
     testMasterUndoPreservesHostAutomation();
-    testMainAndKitInitContract();
+    testMainAndKitInitContract(output);
     testKitHistoryRestoresBypassesWithoutResettingGlobalAutomation(output);
     testSampleUndoRestoresAudibleData(output);
     testSampleDropTargets(output);
