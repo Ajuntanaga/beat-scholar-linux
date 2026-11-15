@@ -2089,22 +2089,22 @@ juce::File BeatScholarLinuxEditor::writePatternMidi(std::size_t patternIndex,
     }
     // Match live note lifetimes: a retrigger releases the previous same-note hit.
     // Explicitly bound each release so JUCE cannot leave stale note-offs behind.
-    std::array<std::int64_t, 128> nextOn;
-    nextOn.fill(static_cast<std::int64_t>(endTick));
+    std::array<std::array<std::int64_t, 128>, 16> nextOn;
+    for (auto& channel : nextOn) channel.fill(static_cast<std::int64_t>(endTick));
     std::vector<std::int64_t> noteOffTicks(events.size());
     for (std::size_t index = events.size(); index-- > 0;)
     {
         const auto& event = events[index];
-        noteOffTicks[index] = std::min(event.tick + event.gateTicks, nextOn[event.note]);
-        nextOn[event.note] = event.tick;
+        noteOffTicks[index] = std::min(event.tick + event.gateTicks, nextOn[event.channel - 1][event.note]);
+        nextOn[event.channel - 1][event.note] = event.tick;
     }
     for (std::size_t index = 0; index < events.size(); ++index)
     {
         const auto& event = events[index];
-        auto on = juce::MidiMessage::noteOn(1, event.note, event.velocity);
+        auto on = juce::MidiMessage::noteOn(event.channel, event.note, event.velocity);
         on.setTimeStamp(static_cast<double>(event.tick));
         track.addEvent(on);
-        auto off = juce::MidiMessage::noteOff(1, event.note);
+        auto off = juce::MidiMessage::noteOff(event.channel, event.note);
         off.setTimeStamp(static_cast<double>(noteOffTicks[index]));
         track.addEvent(off);
     }
@@ -4081,6 +4081,11 @@ void BeatScholarLinuxEditor::showPresetMenu()
     midiDisplay.addSubMenu("Format", noteFormat);
     midiDisplay.addSubMenu("Accidentals", accidentals);
     menu.addSubMenu("MIDI Display", midiDisplay);
+    juce::PopupMenu midiChannel;
+    midiChannel.addItem(100, "Any", true, global.midiChannel == 0);
+    for (int channel = 1; channel <= 16; ++channel)
+        midiChannel.addItem(100 + channel, juce::String(channel), true, global.midiChannel == channel);
+    menu.addSubMenu("MIDI Channel", midiChannel);
     menu.setLookAndFeel(&lookAndFeel_);
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(preset_),
                        [safe = juce::Component::SafePointer<BeatScholarLinuxEditor>(this),
@@ -4120,6 +4125,15 @@ void BeatScholarLinuxEditor::showPresetMenu()
         if (result == 2)
         {
             safe->savePresetAs();
+            return;
+        }
+        if (result >= 100 && result <= 116)
+        {
+            auto& channel = safe->processor_.projectState().global.midiChannel;
+            if (channel == result - 100) return;
+            safe->processor_.projectEditor().checkpoint();
+            channel = result - 100;
+            safe->processor_.markProjectDirty();
             return;
         }
         if (result >= 20 && result <= 26)

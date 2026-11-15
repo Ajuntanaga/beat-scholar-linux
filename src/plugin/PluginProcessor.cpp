@@ -576,14 +576,14 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                 advanceAudio(offset);
                 if (event.velocity == 0)
                 {
-                    midi.addEvent(juce::MidiMessage::noteOff(1, event.note,
+                    midi.addEvent(juce::MidiMessage::noteOff(event.channel, event.note,
                         static_cast<juce::uint8>(sequencerEvents_[index].releaseVelocity)), offset);
                     audioEngine_.sequencerNoteOff(static_cast<std::uint8_t>(36 + event.padIndex),
                                                   sequencerEvents_[index].laneIndex);
                 }
                 else
                 {
-                    midi.addEvent(juce::MidiMessage::noteOn(1, event.note,
+                    midi.addEvent(juce::MidiMessage::noteOn(event.channel, event.note,
                         static_cast<juce::uint8>(event.velocity)), offset);
                     if (state.global.samplerEnabled && event.padIndex < bsl::padCount)
                         audioEngine_.sequencerNoteOn(static_cast<std::uint8_t>(36 + event.padIndex),
@@ -957,6 +957,7 @@ void BeatScholarLinuxProcessor::resetPresetToInit()
     initialized.randomizer = std::move(current.randomizer);
     initialized.ui.randomizerFile = std::move(current.ui.randomizerFile);
     initialized.global.quantization = current.global.quantization;
+    initialized.global.midiChannel = current.global.midiChannel;
     initialized.global.sequencerEnabled = current.global.sequencerEnabled;
     initialized.global.samplerEnabled = current.global.samplerEnabled;
     initialized.global.auxEnabled = current.global.auxEnabled;

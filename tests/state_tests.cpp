@@ -663,6 +663,25 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
     auto state = bsl::ProjectState::makeDefault();
     check(bsl::statecodec::importLegacyPresetJson(json, state), "legacy preset JSON imports");
     check(state.isValid(), "legacy preset is validated before publication");
+    check(state.global.midiChannel == 1, "original presets without Channel default to channel one");
+    auto channelPreset = juce::JSON::parse(json);
+    auto channelState = state;
+    for (int channel = 0; channel <= 16; ++channel)
+    {
+        channelPreset.getDynamicObject()->setProperty("Channel", channel);
+        check(bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(channelPreset), channelState)
+                  && channelState.global.midiChannel == channel,
+              "original presets import Any and every fixed MIDI channel");
+    }
+    const auto beforeChannel = bsl::statecodec::encodePresetJson(channelState);
+    for (const auto& invalid : { juce::var(-1), juce::var(17), juce::var(1.5),
+                                juce::var("7"), juce::var(false), juce::var() })
+    {
+        channelPreset.getDynamicObject()->setProperty("Channel", invalid);
+        check(!bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(channelPreset), channelState)
+                  && bsl::statecodec::encodePresetJson(channelState) == beforeChannel,
+              "invalid original MIDI channels reject atomically");
+    }
     check(state.global.quantization == bsl::PatternQuantization::whole,
           "original presets without a quantize field default to shared 4/4");
     auto quantized = juce::JSON::parse(json);
@@ -1270,10 +1289,51 @@ void testCompressedStateExpansionIsBounded()
     check(destination.patterns[0].name == state.patterns[0].name, "oversized state rejection is atomic");
 }
 
+void testMidiChannelRecallAndCompatibility()
+{
+    auto source = bsl::ProjectState::makeDefault();
+    auto restored = source;
+    for (int channel = 0; channel <= 16; ++channel)
+    {
+        source.global.midiChannel = channel;
+        check(bsl::statecodec::decodePresetJson(bsl::statecodec::encodePresetJson(source), restored)
+                  && restored.global.midiChannel == channel,
+              "preset recall retains Any and every fixed MIDI channel");
+        const auto host = bsl::statecodec::encode(source);
+        restored.global.midiChannel = -1;
+        check(bsl::statecodec::decode(host.getData(), host.getSize(), restored)
+                  && restored.global.midiChannel == channel,
+              "host recall retains Any and every fixed MIDI channel");
+    }
+    auto old = juce::JSON::parse(bsl::statecodec::encodePresetJson(source));
+    auto* global = old.getProperty("global", {}).getDynamicObject();
+    global->removeProperty("midiChannel");
+    restored.global.midiChannel = 7;
+    check(bsl::statecodec::decodePresetJson(juce::JSON::toString(old), restored)
+              && restored.global.midiChannel == 1,
+          "older states default to channel one independently of the previous selection");
+    const auto before = bsl::statecodec::encodePresetJson(restored);
+    for (const auto& invalid : { juce::var(-1), juce::var(17), juce::var(1.5),
+                                juce::var("7"), juce::var(false), juce::var() })
+    {
+        global->setProperty("midiChannel", invalid);
+        check(!bsl::statecodec::decodePresetJson(juce::JSON::toString(old), restored)
+                  && bsl::statecodec::encodePresetJson(restored) == before,
+              "invalid MIDI channels reject atomically without narrowing or coercion");
+    }
+    for (const int invalid : { -1, 17, 256 })
+    {
+        source.global.midiChannel = invalid;
+        check(!source.isValid() && bsl::statecodec::encodePresetJson(source).isEmpty(),
+              "out-of-range MIDI channels cannot be published");
+    }
+}
+
 } // namespace
 
 int main()
 {
+    testMidiChannelRecallAndCompatibility();
     testModuleEnablesRoundTripIndependentlyOfRouting();
     testSwingReferenceDefaultsAndExplicitRecall();
     testMonoStateRoundTripsAndOldStateDefaults();

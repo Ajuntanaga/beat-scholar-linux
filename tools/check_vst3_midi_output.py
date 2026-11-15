@@ -22,8 +22,8 @@ def rounded(value: float) -> int:
     return math.floor(value + 0.5)
 
 
-def note(sample: int, kind: str, pitch: int, velocity: int = 0) -> tuple:
-    return sample, kind, 1, pitch, velocity
+def note(sample: int, kind: str, pitch: int, velocity: int = 0, channel: int = 1) -> tuple:
+    return sample, kind, channel, pitch, velocity
 
 
 def canonical(events: list[dict]) -> list[tuple]:
@@ -103,6 +103,26 @@ def main() -> int:
                                       if legacy_immediate else 'exact expected event samples')}
         cases.append(result)
         print(f"{name}/{block}: {'PASS' if not errors else 'FAIL: ' + '; '.join(errors)}", flush=True)
+
+    # Owned-original captures, 2026-11-15: 48 kHz, 100 BPM, block 64.
+    # Fixed channels route every lane together; Any (0) is one channel per lane.
+    for channel in (0, 1, 7, 16):
+        routed = copy.deepcopy(state)
+        routed['global']['midiChannel'] = channel
+        for pad, pitch in enumerate((36, 46, 42, 38)):
+            routed['pads'][pad]['midiNote'] = pitch
+        pattern = routed['patterns'][0]
+        pattern['lanes'] = [copy.deepcopy(pattern['lanes'][0]) for _ in range(2)]
+        for lane, entry in enumerate(pattern['lanes']):
+            entry['beats'] = [[dict(padIndex=lane * 2 + min(index, 1), velocity=0.5,
+                                   enabled=index < 2, velocityAssigned=True)] for index in range(4)]
+        captured = ((0, 'note_on', 36, 0), (0, 'note_on', 42, 1),
+                    (28224, 'note_off', 36, 0), (28224, 'note_off', 42, 1),
+                    (28800, 'note_on', 46, 0), (28800, 'note_on', 38, 1),
+                    (57024, 'note_off', 46, 0), (57024, 'note_off', 38, 1))
+        expected = [note(sample, kind, pitch, 64, lane + 1 if channel == 0 else channel)
+                    for sample, kind, pitch, lane in captured]
+        run_case(f'midi-channel-{channel}', routed, 57025, [], expected, 64, tempo=100)
 
     # Odd subdivisions, ghost velocities and a stop during the final long gate.
     subdivisions = (5, 7, 9, 1)

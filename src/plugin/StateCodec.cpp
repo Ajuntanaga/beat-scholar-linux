@@ -199,6 +199,7 @@ juce::var projectToVar(const ProjectState& state)
     set(root, "activePattern", static_cast<juce::int64>(state.activePattern));
 
     auto global = object();
+    set(global, "midiChannel", state.global.midiChannel);
     set(global, "swingPercent", state.global.swingPercent);
     set(global, "swingReference", static_cast<int>(state.global.swingReference));
     set(global, "beatsPerMinute", state.global.beatsPerMinute);
@@ -571,6 +572,12 @@ bool projectFromVar(const juce::var& root, ProjectState& state)
     candidate.schemaVersion = stateVersion;
     candidate.activePattern = static_cast<std::size_t>(static_cast<juce::int64>(get(root, "activePattern")));
     const auto global = get(root, "global");
+    if (global.hasProperty("midiChannel"))
+    {
+        juce::int64 channel;
+        if (!readIndex(get(global, "midiChannel"), 0, 16, channel)) return false;
+        candidate.global.midiChannel = static_cast<int>(channel);
+    }
     candidate.global.swingPercent = readDouble(global, "swingPercent", 0.0);
     const int swingReference = readInt(global, "swingReference",
         static_cast<int>(candidate.global.swingReference));
@@ -1248,6 +1255,12 @@ bool importLegacyPresetJson(const juce::String& json, ProjectState& destination)
     if (!root.isObject())
         return false;
     ProjectState candidate = ProjectState::makeDefault();
+    if (root.hasProperty("Channel"))
+    {
+        juce::int64 channel;
+        if (!readIndex(get(root, "Channel"), 0, 16, channel)) return false;
+        candidate.global.midiChannel = static_cast<int>(channel);
+    }
     if (root.hasProperty("Randomize")
         && !importLegacyRandomizerJson(json, candidate.randomizer))
         return false;

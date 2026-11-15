@@ -897,10 +897,43 @@ void testBatchWindowsMatchFullRender()
     }
 }
 
+void testMidiChannelRouting()
+{
+    auto state = bsl::ProjectState::makeDefault();
+    auto& pattern = state.patterns[0];
+    pattern.lanes.assign(16, bsl::LaneState::make(4));
+    for (std::size_t lane = 0; lane < pattern.lanes.size(); ++lane)
+        pattern.lanes[lane].beats[0] = bsl::BeatState::withSubdivision(1, static_cast<std::uint8_t>(lane), 0.5f);
+    for (const int channel : { 0, 1, 7, 16 })
+    {
+        state.global.midiChannel = channel;
+        const auto expectedChannel = [channel](std::size_t lane) { return channel == 0 ? lane + 1 : channel; };
+        bsl::TransportFrame frame { 48000.0, 100.0, 0, 64, true };
+        const auto events = bsl::Sequencer::render(state, frame);
+        check(events.size() == 16, "channel routing retains all sixteen simultaneous lanes");
+        for (const auto& event : events)
+            check(event.channel == expectedChannel(event.padIndex), "live render uses the fixed or per-lane channel");
+        std::array<bsl::SequencerBatchEvent, 3> storage;
+        bsl::SequencerBatchCursor cursor;
+        std::vector<bsl::MidiEvent> actual;
+        while (!cursor.exhausted && actual.size() <= events.size())
+        {
+            const auto count = bsl::Sequencer::renderBatch(state, frame, 0, storage, cursor);
+            for (std::size_t i = 0; i < count; ++i) actual.push_back(storage[i].event);
+        }
+        check(cursor.exhausted && actual == events, "small bounded batches preserve routed channels");
+        const auto exported = bsl::Sequencer::exportPattern(state, 0, 960);
+        check(exported.size() == 16, "MIDI export retains all sixteen lanes");
+        for (const auto& event : exported)
+            check(event.channel == expectedChannel(event.padIndex), "MIDI export uses the fixed or per-lane channel");
+    }
+}
+
 } // namespace
 
 int main()
 {
+    testMidiChannelRouting();
     testMainInitFactorySamples();
     testSequencerBatchesPreserveSimultaneousEvents();
     testBatchWindowsMatchFullRender();

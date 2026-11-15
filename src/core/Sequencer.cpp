@@ -122,8 +122,9 @@ void forEachEvent(const ProjectState& state, const TransportFrame& transport,
         const double beatLength = 4.0 / static_cast<double>(bar.denominator);
         for (int beat = 0; beat < bar.numerator; ++beat, ++beatIndex)
         {
-            for (const auto& lane : pattern.lanes)
+            for (std::size_t laneIndex = 0; laneIndex < pattern.lanes.size(); ++laneIndex)
             {
+                const auto& lane = pattern.lanes[laneIndex];
                 if (lane.muted || (hasSolo && !lane.solo))
                     continue;
 
@@ -175,7 +176,7 @@ void forEachEvent(const ProjectState& state, const TransportFrame& transport,
                                     offset,
                                     state.kit.pads[slice.padIndex].midiNote,
                                     midiVelocity(slice.velocity),
-                                    1,
+                                    state.global.midiChannelForLane(laneIndex),
                                     slice.padIndex,
                                     static_cast<std::size_t>(std::max(1LL,
                                         static_cast<long long>(std::floor(relative + gateSamples + 0.5)) - offset))
@@ -298,7 +299,7 @@ std::size_t Sequencer::renderBatch(const ProjectState& state,
                             + beatIndex) * maximumLaneCount + laneIndex) * maximumSubdivision + sliceIndex;
                         const SequencerBatchEvent candidate {
                             { offset, state.kit.pads[slice.padIndex].midiNote,
-                              midiVelocity(slice.velocity), 1, slice.padIndex,
+                              midiVelocity(slice.velocity), state.global.midiChannelForLane(laneIndex), slice.padIndex,
                               static_cast<std::size_t>(std::max(1LL,
                                   static_cast<long long>(std::floor(relative + gateSamples + 0.5)) - offset)) },
                             ordinal };
@@ -350,8 +351,9 @@ std::vector<MidiTickEvent> Sequencer::exportPattern(const ProjectState& state,
         const double beatLength = 4.0 / static_cast<double>(bar.denominator);
         for (int beat = 0; beat < bar.numerator; ++beat, ++beatIndex)
         {
-            for (const auto& lane : pattern.lanes)
+            for (std::size_t laneIndex = 0; laneIndex < pattern.lanes.size(); ++laneIndex)
             {
+                const auto& lane = pattern.lanes[laneIndex];
                 if (lane.muted || (hasSolo && !lane.solo))
                     continue;
                 const auto& beatState = lane.beats[beatIndex];
@@ -375,7 +377,8 @@ std::vector<MidiTickEvent> Sequencer::exportPattern(const ProjectState& state,
                     const auto gateTicks = std::max<std::int64_t>(1,
                         std::llround((local + swungEnd - swung) * ticksPerQuarter) - unwrappedTick);
                     result.push_back({ tick, state.kit.pads[slice.padIndex].midiNote,
-                                       midiVelocity(slice.velocity), slice.padIndex, gateTicks });
+                                       midiVelocity(slice.velocity), slice.padIndex, gateTicks,
+                                       state.global.midiChannelForLane(laneIndex) });
                 }
             }
             beatStart += beatLength;

@@ -644,10 +644,51 @@ void testAtomicResetRequestIsConsumedExactlyOnce()
     check(!request.consume(), "one consume clears coalesced reset requests");
 }
 
+void testChannelChangeRetainsHeldNoteReleases()
+{
+    for (const int channel : { 0, 1, 7, 16 })
+    for (const bool stop : { false, true })
+    {
+        auto state = bsl::ProjectState::makeDefault();
+        state.global.midiChannel = channel;
+        auto& pattern = state.patterns[0];
+        pattern.lanes.assign(2, bsl::LaneState::make(4));
+        for (std::size_t lane = 0; lane < 2; ++lane)
+            pattern.lanes[lane].beats[0] = bsl::BeatState::withSubdivision(1, static_cast<std::uint8_t>(lane), 0.5f);
+        const auto plan = bsl::SequencerPlayback::preparePattern(pattern);
+        bsl::SequencerPlayback playback;
+        const auto render = [&](bsl::TransportFrame frame) {
+            std::vector<bsl::PlaybackEvent> result;
+            std::array<bsl::PlaybackEvent, 1> storage;
+            bsl::PlaybackCursor cursor;
+            while (!cursor.exhausted && result.size() < 8)
+            {
+                const auto count = playback.renderBatch(state, frame, 0, plan, storage, cursor);
+                for (std::size_t i = 0; i < count; ++i) result.push_back(storage[i]);
+            }
+            check(cursor.exhausted, "channel lifecycle exhausts bounded output batches");
+            return result;
+        };
+        const auto ons = render({ 48000.0, 100.0, 0, 64, true });
+        state.global.midiChannel = channel == 7 ? 16 : 7;
+        const auto offs = render({ 48000.0, 100.0, stop ? 64 : 28224, 64, !stop });
+        check(ons.size() == 2 && offs.size() == 2, "channel change retains both lane releases at gate or stop");
+        for (std::size_t i = 0; i < std::min(ons.size(), offs.size()); ++i)
+        {
+            const int expected = channel == 0 ? static_cast<int>(ons[i].laneIndex + 1) : channel;
+            check(ons[i].event.channel == expected && offs[i].event.channel == expected
+                      && ons[i].event.velocity == 64 && offs[i].event.velocity == 0
+                      && offs[i].releaseVelocity == 64,
+                  "held notes release on their original channel after a live channel change");
+        }
+    }
+}
+
 } // namespace
 
 int main()
 {
+    testChannelChangeRetainsHeldNoteReleases();
     testUnquantizedTriggerUsesEventOffset();
     testHostPpqOverridesSampleTimeline();
     testAbsoluteSampleAndBpmFallbackChoosesBoundary();

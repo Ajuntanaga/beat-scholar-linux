@@ -59,6 +59,7 @@ struct MidiTickEvent
     // Shared MIDI mappings must retrigger in the same pad order as playback.
     std::uint8_t padIndex = 0;
     std::int64_t gateTicks = 1;
+    std::uint8_t channel = 1;
 
     auto operator<=>(const MidiTickEvent&) const = default;
 };

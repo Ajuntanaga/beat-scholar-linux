@@ -264,7 +264,8 @@ bool ProjectState::isValid() const
     if (!std::isfinite(global.swingPercent) || global.swingPercent < -200.0
         || global.swingPercent > 200.0 || !std::isfinite(global.beatsPerMinute)
         || global.beatsPerMinute <= 0.0 || !std::isfinite(global.defaultVelocity)
-        || global.defaultVelocity < 0.0f || global.defaultVelocity > 1.0f)
+        || global.defaultVelocity < 0.0f || global.defaultVelocity > 1.0f
+        || global.midiChannel < 0 || global.midiChannel > 16)
         return false;
 
     if (global.quantization

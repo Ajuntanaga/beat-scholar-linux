@@ -10,6 +10,7 @@
 #include <iostream>
 #include <memory>
 #include <map>
+#include <tuple>
 
 // Observe publication and provide deterministic convolution fixtures without factory IRs.
 struct BeatScholarLinuxProcessorTestAccess
@@ -2208,17 +2209,78 @@ private:
                 if (action == nullptr) juce::PopupMenu::dismissAllActiveMenus();
             }
         }
-        else
+        else if (phase_ == 4)
         {
             auto* button = childWithId<juce::TextButton>(*editor_, "kit.menu");
             check(processor_.projectState().patterns[0].name == "Sequence survives kit init"
                       && button != nullptr && button->getButtonText() == "Init",
                   "Kit menu action preserves the sequence and clears its old identity");
             saveVisual(*editor_, output_, "kit-init-state.png");
-            stopTimer();
-            window_.setVisible(false);
-            done_();
-            return;
+        }
+        else
+        {
+            const int channel = (phase_ - 5) / 4;
+            const int stage = (phase_ - 5) % 4;
+            auto& state = processor_.projectState();
+            if (stage == 0)
+            {
+                previousChannel_ = state.global.midiChannel;
+                revision_ = processor_.projectEditor().revision();
+                auto* button = childWithId<juce::TextButton>(*editor_, "toolbar.preset");
+                if (button != nullptr) button->onClick();
+            }
+            else if (stage == 1)
+            {
+                auto* menu = juce::Component::getCurrentlyModalComponent();
+                auto* action = menu == nullptr ? nullptr : item(*menu, "MIDI Channel");
+                check(action != nullptr && action->getActions().invoke(juce::AccessibilityActionType::press),
+                      "Main preset menu opens the MIDI Channel submenu");
+            }
+            else if (stage == 2)
+            {
+                juce::Component* submenu = nullptr;
+                auto& desktop = juce::Desktop::getInstance();
+                for (int i = desktop.getNumComponents(); --i >= 0;)
+                    if (item(*desktop.getComponent(i), "Any") != nullptr)
+                    {
+                        submenu = desktop.getComponent(i);
+                        break;
+                    }
+                check(submenu != nullptr, "MIDI Channel exposes its Any and fixed-channel choices");
+                if (submenu != nullptr)
+                {
+                    for (int choice = 0; choice <= 16; ++choice)
+                    {
+                        const auto label = choice == 0 ? juce::String("Any") : juce::String(choice);
+                        auto* action = item(*submenu, label);
+                        check(action != nullptr && action->getCurrentState().isChecked() == (choice == previousChannel_),
+                              "MIDI Channel displays the saved selection for " + label);
+                    }
+                    if (previousChannel_ == 7) saveVisual(*submenu, output_, "midi-channel-menu.png");
+                    auto* action = item(*submenu, channel == 0 ? juce::String("Any") : juce::String(channel));
+                    check(action != nullptr && action->getActions().invoke(juce::AccessibilityActionType::press),
+                          "MIDI Channel selects channel " + juce::String(channel));
+                    if (action == nullptr) juce::PopupMenu::dismissAllActiveMenus();
+                }
+                else juce::PopupMenu::dismissAllActiveMenus();
+            }
+            else
+            {
+                check(state.global.midiChannel == channel
+                          && processor_.projectEditor().revision() == revision_ + 1,
+                      "MIDI Channel action records one edit for channel " + juce::String(channel));
+                check(processor_.projectEditor().undo() && state.global.midiChannel == previousChannel_
+                          && processor_.projectEditor().redo() && state.global.midiChannel == channel,
+                      "MIDI Channel selection supports undo and redo");
+                juce::PopupMenu::dismissAllActiveMenus();
+                if (channel == 16)
+                {
+                    stopTimer();
+                    window_.setVisible(false);
+                    done_();
+                    return;
+                }
+            }
         }
         ++phase_;
     }
@@ -2229,6 +2291,8 @@ private:
     juce::DocumentWindow window_ { "Init preset menus", juce::Colours::black,
                                    juce::DocumentWindow::closeButton };
     std::function<void()> done_;
+    std::uint64_t revision_ = 0;
+    int previousChannel_ = 1;
     int phase_ = 0;
 };
 
@@ -4090,6 +4154,7 @@ void testMainInitRetainsLiveControls(const juce::File& output)
         state.ui.randomizerFile = "Retained.bslrandomizer";
         state.global.kitLocked = false;
         state.global.quantization = bsl::PatternQuantization::eighth;
+        state.global.midiChannel = 7;
         state.global.sequencerEnabled = false;
         state.global.samplerEnabled = false;
         state.global.auxEnabled = false;
@@ -4125,8 +4190,9 @@ void testMainInitRetainsLiveControls(const juce::File& output)
               "Main Init retains randomizer settings and identity in both wrappers");
         check(!initialized.global.sequencerEnabled && !initialized.global.samplerEnabled
                   && !initialized.global.auxEnabled && !initialized.global.masterEnabled
-                  && initialized.global.quantization == bsl::PatternQuantization::eighth,
-              "Main Init retains module switches and quantization in both wrappers");
+                  && initialized.global.quantization == bsl::PatternQuantization::eighth
+                  && initialized.global.midiChannel == 7,
+              "Main Init retains module switches, quantization and MIDI channel in both wrappers");
         for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
             check(initialized.kit.pads[pad].muted == (pad % 2 == 0)
                       && initialized.kit.pads[pad].solo == (pad % 3 == 0),
@@ -5850,10 +5916,11 @@ void testMidiExportGatesFollowPlayback(const juce::File& output)
     // Read the serialized events without JUCE inventing missing note-offs.
     // Dense slices, swing, shared notes and mixed meters must each retain one
     // release per hit, at the same gate boundary used by the live sequencer.
-    for (int mode = 0; mode < 6; ++mode)
+    for (int mode = 0; mode < 8; ++mode)
     {
         BeatScholarLinuxProcessor processor;
         auto& state = processor.projectState();
+        state.global.midiChannel = mode == 6 ? 0 : mode == 7 ? 16 : 1;
         auto& pattern = state.patterns.front();
         pattern.name = "MIDI gate case " + std::to_string(mode);
         pattern.bars = mode == 3 ? std::vector<bsl::BarState> { bsl::BarState::make(3, 8), bsl::BarState::make(1, 16) }
@@ -5895,28 +5962,31 @@ void testMidiExportGatesFollowPlayback(const juce::File& output)
         check(input.openedOk() && midi.readFrom(input, false) && midi.getNumTracks() == 1,
               "gate regression reads the raw exported MIDI track");
         if (midi.getNumTracks() != 1) continue;
-        std::vector<std::pair<int, int>> exportedOns, exportedOffs, expectedOffs;
+        std::vector<std::tuple<int, int, int>> exportedOns, exportedOffs, expectedOffs;
         for (int i = 0; i < midi.getTrack(0)->getNumEvents(); ++i)
         {
             const auto& m = midi.getTrack(0)->getEventPointer(i)->message;
-            if (m.isNoteOn()) exportedOns.emplace_back(static_cast<int>(m.getTimeStamp()), m.getNoteNumber());
-            if (m.isNoteOff()) exportedOffs.emplace_back(static_cast<int>(m.getTimeStamp()), m.getNoteNumber());
+            if (m.isNoteOn()) exportedOns.emplace_back(static_cast<int>(m.getTimeStamp()), m.getChannel(), m.getNoteNumber());
+            if (m.isNoteOff()) exportedOffs.emplace_back(static_cast<int>(m.getTimeStamp()), m.getChannel(), m.getNoteNumber());
         }
-        std::vector<std::pair<int, int>> expectedOns;
+        std::vector<std::tuple<int, int, int>> expectedOns;
         for (std::size_t i = 0; i < played.size(); ++i)
         {
             const auto& hit = played[i];
-            expectedOns.emplace_back(hit.sampleOffset, hit.note);
+            expectedOns.emplace_back(hit.sampleOffset, hit.channel, hit.note);
             int end = std::min(frame.blockSize, hit.sampleOffset + static_cast<int>(hit.gateFrames));
             for (std::size_t next = i + 1; next < played.size(); ++next)
-                if (played[next].note == hit.note)
+                if (played[next].note == hit.note && played[next].channel == hit.channel)
                 {
                     end = std::min(end, played[next].sampleOffset);
                     break;
                 }
-            expectedOffs.emplace_back(end, hit.note);
+            expectedOffs.emplace_back(end, hit.channel, hit.note);
         }
         std::sort(expectedOffs.begin(), expectedOffs.end());
+        std::sort(exportedOffs.begin(), exportedOffs.end());
+        std::sort(expectedOns.begin(), expectedOns.end());
+        std::sort(exportedOns.begin(), exportedOns.end());
         check(exportedOns == expectedOns, "MIDI export keeps every live onset in case " + juce::String(mode));
         check(exportedOffs == expectedOffs,
               "MIDI export releases each hit once at its playback gate or retrigger in case " + juce::String(mode));

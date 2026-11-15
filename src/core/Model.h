@@ -48,6 +48,11 @@ struct GlobalState
     SwingReference swingReference = SwingReference::quarter;
     double beatsPerMinute = 120.0;
     float defaultVelocity = 0.8f;
+    int midiChannel = 1; // 0 (Any) sends each lane on its one-based channel.
+    [[nodiscard]] std::uint8_t midiChannelForLane(std::size_t laneIndex) const noexcept
+    {
+        return static_cast<std::uint8_t>(midiChannel == 0 ? laneIndex + 1 : midiChannel);
+    }
     bool sequencerEnabled = true;
     bool samplerEnabled = true;
     bool auxEnabled = true;

@@ -56,6 +56,7 @@ private:
         std::uint8_t state = 1; // 1: off, 0: touched this callback, 2: previous callback.
         std::uint8_t pad = 0;
         std::uint8_t velocity = 0;
+        std::uint8_t channel = 1;
     };
     std::array<std::array<Note, 128>, maximumLaneCount> notes_ {};
     std::array<std::array<Note, 128>, maximumLaneCount> initial_ {};

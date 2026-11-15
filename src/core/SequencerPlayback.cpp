@@ -189,8 +189,8 @@ std::size_t SequencerPlayback::renderBatch(const ProjectState& project,
     if (!cursor.started) initial_ = notes_;
     auto notes = initial_;
     std::size_t count = 0, ordinal = 0, remaining = 0;
-    const auto emit = [&](int offset, std::uint8_t pitch, std::uint8_t velocity, std::uint8_t pad, std::size_t laneIndex, std::uint8_t releaseVelocity = 0) {
-        PlaybackEvent candidate { { offset, pitch, velocity, 1, pad, 0 }, ordinal++, laneIndex, releaseVelocity };
+    const auto emit = [&](int offset, std::uint8_t pitch, std::uint8_t velocity, std::uint8_t pad, std::size_t laneIndex, std::uint8_t channel, std::uint8_t releaseVelocity = 0) {
+        PlaybackEvent candidate { { offset, pitch, velocity, channel, pad, 0 }, ordinal++, laneIndex, releaseVelocity };
         if (cursor.started && candidate <= cursor.after) return;
         ++remaining;
         if (count < destination.size())
@@ -254,16 +254,17 @@ std::size_t SequencerPlayback::renderBatch(const ProjectState& project,
                 auto& note = notes[laneIndex][pitch];
                 const auto on = [&](double position, double cycleOrigin = 0.0) {
                     const int sample = offset(position, cycleOrigin);
-                    if (note.state != 1) emit(sample, pitch, 0, note.pad, laneIndex, note.velocity);
-                    emit(sample, pitch, step.velocity, step.pad, laneIndex);
-                    note = { 0, step.pad, step.velocity };
+                    if (note.state != 1) emit(sample, pitch, 0, note.pad, laneIndex, note.channel, note.velocity);
+                    const auto channel = project.global.midiChannelForLane(laneIndex);
+                    emit(sample, pitch, step.velocity, step.pad, laneIndex, channel);
+                    note = { 0, step.pad, step.velocity, channel };
                 };
                 if (first <= start && start < last) on(warp(step.start), cycleStart);
                 if (note.state == 1) on(first);
                 else if (note.state == 2) note.state = 0;
                 if (first <= end && end < last && note.state != 1)
                 {
-                    emit(offset(warp(step.end), cycleStart), pitch, 0, note.pad, laneIndex, note.velocity);
+                    emit(offset(warp(step.end), cycleStart), pitch, 0, note.pad, laneIndex, note.channel, note.velocity);
                     note.state = 1;
                 }
             }
@@ -276,7 +277,7 @@ std::size_t SequencerPlayback::renderBatch(const ProjectState& project,
         if (playing && note.state == 0) note.state = 2;
         else if (note.state != 1)
         {
-            emit(0, static_cast<std::uint8_t>(pitch), 0, note.pad, laneIndex, note.velocity);
+            emit(0, static_cast<std::uint8_t>(pitch), 0, note.pad, laneIndex, note.channel, note.velocity);
             note.state = 1;
         }
     }
