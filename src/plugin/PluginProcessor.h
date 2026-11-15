@@ -89,7 +89,7 @@ private:
     static BusesProperties makeBuses();
     static juce::AudioProcessorValueTreeState::ParameterLayout makeParameterLayout();
     void loadBuiltInPreviewKit(std::optional<std::size_t> onlyPad = std::nullopt);
-    void loadFactoryKitIfAvailable();
+    void loadFactoryDefaultsIfAvailable();
     void loadFactorySamples(std::optional<std::size_t> onlyPad = std::nullopt);
     void syncParametersFromProject();
     void copyParameterValuesToState(bsl::ProjectState&) const;

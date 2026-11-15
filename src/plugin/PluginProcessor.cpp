@@ -146,7 +146,7 @@ BeatScholarLinuxProcessor::BeatScholarLinuxProcessor()
             padBypassParameters_[pad][effect] = parameters_.getRawParameterValue(padBypassId(pad, effect));
     // Defaults belong only to a new instance. Audio re-preparation must never
     // replace an intentionally empty or partially populated restored kit.
-    loadFactoryKitIfAvailable();
+    loadFactoryDefaultsIfAvailable();
     syncParametersFromProject();
     sequencerPlayback_.reset();
     for (std::size_t index = 0; index < stateSnapshots_.size(); ++index)
@@ -1046,8 +1046,25 @@ bool BeatScholarLinuxProcessor::saveRandomizerFile(const juce::File& file)
     return true;
 }
 
-void BeatScholarLinuxProcessor::loadFactoryKitIfAvailable()
+void BeatScholarLinuxProcessor::loadFactoryDefaultsIfAvailable()
 {
+    // A fresh native instance opens the complete tutorial preset. Resolve it
+    // from the owner's local factory content; never bundle commercial assets.
+    const auto presetFile = bsl::dataRoot().getChildFile("Factory/Presets/Tutorial/This is Beat Scholar.json");
+    if (readableStateFile(presetFile))
+    {
+        const auto json = presetFile.loadFileAsString();
+        auto restored = projectEditor_.state();
+        if (bsl::statecodec::importLegacyPresetJson(json, restored)
+            && validEmbeddedAudio(restored.kit))
+        {
+            restored.ui.kitFile = legacyPresetKitFile(json).toStdString();
+            restored.ui.presetFile = presetFile.getFullPathName().toStdString();
+            projectEditor_ = bsl::ProjectEditor(std::move(restored));
+            return;
+        }
+    }
+
     const auto& firstPad = projectEditor_.state().kit.pads.front();
     if (!firstPad.factorySampleIds.front().empty() || !firstPad.customSamples[0].base64.empty())
         return;

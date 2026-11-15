@@ -5086,8 +5086,47 @@ void testFunctionalRepairs(const juce::File& output)
     setenv("XDG_DATA_HOME", xdg.getFullPathName().toRawUTF8(), 1);
     const auto factory = bsl::dataRoot().getChildFile("Factory/Kits/Acoustic Power/Acoustic Power.json");
     check(factory.getParentDirectory().createDirectory().wasOk(), "create factory initialization fixture");
-    check(factory.replaceWithText(R"json({"name":"Factory sentinel","Pads":{"Pads":[{"name":"Factory pad"}]}})json"),
-          "write factory initialization fixture");
+    check(factory.replaceWithText(R"json({"id":"synthetic-startup-kit","name":"Factory sentinel",
+      "Pads":{"Pads":[{"name":"Factory pad"}]}})json"), "write factory initialization fixture");
+    const auto startup = bsl::dataRoot().getChildFile("Factory/Presets/Tutorial/This is Beat Scholar.json");
+    check(startup.getParentDirectory().createDirectory().wasOk(), "create startup preset fixture directory");
+    check(startup.replaceWithText(R"json({"Params":{"Swing":"13%"},
+      "Sampler":{"id":"synthetic-startup-kit","name":"Factory sentinel",
+        "Params":{"Master":{"Volume":"-6dB"}},"Pads":{"Pads":[{"name":"Startup pad"}]}},
+      "Seq":{"Seq":{"Transport":{"BPM":{"value":137}}},"Patterns":{"Patterns":[{
+        "name":"Startup pattern","Events":{"LoopTime":{"Bars":[{"num":1,"denum":4}]},
+        "Sequences":[{"name":"Startup lane","Sequences":[{"Steps":[{
+          "enabled":true,"Event":{"noteNum":36,"velocity":0.61}}]}]}]}}]}}})json"),
+          "write synthetic complete startup preset");
+    for (const auto wrapper : { juce::AudioProcessor::wrapperType_Standalone,
+                                juce::AudioProcessor::wrapperType_VST3 })
+    {
+        auto processor = makeProcessorForWrapper(wrapper);
+        const auto& state = processor->projectState();
+        check(state.patterns.size() == 1 && state.patterns[0].name == "Startup pattern"
+                  && state.patterns[0].lanes.size() == 1
+                  && state.patterns[0].lanes[0].name == "Startup lane"
+                  && state.patterns[0].lanes[0].beats.size() == 1
+                  && state.patterns[0].lanes[0].beats[0].slices[0].enabled
+                  && std::abs(state.patterns[0].lanes[0].beats[0].slices[0].velocity - 0.61f) < 1e-6f,
+              "fresh standalone and VST3 load the complete startup sequence");
+        check(state.kit.pads[0].name == "Startup pad"
+                  && std::abs(state.global.beatsPerMinute - 137.0) < 1e-6
+                  && std::abs(state.global.swingPercent - 13.0) < 1e-6
+                  && std::abs(state.master.gain - juce::Decibels::decibelsToGain(-6.0f)) < 1e-6f
+                  && state.ui.kitFile == factory.getFullPathName().toStdString()
+                  && state.ui.presetFile == startup.getFullPathName().toStdString(),
+              "startup preset supplies kit, master, tempo and file identities");
+        check(std::abs(processor->parameters().getRawParameterValue("swing")->load() - 13.0f) < 1e-6f
+                  && std::abs(processor->parameters().getRawParameterValue("masterGain")->load() - state.master.gain) < 1e-6f
+                  && !processor->isTransportPlaying() && !processor->projectEditor().canUndo(),
+              "startup parameters agree with state without starting playback or adding undo history");
+        if (wrapper == juce::AudioProcessor::wrapperType_Standalone)
+        {
+            auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+            saveVisual(*editor, output, "startup-preset.png");
+        }
+    }
     for (const bool empty : { false, true })
     {
         auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
@@ -5116,6 +5155,19 @@ void testFunctionalRepairs(const juce::File& output)
                       && std::abs(restored.master.gain - state.master.gain) < 1e-6f,
                   "prepare preserves restored empty-first-pad kit and master, including empty kits");
             processor->releaseResources();
+        }
+    }
+    for (const bool missing : { false, true })
+    {
+        check(missing ? startup.deleteFile() : startup.replaceWithText("{}"),
+              "prepare missing or invalid startup preset fixture");
+        for (const auto wrapper : { juce::AudioProcessor::wrapperType_Standalone,
+                                    juce::AudioProcessor::wrapperType_VST3 })
+        {
+            auto processor = makeProcessorForWrapper(wrapper);
+            check(processor->projectState().kit.pads[0].name == "Factory pad"
+                      && processor->projectState().ui.presetFile.empty(),
+                  "missing or invalid startup preset retains the factory kit fallback");
         }
     }
     if (previous.isEmpty()) unsetenv("XDG_DATA_HOME");
