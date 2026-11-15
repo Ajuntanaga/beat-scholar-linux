@@ -68,6 +68,11 @@ jobs:
           cmake --build build/ci --parallel 2
       - name: Run core, audio, editor and actual VST3 suites
         run: ctest --test-dir build/ci --output-on-failure --timeout 300 --parallel 1 --output-junit "$GITHUB_WORKSPACE/build/ci/ctest.xml"
+      - name: Capture module label proportions
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 5
+        run: |
+          xvfb-run -a build/ci/beat_scholar_editor_tests build/ci/editor-regression/module-labels --gain-reference
       - name: Check captured host gate timing
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         timeout-minutes: 5

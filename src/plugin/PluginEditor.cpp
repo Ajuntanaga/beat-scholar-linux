@@ -697,7 +697,7 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
         soundLabels_[index].setInterceptsMouseClicks(false, false);
         soundLabels_[index].setText("", juce::dontSendNotification);
         soundLabels_[index].setJustificationType(juce::Justification::centred);
-        soundLabels_[index].setFont(bsl::ui::font(14.0f, true));
+        soundLabels_[index].setFont(bsl::ui::font(13.0f, true).withHorizontalScale(14.0f / 13.0f));
         soundLabels_[index].setColour(juce::Label::textColourId, juce::Colour(0xffbfc3c8));
         addAndMakeVisible(soundLabels_[index]);
         soundControls_[index].addMouseListener(this, false);
@@ -754,7 +754,7 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
             // so keep resonance continuous instead of rounding it to 0.292.
             configureSlider(effectControls_[index], 0.0, 1.0, index == 2 ? 0.0 : 0.001, "");
         effectLabels_[index].setJustificationType(juce::Justification::centred);
-        effectLabels_[index].setFont(bsl::ui::font(14.0f, true));
+        effectLabels_[index].setFont(bsl::ui::font(13.0f, true).withHorizontalScale(14.0f / 13.0f));
         effectLabels_[index].setColour(juce::Label::textColourId,
                                       juce::Colour(lookAndFeel_.palette().text));
         addAndMakeVisible(effectLabels_[index]);
@@ -1692,9 +1692,11 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
 void BeatScholarLinuxEditor::resized()
 {
     for (auto& label : effectLabels_)
-        label.setFont(bsl::ui::font(14.0f * designScale(getWidth(), getHeight()), true));
+        label.setFont(bsl::ui::font(13.0f * designScale(getWidth(), getHeight()), true)
+                          .withHorizontalScale(14.0f / 13.0f));
     for (auto& label : soundLabels_)
-        label.setFont(bsl::ui::font(14.0f * designScale(getWidth(), getHeight()), true));
+        label.setFont(bsl::ui::font(13.0f * designScale(getWidth(), getHeight()), true)
+                          .withHorizontalScale(14.0f / 13.0f));
     title_.setFont(juce::Font(juce::FontOptions("Nimbus Sans Narrow", "Bold",
 +                                                24.0f * designScale(getWidth(), getHeight()))));
     title_.setBounds(designRect(getWidth(), getHeight(), 16.0f, 13.0f, 132.0f, 34.0f));
@@ -1885,7 +1887,8 @@ void BeatScholarLinuxEditor::resized()
     }};
     for (std::size_t index = 0; index < masterPositions.size(); ++index)
     {
-        masterLabels_[index].setFont(bsl::ui::font(14.0f * designScale(getWidth(), getHeight()), true));
+        masterLabels_[index].setFont(bsl::ui::font(13.0f * designScale(getWidth(), getHeight()), true)
+                                         .withHorizontalScale(14.0f / 13.0f));
         masterLabels_[index].setBounds(designRect(getWidth(), getHeight(),
             masterPositions[index].x - 26.0f, masterPositions[index].y, 52.0f, 14.0f));
         masterControls_[index].setBounds(index == 4
