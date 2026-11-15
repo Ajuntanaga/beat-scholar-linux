@@ -5117,10 +5117,16 @@ void testFunctionalRepairs(const juce::File& output)
                   && state.ui.kitFile == factory.getFullPathName().toStdString()
                   && state.ui.presetFile == startup.getFullPathName().toStdString(),
               "startup preset supplies kit, master, tempo and file identities");
-        check(std::abs(processor->parameters().getRawParameterValue("swing")->load() - 13.0f) < 1e-6f
-                  && std::abs(processor->parameters().getRawParameterValue("masterGain")->load() - state.master.gain) < 1e-6f
-                  && !processor->isTransportPlaying() && !processor->projectEditor().canUndo(),
-              "startup parameters agree with state without starting playback or adding undo history");
+        check(std::abs(processor->parameters().getRawParameterValue("swing")->load() - 13.0f) < 1e-6f,
+              "startup swing parameter agrees with the preset");
+        check(std::abs(processor->parameters().getRawParameterValue("bpm")->load() - 137.0f) < 1e-5f,
+              "startup tempo parameter agrees with the preset");
+        // The host gain parameter has a 0.0001 interval: -6 dB (0.501187...)
+        // rounds to 0.5012 when synchronized from the imported preset.
+        check(std::abs(processor->parameters().getRawParameterValue("masterGain")->load() - 0.5012f) < 1e-6f,
+              "startup master parameter agrees with the preset at host precision");
+        check(!processor->isTransportPlaying() && !processor->projectEditor().canUndo(),
+              "startup stays stopped without adding undo history");
         if (wrapper == juce::AudioProcessor::wrapperType_Standalone)
         {
             auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
