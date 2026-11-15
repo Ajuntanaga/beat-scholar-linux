@@ -938,6 +938,64 @@ private:
     std::size_t position = 0;
 };
 
+void testAmbienceReturnStartupAndReset()
+{
+    struct ConstantAmbience final : bsl::AmbienceProcessor
+    {
+        void reset() noexcept override {}
+        void process(float* roomLeft, float* roomRight, float* plateLeft,
+                     float* plateRight, std::size_t frames) noexcept override
+        {
+            std::fill_n(roomLeft, frames, 1.0f);
+            std::fill_n(roomRight, frames, 0.0f);
+            std::fill_n(plateLeft, frames, 0.0f);
+            std::fill_n(plateRight, frames, 1.0f);
+        }
+    };
+    // Original shared-return captures: both targets are +6 dB; the ramp
+    // takes 4800 frames at 48 kHz and starts with target / 4800, not zero.
+    for (const double rate : { 44100.0, 48000.0, 96000.0 })
+    for (const auto routing : { bsl::RoutingMode::stereo, bsl::RoutingMode::multi })
+    for (const std::size_t blockSize : { 1u, 17u, 511u })
+    {
+        ConstantAmbience ambience;
+        bsl::AudioEngine engine;
+        engine.setAmbienceProcessor(&ambience);
+        engine.prepare(rate, blockSize);
+        engine.setRoutingMode(routing);
+        bsl::MasterPlaybackSettings master;
+        master.filterEnabled = false;
+        engine.setMasterSettings(master);
+        const auto rampFrames = static_cast<std::size_t>(rate * 0.1);
+        auto block = makeBlock(34, blockSize);
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            engine.reset();
+            bool matches = true;
+            for (std::size_t start = 0; start < rampFrames + 100; start += blockSize)
+            {
+                const auto frames = std::min(blockSize, rampFrames + 100 - start);
+                // A bypassed return must still finish its startup ramp.
+                const bool enabled = pass == 0 || start >= rampFrames / 2;
+                engine.setModuleEnables(enabled, false);
+                engine.process(block, frames);
+                for (std::size_t frame = 0; frame < frames; ++frame)
+                {
+                    const double fraction = std::min(1.0,
+                        static_cast<double>(start + frame + 1) / rampFrames);
+                    // Master gain starts at zero on construction and survives reset.
+                    const double masterFraction = pass == 0 ? fraction : 1.0;
+                    const double gain = enabled ? 1.9952623844 * fraction * masterFraction : 0.0;
+                    matches &= std::abs(block[0][frame] - 1.4125375 * gain) < 0.0004;
+                    matches &= std::abs(block[1][frame] - 1.9952623 * gain) < 0.0004;
+                    matches &= block[2][frame] == 0.0f;
+                }
+            }
+            check(matches, "ambience returns preserve measured startup, settled gain, bypass and reset");
+        }
+    }
+}
+
 void testMuteAndSoloStopNewSendsWithoutClearingSharedTails()
 {
     for (const auto routing : { bsl::RoutingMode::stereo, bsl::RoutingMode::multi })
@@ -970,7 +1028,7 @@ void testMuteAndSoloStopNewSendsWithoutClearingSharedTails()
         for (std::size_t ch = 0; ch < hidden.size(); ++ch)
             for (std::size_t frame = 0; frame < hidden[ch].size(); ++frame)
             {
-                const float expected = ch < 2 ? input * (frame == 6 ? 1.4125375f
+                const float expected = ch < 2 ? input * 1.9952623844f * (frame == 6 ? 1.4125375f
                     : frame == 12 ? 1.9952623f : 0.0f) : 0.0f;
                 matches = matches && std::abs(hidden[ch][frame] - expected) < 1.0e-6f;
             }
@@ -3418,6 +3476,7 @@ int main()
     testSequencedGatesArePerVoiceAcrossCallbacks();
     testHostNoteOffReleasesMatchingGatedVoices();
     testExplicitSequencerReleaseOwnership();
+    testAmbienceReturnStartupAndReset();
     testMuteAndSoloStopNewSendsWithoutClearingSharedTails();
     testPitchAndDampAlterPlaybackWithoutAllocationContractChanges();
     testNativeLengthUsesLoadedSampleDuration();

@@ -234,6 +234,7 @@ void AudioEngine::reset()
     padAuxGains_.fill({});
     padDistortionSends_.fill({});
     distortionReturn_ = {};
+    ambienceReturn_ = {};
     distortion_.reset();
     padDspResetPending_.fill(false);
     clearMasterState();
@@ -571,6 +572,7 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
     });
 
     masterGain_.setTarget(master_.gain, static_cast<std::size_t>(sampleRate_ * 0.1));
+    ambienceReturn_.setTarget(1.9952623844146729f, static_cast<std::size_t>(sampleRate_ * 0.1));
     distortionReturn_.setTarget(auxiliaryTaper(master_.distortionReturn, 18.0f),
                                 static_cast<std::size_t>(sampleRate_ * 0.1));
     for (auto& send : distortionSends_) std::fill_n(send.begin(), end - start, 0.0f);
@@ -965,21 +967,23 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
         }
     }
     if (ambience_ != nullptr)
-    {
         ambience_->process(ambienceSends_[0].data(), ambienceSends_[1].data(),
                            ambienceSends_[2].data(), ambienceSends_[3].data(), end - start);
-        // Native shared returns feed the main stereo bus in both routing modes,
-        // before master processing. Room is +3 dB and Plate is +6 dB.
-        constexpr float roomReturnGain = 1.4125375f;
-        constexpr float plateReturnGain = 1.9952623f;
-        // Keep shared processors advancing while their audible returns are off.
-        for (std::size_t frame = start; auxEnabled_ && frame < end; ++frame)
+    // Room/Plate have +3/+6 dB effect gains followed by a separate +6 dB
+    // shared return, ramping from zero over 100 ms after reset. Advance it
+    // during silence and AUX bypass as well, independently of master processing.
+    constexpr float roomEffectGain = 1.4125375f;
+    constexpr float plateEffectGain = 1.9952623f;
+    for (std::size_t frame = start; frame < end; ++frame)
+    {
+        const float returnGain = ambienceReturn_.next();
+        if (auxEnabled_ && ambience_ != nullptr)
         {
             const auto offset = frame - start;
-            output[0][frame] += ambienceSends_[0][offset] * roomReturnGain
-                                + ambienceSends_[2][offset] * plateReturnGain;
-            output[1][frame] += ambienceSends_[1][offset] * roomReturnGain
-                                + ambienceSends_[3][offset] * plateReturnGain;
+            output[0][frame] += (ambienceSends_[0][offset] * roomEffectGain) * returnGain
+                                + (ambienceSends_[2][offset] * plateEffectGain) * returnGain;
+            output[1][frame] += (ambienceSends_[1][offset] * roomEffectGain) * returnGain
+                                + (ambienceSends_[3][offset] * plateEffectGain) * returnGain;
         }
     }
 

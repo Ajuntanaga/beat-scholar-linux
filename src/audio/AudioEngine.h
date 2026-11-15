@@ -217,6 +217,7 @@ private:
     std::array<LinearRamp, padCount> padAuxGains_;
     std::array<LinearRamp, padCount> padDistortionSends_;
     LinearRamp distortionReturn_;
+    LinearRamp ambienceReturn_;
     std::array<bool, padCount> padDspResetPending_ {};
     Compressor masterCompressor_;
     LinearRamp masterGain_;

@@ -229,11 +229,11 @@ void testEngineRoutingWithConvolution()
                 for (int tap = 0; tap < room.getNumSamples(); ++tap)
                     expected[static_cast<std::size_t>(ch)][noteTimes[pad] + static_cast<std::size_t>(tap)]
                         += input * roomGain[pad] * room.getSample(ch, tap) * irGain[0]
-                            * 1.4125375f * master.gain * (aux ? 1.0f : 0.0f);
+                            * 1.4125375f * 1.9952623844f * master.gain * (aux ? 1.0f : 0.0f);
                 for (int tap = 0; tap < plate.getNumSamples(); ++tap)
                     expected[static_cast<std::size_t>(ch)][noteTimes[pad] + static_cast<std::size_t>(tap)]
                         += input * plateGain[pad] * plate.getSample(ch, tap) * irGain[1]
-                            * 1.9952623f * master.gain * (aux ? 1.0f : 0.0f);
+                            * 1.9952623f * 1.9952623844f * master.gain * (aux ? 1.0f : 0.0f);
             }
         }
         bsl::AudioBlock block(34, std::vector<float>(std::min(blockSize, total)));
