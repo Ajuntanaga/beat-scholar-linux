@@ -3216,6 +3216,91 @@ void testSharedDistortionBus()
     check(driveDifference > 0.001f, "the global Aux3 Drive changes the shared nonlinear curve");
 }
 
+void testDistortionSendIdleTransitionsAndAutomation()
+{
+    // Multi exposes the exact post-pad signal separately from the shared return.
+    // Feed it through a separate bus with the native send lifecycle: an immediate
+    // first-hit level, a 100 ms active change, then an immediate idle retrigger.
+    for (const double rate : { 48000.0, 96000.0 })
+        for (const std::size_t blockSize : { 17u, 128u })
+        {
+            bsl::AudioEngine engine;
+            engine.prepare(rate, blockSize); // No silent warm-up before the hit.
+            engine.setRoutingMode(bsl::RoutingMode::multi);
+            auto pad = dryPadSettings();
+            pad.independentDistortion = true;
+            pad.distortionMix = 1.0f;
+            engine.setPadSettings(0, pad);
+            std::vector<float> signal(4096);
+            for (std::size_t i = 0; i < signal.size(); ++i)
+                signal[i] = 0.2f * std::sin(static_cast<float>(i) * 0.11f);
+            setDspInput(engine, 0, { rate, { signal } });
+            const std::array<std::vector<float>, 2> response {
+                std::vector<float>{0.125f, 0.02f}, std::vector<float>{0.1f, -0.01f}
+            };
+            engine.setDistortionResponse(response);
+            bsl::MasterPlaybackSettings master;
+            master.distortionDrive = 0.7f;
+            engine.setMasterSettings(master);
+            bsl::AuxDistortion reference;
+            reference.prepare(rate);
+            reference.setResponse(response);
+            const auto rampFrames = static_cast<std::size_t>(rate * 0.1);
+            float mainGain = 0.0f;
+            const float mainStep = 1.0f / static_cast<float>(rampFrames);
+            std::size_t mainRemaining = rampFrames;
+            float send = 1.0f;
+            float sendStep = 0.0f;
+            std::size_t sendRemaining = 0;
+            const auto render = [&](std::size_t frames, std::string_view message) {
+                float error = 0.0f, peak = 0.0f;
+                for (std::size_t offset = 0; offset < frames; offset += blockSize)
+                {
+                    const auto count = std::min(blockSize, frames - offset);
+                    auto output = makeBlock(34, count);
+                    engine.process(output, count);
+                    std::array<std::vector<float>, 2> expected { output[2], output[3] };
+                    for (std::size_t i = 0; i < count; ++i)
+                    {
+                        if (sendRemaining > 0)
+                            send = --sendRemaining == 0 ? 0.0f : send + sendStep;
+                        for (auto& channel : expected) channel[i] *= send;
+                    }
+                    reference.process(expected[0].data(), expected[1].data(), count,
+                                      master.distortionDrive);
+                    for (std::size_t i = 0; i < count; ++i)
+                    {
+                        if (mainRemaining > 0)
+                            mainGain = --mainRemaining == 0 ? 1.0f : mainGain + mainStep;
+                        for (std::size_t ch = 0; ch < 2; ++ch)
+                        {
+                            const float sample = (expected[ch][i] * (mainGain * 1.995262315f))
+                                                   * mainGain;
+                            error = std::max(error, std::abs(output[ch][i] - sample));
+                            peak = std::max(peak, std::abs(sample));
+                        }
+                    }
+                }
+                check(error < 2.0e-6f && peak > 1.0e-6f, message);
+            };
+            engine.noteOn(36, 1.0f);
+            render(256, "Aux3 first hit uses the full send before master and return startup ramps");
+            pad.distortionMix = 0.0f;
+            engine.setPadSettings(0, pad);
+            sendStep = -send / static_cast<float>(rampFrames);
+            sendRemaining = rampFrames;
+            engine.noteOn(36, 0.6f); // Overlap must not snap the active pad's send.
+            render(512, "Aux3 overlapping hits preserve the active send automation ramp");
+            render(5000, "Aux3 send automation continues through voice retirement");
+            pad.distortionMix = 1.0f;
+            engine.setPadSettings(0, pad);
+            send = 1.0f;
+            sendRemaining = 0;
+            engine.noteOn(36, 1.0f);
+            render(256, "Aux3 idle retrigger snaps a newly changed send level");
+        }
+}
+
 void testDistortionResponseLifecycleAndPartitioning()
 {
     using Stereo = std::array<std::vector<float>, 2>;
@@ -3359,6 +3444,7 @@ int main()
     testMutedAndNonSoloVoicesDoNotReplayStaleNotes();
     testRoutingTransitionsDiscardFrozenMasterTail();
     testSharedDistortionBus();
+    testDistortionSendIdleTransitionsAndAutomation();
     testDistortionResponseLifecycleAndPartitioning();
     testAudioCallbacksDoNotAllocateOnFirstOrLargerBlock();
     if (failures != 0)

@@ -709,6 +709,9 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
             // Native c7f800/c7a000 snaps only on idle-to-active transitions.
             compressor.snap(settings.compression);
             padGain = { settings.gain, settings.gain };
+            // Native c921ac snaps send smoothers on this transition too;
+            // c929cb still ramps parameter changes while the pad is active.
+            distortionSend = { distortionSend.target, distortionSend.target };
             padDspResetPending_[pad] = false;
         }
         const auto crusher = crushParameters(settings.crush);
