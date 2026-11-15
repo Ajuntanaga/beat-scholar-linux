@@ -714,6 +714,9 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
             distortionSend = { distortionSend.target, distortionSend.target };
             padDspResetPending_[pad] = false;
         }
+        // Native pre-effect captures: each halving of either send is -12 dB.
+        const float roomSendGain = auxiliaryTaper(settings.room, 12.0f);
+        const float plateSendGain = auxiliaryTaper(settings.reverb, 12.0f);
         const auto crusher = crushParameters(settings.crush);
         std::array<bool, voiceCount> finishedSamples {};
         for (std::size_t frame = start; frame < end; ++frame)
@@ -915,10 +918,10 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                     std::max(std::abs(dryLeft), std::abs(dryRight)));
                 output[target][frame] += dryLeft;
                 output[target + 1][frame] += dryRight;
-                ambienceSends_[0][frame - start] += dryLeft * settings.room;
-                ambienceSends_[1][frame - start] += dryRight * settings.room;
-                ambienceSends_[2][frame - start] += dryLeft * settings.reverb;
-                ambienceSends_[3][frame - start] += dryRight * settings.reverb;
+                ambienceSends_[0][frame - start] += dryLeft * roomSendGain;
+                ambienceSends_[1][frame - start] += dryRight * roomSendGain;
+                ambienceSends_[2][frame - start] += dryLeft * plateSendGain;
+                ambienceSends_[3][frame - start] += dryRight * plateSendGain;
             }
             if (routingMode_ == RoutingMode::stereo)
             {

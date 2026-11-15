@@ -1314,7 +1314,8 @@ void testAuxiliaryReturnsPreserveDryAndAmbienceSends()
         std::array<std::array<float, 64>, 4> sends;
         float peak;
     };
-    const auto render = [](bsl::RoutingMode routing, bool enabled, float level, float auxGain) {
+    const auto render = [](bsl::RoutingMode routing, bool enabled, float level, float auxGain,
+                           float room = 0.3f, float plate = 0.4f) {
         bsl::AudioEngine engine;
         prepareDryEngine(engine, 48000, 64);
         engine.setRoutingMode(routing);
@@ -1326,8 +1327,8 @@ void testAuxiliaryReturnsPreserveDryAndAmbienceSends()
         pad.distortionMix = 0.8f;
         pad.distortionDrive = 0.7f;
         pad.auxGain = auxGain;
-        pad.room = 0.3f;
-        pad.reverb = 0.4f;
+        pad.room = room;
+        pad.reverb = plate;
         engine.setPadSettings(0, pad);
         bsl::MasterPlaybackSettings master;
         master.distortionReturn = level;
@@ -1341,6 +1342,22 @@ void testAuxiliaryReturnsPreserveDryAndAmbienceSends()
         engine.process(output, 64);
         return Capture { std::move(output), ambience.inputs, engine.padPeaks()[0] };
     };
+    // Original pre-effect buses measured at 48 kHz: 25% and 50% sends
+    // produce these gains relative to the post-pad signal, for both effects.
+    constexpr std::array sendLevels { 0.0f, 0.25f, 0.5f, 1.0f };
+    constexpr std::array sendGains { 0.0f, 0.0630957408f, 0.2511886391f, 1.0f };
+    for (std::size_t index = 0; index < sendLevels.size(); ++index)
+    {
+        const auto capture = render(bsl::RoutingMode::multi, true, 0.0f, 0.0f,
+                                    sendLevels[index], sendLevels[index]);
+        check(capture.output[2][63] > 0.01f, "ambience taper fixture has dry audio");
+        bool matches = true;
+        for (std::size_t bus = 0; bus < 4; ++bus)
+            for (std::size_t frame = 0; frame < 64; ++frame)
+                matches = matches && std::abs(capture.sends[bus][frame]
+                    - capture.output[2 + bus % 2][frame] * sendGains[index]) < 2.0e-6f;
+        check(matches, "Room and Plate use the measured -12 dB per halving send taper");
+    }
     const auto dry = render(bsl::RoutingMode::multi, false, 1.0f, 0.0f);
     const auto full = render(bsl::RoutingMode::multi, true, 1.0f, 0.0f);
     check(full.output[0][0] > 0.01f, "Aux3 return fixture has a nonzero wet signal");
