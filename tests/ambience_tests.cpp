@@ -182,7 +182,11 @@ void testEngineRoutingWithConvolution()
     const auto room = response(false), plate = response(true);
     const std::array<float, 2> irGain { 0.125f / std::sqrt(1.328125f),
                                        0.125f / std::sqrt(1.25f) };
-    const std::array<float, 2> roomSend { 0.4f, 0.6f }, plateSend { 0.2f, 0.8f };
+    const std::array<float, 2> roomSend { 0.25f, 0.5f }, plateSend { 0.5f, 0.25f };
+    // Original pre-effect captures: 25% and 50% are -24 dB and -12 dB.
+    // Keep expected gains independent of the engine taper implementation.
+    const std::array<float, 2> roomGain { 0.0630957408f, 0.2511886391f };
+    const std::array<float, 2> plateGain { 0.2511886391f, 0.0630957408f };
     const std::array<std::size_t, 2> noteTimes { 0, 19 };
     constexpr std::size_t total = 12000;
     for (const auto routing : { bsl::RoutingMode::stereo, bsl::RoutingMode::multi })
@@ -224,11 +228,11 @@ void testEngineRoutingWithConvolution()
                 expected[dryChannel + static_cast<std::size_t>(ch)][noteTimes[pad]] += input * dryGain;
                 for (int tap = 0; tap < room.getNumSamples(); ++tap)
                     expected[static_cast<std::size_t>(ch)][noteTimes[pad] + static_cast<std::size_t>(tap)]
-                        += input * roomSend[pad] * room.getSample(ch, tap) * irGain[0]
+                        += input * roomGain[pad] * room.getSample(ch, tap) * irGain[0]
                             * 1.4125375f * master.gain * (aux ? 1.0f : 0.0f);
                 for (int tap = 0; tap < plate.getNumSamples(); ++tap)
                     expected[static_cast<std::size_t>(ch)][noteTimes[pad] + static_cast<std::size_t>(tap)]
-                        += input * plateSend[pad] * plate.getSample(ch, tap) * irGain[1]
+                        += input * plateGain[pad] * plate.getSample(ch, tap) * irGain[1]
                             * 1.9952623f * master.gain * (aux ? 1.0f : 0.0f);
             }
         }
