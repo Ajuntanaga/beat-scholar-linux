@@ -364,6 +364,11 @@ int run(const Options& options)
 
     auto state = loadState(options.state);
     const auto expectedStateJson = jsonFromState(state);
+    // Older v2 states omit this optional field. Compare their restored value
+    // against the documented default without changing what the plugin loads.
+    if (auto* global = expectedStateJson.getProperty("global", {}).getDynamicObject();
+        global != nullptr && !global->hasProperty("midiChannel"))
+        global->setProperty("midiChannel", 1);
     const auto wrappedState = wrapVst3State(state);
     plugin->setStateInformation(wrappedState.getData(), static_cast<int>(wrappedState.getSize()));
     juce::MemoryBlock restored;
