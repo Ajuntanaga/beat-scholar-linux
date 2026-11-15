@@ -968,6 +968,21 @@ void testAmbienceReturnStartupAndReset()
         engine.setMasterSettings(master);
         const auto rampFrames = static_cast<std::size_t>(rate * 0.1);
         auto block = makeBlock(34, blockSize);
+        // The captured native smoother accumulates float increments, rather
+        // than evaluating an ideal straight line. At 96 kHz that difference
+        // alone reaches 0.00054 on the settled-master Plate output.
+        std::vector<float> returnReference(rampFrames + 100, 1.9952623844146729f);
+        std::vector<float> masterReference(rampFrames + 100, 1.0f);
+        const float returnStep = 1.9952623844146729f / static_cast<float>(rampFrames);
+        const float masterStep = 1.0f / static_cast<float>(rampFrames);
+        float returnValue = 0.0f, masterValue = 0.0f;
+        for (std::size_t frame = 0; frame + 1 < rampFrames; ++frame)
+        {
+            returnValue += returnStep;
+            masterValue += masterStep;
+            returnReference[frame] = returnValue;
+            masterReference[frame] = masterValue;
+        }
         for (int pass = 0; pass < 2; ++pass)
         {
             engine.reset();
@@ -981,13 +996,14 @@ void testAmbienceReturnStartupAndReset()
                 engine.process(block, frames);
                 for (std::size_t frame = 0; frame < frames; ++frame)
                 {
-                    const double fraction = std::min(1.0,
-                        static_cast<double>(start + frame + 1) / rampFrames);
+                    const auto index = start + frame;
                     // Master gain starts at zero on construction and survives reset.
-                    const double masterFraction = pass == 0 ? fraction : 1.0;
-                    const double gain = enabled ? 1.9952623844 * fraction * masterFraction : 0.0;
-                    matches &= std::abs(block[0][frame] - 1.4125375 * gain) < 0.0004;
-                    matches &= std::abs(block[1][frame] - 1.9952623 * gain) < 0.0004;
+                    const float masterGain = pass == 0 ? masterReference[index] : 1.0f;
+                    const float returnGain = enabled ? returnReference[index] : 0.0f;
+                    const float expectedLeft = (1.4125375f * returnGain) * masterGain;
+                    const float expectedRight = (1.9952623f * returnGain) * masterGain;
+                    matches &= std::abs(block[0][frame] - expectedLeft) < 0.000001f;
+                    matches &= std::abs(block[1][frame] - expectedRight) < 0.000001f;
                     matches &= block[2][frame] == 0.0f;
                 }
             }
