@@ -5452,6 +5452,62 @@ void testModifiedArrangementContextMenusDoNotEdit(const juce::File& output)
         }
 }
 
+void testKitAuditionToggleAcrossTransports()
+{
+    // Manual p15: pad selection always works; Trigger During Playback only
+    // controls auditioning while the transport is running.
+    for (const auto wrapper : { juce::AudioProcessor::wrapperType_Standalone,
+                               juce::AudioProcessor::wrapperType_VST3 })
+    for (const bool playing : { false, true })
+    for (const bool allowDuringPlayback : { false, true })
+    {
+        struct Clock final : juce::AudioPlayHead
+        {
+            PositionInfo info;
+            juce::Optional<PositionInfo> getPosition() const override { return info; }
+        } clock;
+        clock.info.setIsPlaying(playing);
+        clock.info.setBpm(120.0);
+        auto processor = makeProcessorForWrapper(wrapper);
+        auto state = makeBypassTestProject(1);
+        state.ui.selectedPad = 0;
+        state.global.auditionDuringPlayback = !allowDuringPlayback;
+        const auto encoded = bsl::statecodec::encode(state);
+        processor->setStateInformation(encoded.getData(), static_cast<int>(encoded.getSize()));
+        processor->disableNonMainBuses();
+        processor->setRateAndBufferSizeDetails(48000, 256);
+        processor->prepareToPlay(48000, 256);
+        processor->setPlayHead(&clock);
+        if (playing) processor->playStandalone();
+        else processor->stopStandalone();
+        settleMainGain(*processor, 256);
+        check(processor->isTransportPlaying() == playing, "audition fixture has expected transport state");
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        auto* toggle = childWithId<juce::TextButton>(*editor, "kit.audition");
+        auto* pad = childWithId<juce::TextButton>(*editor, "pad.1");
+        check(toggle != nullptr && pad != nullptr, "Kit exposes audition toggle and pad");
+        if (toggle != nullptr && pad != nullptr)
+        {
+            toggle->onClick();
+            check(processor->projectState().global.auditionDuringPlayback == allowDuringPlayback,
+                  "Kit audition control changes playback audition preference");
+            pad->onClick();
+            check(processor->projectState().ui.selectedPad == 1,
+                  "pad selection works even when playback audition is disabled");
+            juce::AudioBuffer<float> audio(processor->getTotalNumOutputChannels(), 256);
+            audio.clear();
+            juce::MidiBuffer midi;
+            processor->processBlock(audio, midi);
+            const float peak = audio.getMagnitude(0, audio.getNumSamples());
+            check((!playing || allowDuringPlayback) ? peak > 0.001f : peak < 1.0e-7f,
+                  "pad click is audible exactly when stopped or playback audition is enabled");
+        }
+        editor.reset();
+        processor->setPlayHead(nullptr);
+        processor->releaseResources();
+    }
+}
+
 void testStandaloneTransportIgnoresDeviceClock(const juce::File& output)
 {
     struct DeviceClock final : juce::AudioPlayHead
@@ -7032,6 +7088,7 @@ int main(int argc, char** argv)
     testSequencedOneShotGateUsesBeatDurationAcrossRatesAndBlocks();
     testSequencedOneShotGateMatchesCapturedHostTiming();
     testPadAuditionsPreserveRepeatedHits();
+    testKitAuditionToggleAcrossTransports();
     testEmptyPadRestoreIsSilent();
     testHostNoteOffKeepsMidiChannelsIndependent();
     testMixedMeterGeometry(output);
