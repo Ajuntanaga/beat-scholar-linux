@@ -50,6 +50,10 @@ struct BeatScholarLinuxProcessorTestAccess
 struct BeatScholarLinuxEditorTestAccess
 {
     static void tick(BeatScholarLinuxEditor& editor) { editor.timerCallback(); }
+    static void tickWithActivityCount(BeatScholarLinuxEditor& editor, int count)
+    {
+        editor.updateDisplay(count);
+    }
 };
 
 namespace {
@@ -5824,6 +5828,17 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
         check(similar(colour(stopped, padPoint), colour(idle, padPoint)),
               "host stop clears sampler pad lighting");
     saveVisual(*editor, output, "playback-stopped.png");
+    // Reproduce an audio restart between the timer's queue snapshot and its
+    // state reads. The new hit must survive for the next display tick.
+    const int pendingBeforeRestart = processor->playbackActivityCount();
+    check(pendingBeforeRestart == 0, "stopped display has drained its activity queue");
+    check(render(0, true, false) == 1, "interleaved host restart emits its first hit");
+    BeatScholarLinuxEditorTestAccess::tickWithActivityCount(*editor, pendingBeforeRestart);
+    check(processor->playbackActivityCount() == 1,
+          "a hit arriving after the display snapshot stays queued");
+    BeatScholarLinuxEditorTestAccess::tick(*editor);
+    check(brighter(snapshot(), idle, left), "the next display tick lights the retained restart hit");
+    render(480, false);
     // A stalled message thread must not replay an old hit as a new flash.
     render(0, true, false);
     for (int start = 480; start <= 9600; start += 480) render(start, true, false);

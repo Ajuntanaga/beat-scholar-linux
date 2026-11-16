@@ -92,6 +92,7 @@ private:
     };
 
     void timerCallback() override;
+    void updateDisplay(int activityCount);
     void updateMomentaryBrush();
     void resetOrToggle(bool& value, bool defaultValue, const juce::ModifierKeys&);
     void configureButton(juce::TextButton&, const juce::String&, std::function<void()> action);

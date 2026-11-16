@@ -4433,6 +4433,13 @@ void BeatScholarLinuxEditor::filesDropped(const juce::StringArray& files, int x,
 
 void BeatScholarLinuxEditor::timerCallback()
 {
+    // Freeze the drain boundary before reading transport/pattern state. Events
+    // published while the UI updates belong to the next tick and stay queued.
+    updateDisplay(processor_.playbackActivityCount());
+}
+
+void BeatScholarLinuxEditor::updateDisplay(int activityCount)
+{
     // 20 Hz display with a short release; levels come from rendered samples,
     // never from knob position or transport state.
     for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
@@ -4477,7 +4484,7 @@ void BeatScholarLinuxEditor::timerCallback()
     const auto currentFrame = processor_.playbackActivityFrame();
     const double releaseFrames = std::max(1.0, processor_.getSampleRate() * 0.15);
     BeatScholarLinuxProcessor::PlaybackActivity activity;
-    for (int i = 0; i < 2048 && processor_.takePlaybackActivity(activity); ++i)
+    for (int i = 0; i < activityCount && processor_.takePlaybackActivity(activity); ++i)
     {
         if (!sequencing || activity.pattern != patternId || activity.epoch != epoch) continue;
         const auto elapsed = currentFrame > activity.frame ? currentFrame - activity.frame : 0;

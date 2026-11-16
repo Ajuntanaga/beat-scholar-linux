@@ -87,6 +87,7 @@ public:
     };
     // Single message-thread consumer; the audio callback never waits for the UI.
     bool takePlaybackActivity(PlaybackActivity&) noexcept;
+    int playbackActivityCount() const noexcept { return activityFifo_.getNumReady(); }
     std::uint64_t playbackActivityFrame() const noexcept { return activityFrame_.load(std::memory_order_acquire); }
     std::uint64_t playbackActivityEpoch() const noexcept { return activityEpoch_.load(std::memory_order_acquire); }
     bsl::ProjectState& projectState() noexcept { return projectEditor_.state(); }

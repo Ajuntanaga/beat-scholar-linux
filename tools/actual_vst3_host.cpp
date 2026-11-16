@@ -35,6 +35,7 @@ struct Options
     juce::File bundle;
     juce::File state;
     juce::File output;
+    juce::File restoredStateOutput;
     juce::String expectedSha256;
     juce::String expectedCid { expectedDefaultCid };
     juce::String expectedName { expectedDefaultName };
@@ -104,6 +105,7 @@ Options parseOptions(int argc, char** argv)
         if (argument == "--plugin") options.bundle = juce::File(next(index, "--plugin"));
         else if (argument == "--state") options.state = juce::File(next(index, "--state"));
         else if (argument == "--output") options.output = juce::File(next(index, "--output"));
+        else if (argument == "--restored-state-output") options.restoredStateOutput = juce::File(next(index, "--restored-state-output"));
         else if (argument == "--expect-sha256") options.expectedSha256 = next(index, "--expect-sha256");
         else if (argument == "--expect-cid") options.expectedCid = next(index, "--expect-cid");
         else if (argument == "--expect-name") options.expectedName = next(index, "--expect-name");
@@ -127,7 +129,7 @@ Options parseOptions(int argc, char** argv)
             std::cout
                 << "Usage: actual_vst3_host --plugin BUNDLE --state PRESET_OR_BSLX --output WAV\\n"
                 << "       --expect-sha256 HEX --sample-rate HZ --block-size N --active-frames N\\n"
-                << "       [--midi SAMPLE:NOTE:VELOCITY] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--pre-roll-frames N]\\n";
+                << "       [--midi SAMPLE:NOTE:VELOCITY] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--pre-roll-frames N] [--restored-state-output NEW_BSLX]\\n";
             std::exit(0);
         }
         else fail("unknown option: " + argument);
@@ -136,6 +138,8 @@ Options parseOptions(int argc, char** argv)
     if (!options.bundle.isDirectory()) fail("--plugin must name an existing VST3 bundle");
     if (!options.state.existsAsFile()) fail("--state must name an existing native preset or BSLX state");
     if (options.output == juce::File {}) fail("--output is required");
+    if (options.restoredStateOutput != juce::File {} && options.restoredStateOutput.exists())
+        fail("--restored-state-output must name a new file");
     if (options.expectedSha256.length() != 64) fail("--expect-sha256 must be a 64-character digest");
     if (options.sampleRate < 8000.0 || options.sampleRate > 384000.0) fail("--sample-rate is outside 8000..384000");
     if (options.tempo <= 0.0 || options.tempo > 1000.0) fail("--tempo is outside (0,1000]");
@@ -373,7 +377,13 @@ int run(const Options& options)
     plugin->setStateInformation(wrappedState.getData(), static_cast<int>(wrappedState.getSize()));
     juce::MemoryBlock restored;
     plugin->getStateInformation(restored);
-    if (!equivalentState(jsonFromState(extractVst3ComponentState(restored)), expectedStateJson))
+    const auto restoredComponent = extractVst3ComponentState(restored);
+    // Preserve the actual restored bytes for cross-version diagnostics while
+    // retaining the strict round-trip failure below.
+    if (options.restoredStateOutput != juce::File {}
+        && !options.restoredStateOutput.replaceWithData(restoredComponent.getData(), restoredComponent.getSize()))
+        fail("could not save restored component state");
+    if (!equivalentState(jsonFromState(restoredComponent), expectedStateJson))
         fail("plugin did not restore the supplied native v2 state exactly");
 
     int reportedPadNames = 0;
