@@ -463,9 +463,11 @@ void BeatScholarLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Butto
         g.setColour(button.findColour(juce::TextButton::buttonOnColourId)
                         .withSaturation(0.78f).withBrightness(0.82f));
         g.fillRect(area.removeFromTop(std::max(3.0f, area.getHeight() * 0.08f)));
-        if (button.getToggleState())
+        const float activity = std::clamp(static_cast<float>(button.getProperties().getWithDefault("playbackActivity", 0.0f)), 0.0f, 1.0f);
+        if (button.getToggleState() || activity > 0.0f)
         {
-            g.setColour(button.findColour(juce::TextButton::buttonOnColourId).withAlpha(0.22f));
+            g.setColour(button.findColour(juce::TextButton::buttonOnColourId)
+                            .withAlpha((button.getToggleState() ? 0.22f : 0.0f) + activity * 0.5f));
             g.fillRect(button.getLocalBounds().toFloat().reduced(1.0f));
         }
         g.setColour(button.getToggleState() ? juce::Colour(palette_.text)

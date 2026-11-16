@@ -7,6 +7,8 @@
 
 #include <array>
 #include <optional>
+#include <map>
+#include <tuple>
 #include <vector>
 
 class BeatScholarLinuxEditor final : public juce::AudioProcessorEditor,
@@ -37,6 +39,7 @@ public:
                                              juce::File directory = {}) const;
 
 private:
+    friend struct BeatScholarLinuxEditorTestAccess;
     enum class Brush { drum, slicer, velocity, randomizer };
     enum class Module { soundCharacter, soundEffects, randomizer, master };
     struct BeatHit { std::size_t lane; std::size_t beat; std::size_t slice; };
@@ -248,6 +251,10 @@ private:
     bool updatingControls_ = false;
     std::array<float, bsl::padCount> padMeterLevels_ {};
     std::array<float, 2> outputMeterLevels_ {};
+    std::map<std::tuple<std::size_t, std::size_t, std::size_t>, float> sliceFlashes_;
+    std::array<float, bsl::padCount> padFlashes_ {};
+    bsl::PatternId flashPattern_ = 0;
+    std::uint64_t flashEpoch_ = 0;
     bool masterGainGesture_ = false;
     bool moduleControlGesture_ = false;
     bool moduleControlCheckpointed_ = false;

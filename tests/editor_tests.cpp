@@ -47,6 +47,11 @@ struct BeatScholarLinuxProcessorTestAccess
     }
 };
 
+struct BeatScholarLinuxEditorTestAccess
+{
+    static void tick(BeatScholarLinuxEditor& editor) { editor.timerCallback(); }
+};
+
 namespace {
 int failures = 0;
 void check(bool condition, const juce::String& message)
@@ -5723,6 +5728,112 @@ void testHostedTransportRemainsHostControlled(const juce::File& output)
     processor->releaseResources();
 }
 
+void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
+{
+    struct HostClock final : juce::AudioPlayHead
+    {
+        PositionInfo info;
+        juce::Optional<PositionInfo> getPosition() const override { return info; }
+    } clock;
+    auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
+    auto state = makeBypassTestProject(0);
+    state.global.sequencerEnabled = true;
+    state.global.samplerEnabled = false; // MIDI-only sequencing must still animate.
+    state.global.swingPercent = 50.0;
+    state.global.swingReference = bsl::SwingReference::quarter;
+    state.ui.selectedPad = 15;
+    state.patterns[0].lanes = { bsl::LaneState::make(4) };
+    for (auto& beat : state.patterns[0].lanes[0].beats)
+        beat.slices[0].enabled = false;
+    auto& firstBeat = state.patterns[0].lanes[0].beats[0];
+    firstBeat = bsl::BeatState::withSubdivision(2, 0, 1.0f);
+    firstBeat.slices[0].enabled = firstBeat.slices[1].enabled = true;
+    firstBeat.slices[1].padIndex = 1;
+    const auto bytes = bsl::statecodec::encode(state);
+    processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
+    processor->disableNonMainBuses();
+    processor->setRateAndBufferSizeDetails(48000, 480);
+    processor->prepareToPlay(48000, 480);
+    processor->setPlayHead(&clock);
+    clock.info.setBpm(120.0);
+    auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    editor->setVisible(true);
+    const auto snapshot = [&] { return editor->createComponentSnapshot(editor->getLocalBounds()); };
+    const auto left = juce::Point<int>(148, 306), right = juce::Point<int>(244, 306);
+    const auto colour = [](const juce::Image& image, juce::Point<int> p) { return image.getPixelAt(p.x, p.y); };
+    const auto brighter = [&](const juce::Image& a, const juce::Image& b, juce::Point<int> p) {
+        return colour(a, p).getPerceivedBrightness() > colour(b, p).getPerceivedBrightness() + 0.1f;
+    };
+    juce::AudioBuffer<float> audio(2, 480);
+    juce::MidiBuffer midi;
+    const auto render = [&](int start, bool playing, bool tick = true) {
+        clock.info.setIsPlaying(playing);
+        clock.info.setTimeInSamples(start);
+        clock.info.setPpqPosition(static_cast<double>(start) / 24000.0);
+        midi.clear();
+        processor->processBlock(audio, midi);
+        if (tick) BeatScholarLinuxEditorTestAccess::tick(*editor);
+        int notes = 0;
+        for (const auto event : midi) notes += event.getMessage().isNoteOn();
+        check(audio.getMagnitude(0, audio.getNumSamples()) == 0.0f,
+              "playback lighting does not depend on sampler audio");
+        return notes;
+    };
+    render(0, false);
+    const auto idle = snapshot();
+    saveVisual(*editor, output, "playback-idle.png");
+    check(render(0, true) == 1, "host start emits first slice note");
+    const auto first = snapshot();
+    check(brighter(first, idle, left) && similar(colour(first, right), colour(idle, right)),
+          "first MIDI trigger lights only its visible left slice");
+    auto* pad = childWithId<juce::TextButton>(*editor, "pad.0");
+    check(pad != nullptr, "playback pad is visible");
+    juce::Point<int> padPoint;
+    if (pad)
+    {
+        padPoint = pad->getBounds().getCentre() + juce::Point<int>(0, 12);
+        check(!similar(colour(first, padPoint), colour(idle, padPoint)),
+              "trigger visibly lights its sampler pad without selecting it");
+    }
+    saveVisual(*editor, output, "playback-first.png");
+    bool secondTriggered = false;
+    int next = 480;
+    for (; next < 18000; next += 480)
+    {
+        const auto notes = render(next, true);
+        if (next == 12000)
+            check(notes == 0 && similar(colour(snapshot(), right), colour(idle, right)),
+                  "swing delays the visual trigger beyond the straight eighth note");
+        if (notes != 0)
+        {
+            secondTriggered = true;
+            break;
+        }
+    }
+    check(secondTriggered && next > 12000, "swung second slice eventually triggers");
+    const auto second = snapshot();
+    check(brighter(second, idle, right) && similar(colour(second, left), colour(idle, left)),
+          "second MIDI trigger lights its right slice after the first fades");
+    saveVisual(*editor, output, "playback-second.png");
+    render(next + 480, false);
+    const auto stopped = snapshot();
+    check(similar(colour(stopped, left), colour(idle, left))
+              && similar(colour(stopped, right), colour(idle, right)),
+          "host stop clears all slice lighting immediately");
+    if (pad)
+        check(similar(colour(stopped, padPoint), colour(idle, padPoint)),
+              "host stop clears sampler pad lighting");
+    saveVisual(*editor, output, "playback-stopped.png");
+    // A stalled message thread must not replay an old hit as a new flash.
+    render(0, true, false);
+    for (int start = 480; start <= 9600; start += 480) render(start, true, false);
+    BeatScholarLinuxEditorTestAccess::tick(*editor);
+    check(similar(colour(snapshot(), left), colour(idle, left)),
+          "expired audio events do not flash after a delayed UI update");
+    processor->setPlayHead(nullptr);
+    processor->releaseResources();
+}
+
 void testMidiExportUsesTheActiveTempo(const juce::File& output)
 {
     struct HostClock final : juce::AudioPlayHead
@@ -6840,6 +6951,7 @@ int main(int argc, char** argv)
     testStandaloneTransportIgnoresDeviceClock(output);
     testHostedPauseResumeMatchesCapturedLifecycle();
     testHostedTransportRemainsHostControlled(output);
+    testPlaybackLightingFollowsHostTriggers(output);
     testMidiExportUsesTheActiveTempo(output);
     testStandaloneRestoresMultiOutputAsStereo();
     testQueuedPatternsSurviveStructuralEdits();

@@ -248,6 +248,8 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
         editorConstrainer->setFixedAspectRatio(16.0 / 9.0);
     setSize(1280, 720);
 
+    BeatScholarLinuxProcessor::PlaybackActivity discarded;
+    for (int i = 0; i < 2048 && processor_.takePlaybackActivity(discarded); ++i) {} // Do not replay a closed editor's backlog.
     padColours_ = {
         juce::Colour(0xffbf316b), juce::Colour(0xff4058bd), juce::Colour(0xff2eb574), juce::Colour(0xffd51e42),
         juce::Colour(0xffb9983a), juce::Colour(0xffa95c35), juce::Colour(0xff55349d), juce::Colour(0xff4e8d2d),
@@ -1666,8 +1668,12 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
                                     radius * 2.0f, start, end, 0.0f);
                 const auto& slice = beat.slices[sliceIndex];
                 const std::size_t pad = std::min<std::size_t>(slice.padIndex, bsl::padCount - 1);
+                const auto flash = sliceFlashes_.find({ laneIndex, beatIndex, sliceIndex });
+                const float activity = !previewing && pattern.runtimeId == flashPattern_
+                    && flash != sliceFlashes_.end() ? flash->second : 0.0f;
                 graphics.setColour(slice.enabled
                                        ? padColours_[pad].withBrightness(0.72f)
+                                             .interpolatedWith(juce::Colours::white, activity * 0.65f)
                                              .withAlpha(std::clamp(0.55f + slice.velocity * 0.45f,
                                                                    0.0f, 1.0f))
                                        : juce::Colour(lookAndFeel_.palette().panel));
@@ -4451,6 +4457,42 @@ void BeatScholarLinuxEditor::timerCallback()
     }
     processor_.publishProjectStateIfNeeded();
     const auto& state = processor_.projectState();
+    const auto patternId = state.patterns[state.activePattern].runtimeId;
+    const auto epoch = processor_.playbackActivityEpoch();
+    const bool sequencing = processor_.isTransportPlaying() && state.global.sequencerEnabled;
+    if (!sequencing || patternId != flashPattern_ || epoch != flashEpoch_)
+    {
+        sliceFlashes_.clear();
+        padFlashes_.fill(0.0f);
+    }
+    flashPattern_ = patternId;
+    flashEpoch_ = epoch;
+    for (auto it = sliceFlashes_.begin(); it != sliceFlashes_.end();)
+    {
+        it->second *= 0.60f;
+        if (it->second < 0.04f) it = sliceFlashes_.erase(it);
+        else ++it;
+    }
+    for (auto& level : padFlashes_) level *= 0.60f;
+    const auto currentFrame = processor_.playbackActivityFrame();
+    const double releaseFrames = std::max(1.0, processor_.getSampleRate() * 0.15);
+    BeatScholarLinuxProcessor::PlaybackActivity activity;
+    for (int i = 0; i < 2048 && processor_.takePlaybackActivity(activity); ++i)
+    {
+        if (!sequencing || activity.pattern != patternId || activity.epoch != epoch) continue;
+        const auto elapsed = currentFrame > activity.frame ? currentFrame - activity.frame : 0;
+        const float strength = static_cast<float>(1.0 - static_cast<double>(elapsed) / releaseFrames);
+        if (strength <= 0.0f) continue; // Ignore old events after a suspended message loop.
+        auto& level = sliceFlashes_[{ activity.lane, activity.beat, activity.slice }];
+        level = std::max(level, strength);
+        if (activity.pad < padFlashes_.size())
+            padFlashes_[activity.pad] = std::max(padFlashes_[activity.pad], strength);
+    }
+    for (std::size_t pad = 0; pad < pads_.size(); ++pad)
+    {
+        pads_[pad].getProperties().set("playbackActivity", padFlashes_[pad]);
+        pads_[pad].repaint();
+    }
     sequencer_.setToggleState(state.global.sequencerEnabled, juce::dontSendNotification);
     sampler_.setToggleState(state.global.samplerEnabled, juce::dontSendNotification);
     auditionDuringPlayback_.setToggleState(state.global.auditionDuringPlayback,

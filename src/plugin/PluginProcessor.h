@@ -79,6 +79,16 @@ public:
     // Message-thread consumer; peaks are accumulated by the callback until read.
     float takePadPeak(std::size_t pad) noexcept { return padPeaks_[pad].exchange(0.0f, std::memory_order_relaxed); }
     float takeOutputPeak(std::size_t channel) noexcept { return outputPeaks_[channel].exchange(0.0f, std::memory_order_relaxed); }
+    struct PlaybackActivity
+    {
+        bsl::PatternId pattern = 0;
+        std::size_t lane = 0, beat = 0, slice = 0, pad = 0;
+        std::uint64_t frame = 0, epoch = 0;
+    };
+    // Single message-thread consumer; the audio callback never waits for the UI.
+    bool takePlaybackActivity(PlaybackActivity&) noexcept;
+    std::uint64_t playbackActivityFrame() const noexcept { return activityFrame_.load(std::memory_order_acquire); }
+    std::uint64_t playbackActivityEpoch() const noexcept { return activityEpoch_.load(std::memory_order_acquire); }
     bsl::ProjectState& projectState() noexcept { return projectEditor_.state(); }
     bsl::ProjectEditor& projectEditor() noexcept { return projectEditor_; }
     juce::AudioProcessorValueTreeState& parameters() noexcept { return parameters_; }
@@ -110,6 +120,12 @@ private:
     static constexpr int auditionQueueSize = 256;
     juce::AbstractFifo auditionFifo_ { auditionQueueSize };
     std::array<PadAudition, auditionQueueSize> pendingTriggers_ {};
+    static constexpr int activityQueueSize = 2048;
+    juce::AbstractFifo activityFifo_ { activityQueueSize };
+    std::array<PlaybackActivity, activityQueueSize> pendingActivity_ {};
+    std::atomic<std::uint64_t> activityFrame_ { 0 }, activityEpoch_ { 0 };
+    std::uint64_t audioActivityFrame_ = 0;
+    void publishPlaybackActivity(const PlaybackActivity&) noexcept;
     juce::MidiBuffer incomingMidi_;
     std::array<bsl::PlaybackEvent, maximumSequencerEvents> sequencerEvents_ {};
     bsl::PatternTriggerCollector patternTriggerCollector_;

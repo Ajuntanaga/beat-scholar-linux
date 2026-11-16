@@ -163,7 +163,7 @@ PatternPlaybackPlan SequencerPlayback::preparePattern(const PatternState& patter
                     if (!slice.enabled) continue;
                     const double start = beatStart + (static_cast<double>(index) / static_cast<double>(slices.size())) * beatLength;
                     steps.push_back({ start, start + step * 0.98, laneIndex, slice.padIndex,
-                        static_cast<std::uint8_t>(std::clamp(std::lround(static_cast<double>(slice.velocity) * 127.0), 1L, 127L)) });
+                        static_cast<std::uint8_t>(std::clamp(std::lround(static_cast<double>(slice.velocity) * 127.0), 1L, 127L)), beatIndex, index });
                 }
             }
         }
@@ -189,8 +189,8 @@ std::size_t SequencerPlayback::renderBatch(const ProjectState& project,
     if (!cursor.started) initial_ = notes_;
     auto notes = initial_;
     std::size_t count = 0, ordinal = 0, remaining = 0;
-    const auto emit = [&](int offset, std::uint8_t pitch, std::uint8_t velocity, std::uint8_t pad, std::size_t laneIndex, std::uint8_t channel, std::uint8_t releaseVelocity = 0) {
-        PlaybackEvent candidate { { offset, pitch, velocity, channel, pad, 0 }, ordinal++, laneIndex, releaseVelocity };
+    const auto emit = [&](int offset, std::uint8_t pitch, std::uint8_t velocity, std::uint8_t pad, std::size_t laneIndex, std::uint8_t channel, std::uint8_t releaseVelocity = 0, std::size_t beatIndex = 0, std::size_t sliceIndex = 0) {
+        PlaybackEvent candidate { { offset, pitch, velocity, channel, pad, 0 }, ordinal++, laneIndex, releaseVelocity, beatIndex, sliceIndex };
         if (cursor.started && candidate <= cursor.after) return;
         ++remaining;
         if (count < destination.size())
@@ -256,7 +256,7 @@ std::size_t SequencerPlayback::renderBatch(const ProjectState& project,
                     const int sample = offset(position, cycleOrigin);
                     if (note.state != 1) emit(sample, pitch, 0, note.pad, laneIndex, note.channel, note.velocity);
                     const auto channel = project.global.midiChannelForLane(laneIndex);
-                    emit(sample, pitch, step.velocity, step.pad, laneIndex, channel);
+                    emit(sample, pitch, step.velocity, step.pad, laneIndex, channel, 0, step.beatIndex, step.sliceIndex);
                     note = { 0, step.pad, step.velocity, channel };
                 };
                 if (first <= start && start < last) on(warp(step.start), cycleStart);

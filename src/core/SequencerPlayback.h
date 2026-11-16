@@ -12,6 +12,8 @@ struct PlaybackEvent
     std::size_t ordinal = 0;
     std::size_t laneIndex = 0;
     std::uint8_t releaseVelocity = 0;
+    std::size_t beatIndex = 0;
+    std::size_t sliceIndex = 0;
     auto operator<=>(const PlaybackEvent& other) const noexcept
     {
         return std::tie(event.sampleOffset, ordinal)
@@ -37,6 +39,8 @@ struct PlaybackStep
     std::size_t laneIndex = 0;
     std::uint8_t pad = 0;
     std::uint8_t velocity = 0;
+    std::size_t beatIndex = 0;
+    std::size_t sliceIndex = 0;
 };
 using PatternPlaybackPlan = std::vector<PlaybackStep>;
 

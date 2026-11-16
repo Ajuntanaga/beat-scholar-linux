@@ -307,6 +307,7 @@ void BeatScholarLinuxProcessor::prepareToPlay(double sampleRate, int maximumExpe
     for (auto& peak : padPeaks_) peak.store(0.0f, std::memory_order_relaxed);
     for (auto& peak : outputPeaks_) peak.store(0.0f, std::memory_order_relaxed);
     sequencerPlayback_.reset();
+    activityEpoch_.fetch_add(1, std::memory_order_release);
     midiWasPlaying_ = false;
     samplerWasEnabled_ = true;
     fallbackSamplePosition_.store(0);
@@ -315,6 +316,23 @@ void BeatScholarLinuxProcessor::prepareToPlay(double sampleRate, int maximumExpe
     loadFactorySamples();
     markProjectDirty();
     publishProjectStateIfNeeded();
+}
+
+void BeatScholarLinuxProcessor::publishPlaybackActivity(const PlaybackActivity& activity) noexcept
+{
+    int start1, size1, start2, size2;
+    activityFifo_.prepareToWrite(1, start1, size1, start2, size2);
+    if (size1 != 0) pendingActivity_[static_cast<std::size_t>(start1)] = activity;
+    activityFifo_.finishedWrite(size1);
+}
+
+bool BeatScholarLinuxProcessor::takePlaybackActivity(PlaybackActivity& activity) noexcept
+{
+    int start1, size1, start2, size2;
+    activityFifo_.prepareToRead(1, start1, size1, start2, size2);
+    if (size1 != 0) activity = pendingActivity_[static_cast<std::size_t>(start1)];
+    activityFifo_.finishedRead(size1);
+    return size1 != 0;
 }
 
 void BeatScholarLinuxProcessor::releaseResources()
@@ -459,6 +477,8 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         && (frame.absoluteSampleStart != midiExpectedSample_
             || (std::isfinite(frame.quarterNotePosition) && std::isfinite(midiExpectedPpq_)
                 && std::abs(frame.quarterNotePosition - midiExpectedPpq_) > 1.0e-4));
+    if (resetRequested || midiDiscontinuity || midiPlaying != midiWasPlaying_)
+        activityEpoch_.fetch_add(1, std::memory_order_release);
     midiWasPlaying_ = midiPlaying;
     midiExpectedSample_ = frame.absoluteSampleStart + samplesInBlock;
     midiExpectedPpq_ = frame.quarterNotePosition
@@ -585,6 +605,11 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                 {
                     midi.addEvent(juce::MidiMessage::noteOn(event.channel, event.note,
                         static_cast<juce::uint8>(event.velocity)), offset);
+                    const auto& hit = sequencerEvents_[index];
+                    publishPlaybackActivity({ state.patterns[patternIndex].runtimeId,
+                        hit.laneIndex, hit.beatIndex, hit.sliceIndex, event.padIndex,
+                        audioActivityFrame_ + static_cast<std::uint64_t>(offset),
+                        activityEpoch_.load(std::memory_order_relaxed) });
                     if (state.global.samplerEnabled && event.padIndex < bsl::padCount)
                         audioEngine_.sequencerNoteOn(static_cast<std::uint8_t>(36 + event.padIndex),
                                                      samplerVelocity(event.velocity), sequencerEvents_[index].laneIndex);
@@ -618,6 +643,8 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     }
     consumeInputThrough(samplesInBlock);
     advanceAudio(samplesInBlock);
+    audioActivityFrame_ += static_cast<std::uint64_t>(samplesInBlock);
+    activityFrame_.store(audioActivityFrame_, std::memory_order_release);
 
     const auto publishPeak = [](std::atomic<float>& meter, float peak) {
         if (!std::isfinite(peak)) return;

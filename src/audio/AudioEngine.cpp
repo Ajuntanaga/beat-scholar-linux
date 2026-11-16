@@ -633,8 +633,10 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
             if (sample.isValid())
                 longestLayerSeconds = std::max(longestLayerSeconds,
                     static_cast<double>(sample.length()) / sample.sampleRate);
+        // Native subtracts the normalized Length in float before promoting
+        // to double; the last fade samples seed the next voice's filter state.
         const double lengthFrames = sampleRate_
-            * (0.01 + (longestLayerSeconds - 0.01) * (1.0 - settings.damp));
+            * (0.01 + (longestLayerSeconds - 0.01) * (1.0f - settings.damp));
         const float lowPassFrequency = std::min(filterCutoffHz(settings.cutoff),
                                                 static_cast<float>(sampleRate_ * 0.499));
         const float lowPassG = std::tan(3.14159265358979323846f * lowPassFrequency

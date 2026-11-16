@@ -1203,6 +1203,44 @@ void testNativeLengthFloatAccumulation()
         }
 }
 
+void testNativeLengthTailPrecision()
+{
+    // Private native hi-hat input capture: 14275 source frames at 96 kHz,
+    // Length .48, rendered at 48 kHz. Float 1-Length changes the last four
+    // input samples; their retained HPF state affects subsequently reused voices.
+    constexpr std::array<float, 4> tail {
+        0.0007611960172653198f, 0.0005075111985206604f,
+        0.00025382640887983143f, 1.416192390024662e-7f
+    };
+    for (const std::size_t blockSize : { 17u, 64u, 128u })
+    {
+        bsl::AudioEngine engine;
+        prepareDryEngine(engine, 48000.0);
+        engine.setPadSample(0, { 96000.0, { std::vector<float>(14275, 0.25f) } });
+        auto pad = dryPadSettings();
+        pad.lengthEnvelopeEnabled = true;
+        pad.damp = 0.48f;
+        engine.setPadSettings(0, pad);
+        engine.noteOn(36, 1.0f);
+        for (std::size_t offset = 0; offset < 3943; offset += blockSize)
+        {
+            const auto count = std::min(blockSize, std::size_t{3943} - offset);
+            auto output = makeBlock(34, count);
+            engine.process(output, count);
+            for (std::size_t frame = 0; frame < count; ++frame)
+            {
+                const auto absolute = offset + frame;
+                if (absolute >= 3938 && absolute <= 3941)
+                    check(std::abs(output[0][frame] / (0.25f * std::sqrt(0.5f))
+                        - tail[absolute - 3938]) < (absolute == 3941 ? 1.0e-12f : 1.0e-10f),
+                        "native Length tail preserves float complement precision");
+                if (absolute == 3942)
+                    check(output[0][frame] == 0.0f, "native Length tail reaches silence");
+            }
+        }
+    }
+}
+
 void testGatedPlaybackDoesNotUseOneShotLength()
 {
     // Native gated factory captures retain sample amplitude until note-off,
@@ -3538,6 +3576,7 @@ int main()
     testPitchAndDampAlterPlaybackWithoutAllocationContractChanges();
     testNativeLengthUsesLoadedSampleDuration();
     testNativeLengthFloatAccumulation();
+    testNativeLengthTailPrecision();
     testGatedPlaybackDoesNotUseOneShotLength();
     testNativePadPitchUsesEqualTemperament();
     testPadLowPassAndCompressionChangeDrySignal();

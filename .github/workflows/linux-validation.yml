@@ -104,7 +104,12 @@ jobs:
             tools/actual_vst3_host \
             editor-regression/tutorial-header-factory-menu-0.png \
             editor-regression/tutorial-header-factory-menu-6.png \
-            editor-regression/tutorial-header-factory-menu-12.png
+            editor-regression/tutorial-header-factory-menu-12.png \
+            editor-regression/hosted-transport.png \
+            editor-regression/playback-idle.png \
+            editor-regression/playback-first.png \
+            editor-regression/playback-second.png \
+            editor-regression/playback-stopped.png
           sha256sum build/ci/source-candidate.tar.gz > build/ci/source-candidate.sha256
       - name: Save source-built candidates only
         if: ${{ success() && inputs.upload_candidate }}
