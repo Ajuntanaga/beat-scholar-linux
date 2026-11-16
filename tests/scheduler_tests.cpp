@@ -684,10 +684,66 @@ void testChannelChangeRetainsHeldNoteReleases()
     }
 }
 
+void testSilentSliceVisualTimingIsSeparateAndBounded()
+{
+    auto state = bsl::ProjectState::makeDefault();
+    state.global.sequencerEnabled = true;
+    state.global.swingPercent = 50.0;
+    state.global.swingReference = bsl::SwingReference::quarter;
+    auto& pattern = state.patterns[0];
+    pattern.bars = { bsl::BarState::make(1, 4) };
+    pattern.lanes = { bsl::LaneState::make(1) };
+    auto& beat = pattern.lanes[0].beats[0];
+    beat = bsl::BeatState::withSubdivision(4, 0, 1.0f);
+    beat.slices[1].enabled = false;
+    beat.slices[3].enabled = false;
+
+    const auto audible = bsl::SequencerPlayback::preparePattern(pattern);
+    const auto silent = bsl::SequencerPlayback::prepareSilentPattern(pattern);
+    check(audible.size() == 2 && silent.size() == 2,
+          "silent visual plan is separate from the audible note plan");
+
+    // This frame is a scheduled pattern segment whose local phase starts at
+    // zero despite a non-zero host position. Capacity one exercises the
+    // callback-safe cursor without dropping either rest.
+    bsl::TransportFrame frame { 48000.0, 120.0, 240000, 24000, true };
+    frame.quarterNotePosition = 10.0;
+    frame.patternPhaseQuarterNotes = 0.0;
+    std::array<bsl::SilentSliceEvent, 1> storage;
+    bsl::SilentSliceCursor cursor;
+    std::vector<bsl::SilentSliceEvent> observed;
+    while (!cursor.exhausted)
+    {
+        const auto count = bsl::SequencerPlayback::renderSilentBatch(
+            state, frame, 0, silent, storage, cursor);
+        observed.insert(observed.end(), storage.begin(), storage.begin()
+            + static_cast<std::ptrdiff_t>(count));
+    }
+    const auto expectedOffset = [&](double position) {
+        const auto swung = bsl::Sequencer::applySwing(position, 50.0,
+                                                       bsl::SwingReference::quarter);
+        return static_cast<int>(std::floor(swung * 24000.0));
+    };
+    check(observed.size() == 2
+              && observed[0].sampleOffset == expectedOffset(0.25)
+              && observed[0].beatIndex == 0 && observed[0].sliceIndex == 1
+              && observed[1].sampleOffset == expectedOffset(0.75)
+              && observed[1].beatIndex == 0 && observed[1].sliceIndex == 3,
+          "silent slices follow swing and segment-local pattern phase in bounded batches");
+
+    frame.playing = false;
+    cursor = {};
+    check(bsl::SequencerPlayback::renderSilentBatch(state, frame, 0, silent,
+                                                     storage, cursor) == 0
+              && cursor.exhausted,
+          "stopped transport emits no silent-slice activity");
+}
+
 } // namespace
 
 int main()
 {
+    testSilentSliceVisualTimingIsSeparateAndBounded();
     testChannelChangeRetainsHeldNoteReleases();
     testUnquantizedTriggerUsesEventOffset();
     testHostPpqOverridesSampleTimeline();

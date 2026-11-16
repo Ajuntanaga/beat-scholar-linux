@@ -153,6 +153,7 @@ BeatScholarLinuxProcessor::BeatScholarLinuxProcessor()
     {
         stateSnapshots_[index] = projectEditor_.state();
         playbackPlans_[index] = bsl::SequencerPlayback::prepareProject(stateSnapshots_[index]);
+        silentSlicePlans_[index] = bsl::SequencerPlayback::prepareSilentProject(stateSnapshots_[index]);
     }
     const auto& state = projectEditor_.state();
     lastPublishedActivePattern_ = state.patterns[state.activePattern].runtimeId;
@@ -212,6 +213,7 @@ void BeatScholarLinuxProcessor::publishProjectStateIfNeeded()
     stateSnapshots_[static_cast<std::size_t>(target)] = projectEditor_.state();
     const auto& snapshot = stateSnapshots_[static_cast<std::size_t>(target)];
     playbackPlans_[static_cast<std::size_t>(target)] = bsl::SequencerPlayback::prepareProject(snapshot);
+    silentSlicePlans_[static_cast<std::size_t>(target)] = bsl::SequencerPlayback::prepareSilentProject(snapshot);
     const auto activePattern = snapshot.patterns[snapshot.activePattern].runtimeId;
     publishedStateIndex_.store(target, std::memory_order_release);
     if (activePattern != lastPublishedActivePattern_)
@@ -614,6 +616,28 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                         audioEngine_.sequencerNoteOn(static_cast<std::uint8_t>(36 + event.padIndex),
                                                      samplerVelocity(event.velocity), sequencerEvents_[index].laneIndex);
                 }
+            }
+        }
+        // Visual rests are scanned only after the audible plan is complete.
+        // This leaves native equal-time MIDI/note ownership order bit-identical
+        // and gives real hits priority if the bounded UI queue is nearly full.
+        const auto& silentPlans = silentSlicePlans_[static_cast<std::size_t>(snapshotIndex)];
+        const auto silentPlan = patternIndex < silentPlans.size()
+            ? std::span<const bsl::SilentSliceStep>(silentPlans[patternIndex])
+            : std::span<const bsl::SilentSliceStep>();
+        bsl::SilentSliceCursor silentCursor;
+        while (!silentCursor.exhausted)
+        {
+            const auto count = bsl::SequencerPlayback::renderSilentBatch(
+                state, playbackFrame, patternIndex, silentPlan, silentSliceEvents_, silentCursor);
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                const auto& rest = silentSliceEvents_[index];
+                const int offset = rest.sampleOffset + baseOffset;
+                publishPlaybackActivity({ state.patterns[patternIndex].runtimeId,
+                    rest.laneIndex, rest.beatIndex, rest.sliceIndex, 0,
+                    audioActivityFrame_ + static_cast<std::uint64_t>(offset),
+                    activityEpoch_.load(std::memory_order_relaxed), false });
             }
         }
     };

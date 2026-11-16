@@ -180,6 +180,125 @@ std::vector<PatternPlaybackPlan> SequencerPlayback::prepareProject(const Project
     return plans;
 }
 
+PatternSilentSlicePlan SequencerPlayback::prepareSilentPattern(const PatternState& pattern)
+{
+    PatternSilentSlicePlan steps;
+    const bool hasSolo = std::any_of(pattern.lanes.begin(), pattern.lanes.end(),
+        [](const LaneState& lane) { return lane.solo; });
+    for (std::size_t laneIndex = 0; laneIndex < pattern.lanes.size(); ++laneIndex)
+    {
+        const auto& lane = pattern.lanes[laneIndex];
+        if (lane.muted || (hasSolo && !lane.solo)) continue;
+        double beatStart = 0;
+        std::size_t beatIndex = 0;
+        for (const auto& bar : pattern.bars)
+        {
+            const double beatLength = 4.0 / static_cast<double>(bar.denominator);
+            for (int beat = 0; beat < bar.numerator; ++beat, ++beatIndex, beatStart += beatLength)
+            {
+                const auto& slices = lane.beats[beatIndex].slices;
+                for (std::size_t index = 0; index < slices.size(); ++index)
+                {
+                    if (slices[index].enabled) continue;
+                    const double start = beatStart
+                        + static_cast<double>(index) / static_cast<double>(slices.size()) * beatLength;
+                    steps.push_back({ start, laneIndex, beatIndex, index });
+                }
+            }
+        }
+    }
+    return steps;
+}
+
+std::vector<PatternSilentSlicePlan> SequencerPlayback::prepareSilentProject(const ProjectState& project)
+{
+    std::vector<PatternSilentSlicePlan> plans;
+    plans.reserve(project.patterns.size());
+    for (const auto& pattern : project.patterns) plans.push_back(prepareSilentPattern(pattern));
+    return plans;
+}
+
+std::size_t SequencerPlayback::renderSilentBatch(const ProjectState& project,
+    const TransportFrame& frame, std::size_t patternIndex,
+    std::span<const SilentSliceStep> steps, std::span<SilentSliceEvent> destination,
+    SilentSliceCursor& cursor) noexcept
+{
+    if (cursor.exhausted || destination.empty()) return 0;
+    std::size_t count = 0, ordinal = 0, remaining = 0;
+    const auto emit = [&](int offset, const SilentSliceStep& step) {
+        SilentSliceEvent candidate { offset, ordinal++, step.laneIndex,
+                                     step.beatIndex, step.sliceIndex };
+        if (cursor.started && candidate <= cursor.after) return;
+        ++remaining;
+        if (count < destination.size())
+        {
+            destination[count++] = candidate;
+            std::push_heap(destination.begin(), destination.begin()
+                + static_cast<std::ptrdiff_t>(count));
+        }
+        else if (candidate < destination.front())
+        {
+            std::pop_heap(destination.begin(), destination.end());
+            destination.back() = candidate;
+            std::push_heap(destination.begin(), destination.end());
+        }
+    };
+    const bool playing = frame.playing && project.global.sequencerEnabled
+        && patternIndex < project.patterns.size() && project.isValid()
+        && std::isfinite(frame.sampleRate) && frame.sampleRate > 0
+        && std::isfinite(frame.bpm) && frame.bpm > 0 && frame.blockSize > 0;
+    if (playing)
+    {
+        const auto& pattern = project.patterns[patternIndex];
+        const double increment = 1.0 / ((frame.sampleRate * 60.0) / frame.bpm);
+        const double host = std::isfinite(frame.quarterNotePosition) ? frame.quarterNotePosition
+            : static_cast<double>(frame.absoluteSampleStart) / frame.sampleRate * frame.bpm / 60.0;
+        const double origin = std::isfinite(frame.patternPhaseQuarterNotes)
+            ? host - frame.patternPhaseQuarterNotes : 0.0;
+        const auto timeline = [&](int index) {
+            return host + static_cast<double>(index) * increment - origin;
+        };
+        const double first = timeline(0), last = timeline(frame.blockSize - 1);
+        const auto offset = [&](double position, double cycleOrigin = 0.0) {
+            int low = 0, high = frame.blockSize - 1;
+            while (low < high)
+            {
+                const int middle = low + (high - low + 1) / 2;
+                if (timeline(middle) - cycleOrigin <= position) low = middle;
+                else high = middle - 1;
+            }
+            return low;
+        };
+        const double duration = pattern.durationInQuarterNotes();
+        const double swing = std::isfinite(frame.swingPercent)
+            ? frame.swingPercent : project.global.swingPercent;
+        const auto warp = [&](double position) {
+            return Sequencer::applySwing(position, swing, project.global.swingReference);
+        };
+        const bool hasSolo = std::any_of(pattern.lanes.begin(), pattern.lanes.end(),
+            [](const LaneState& lane) { return lane.solo; });
+        const auto firstCycle = static_cast<std::int64_t>(
+            std::floor((first - warp(duration)) / duration));
+        for (auto cycle = firstCycle; static_cast<double>(cycle) * duration <= last; ++cycle)
+        {
+            const double cycleStart = static_cast<double>(cycle) * duration;
+            for (const auto& step : steps)
+            {
+                const auto& lane = pattern.lanes[step.laneIndex];
+                if (lane.muted || (hasSolo && !lane.solo)) continue;
+                const double start = cycleStart + warp(step.start);
+                if (start < 0 || start < first || last <= start) continue;
+                emit(offset(warp(step.start), cycleStart), step);
+            }
+        }
+    }
+    std::sort(destination.begin(), destination.begin() + static_cast<std::ptrdiff_t>(count));
+    if (count != 0) cursor.after = destination[count - 1];
+    cursor.started = true;
+    cursor.exhausted = remaining <= destination.size();
+    return count;
+}
+
 
 std::size_t SequencerPlayback::renderBatch(const ProjectState& project,
     const TransportFrame& frame, std::size_t patternIndex,

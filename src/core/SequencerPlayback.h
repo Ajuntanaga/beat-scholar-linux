@@ -44,6 +44,40 @@ struct PlaybackStep
 };
 using PatternPlaybackPlan = std::vector<PlaybackStep>;
 
+// Disabled slices still take part in the visible playhead progression. Keep
+// them out of PatternPlaybackPlan so adding UI activity cannot perturb the
+// native equal-time note ordering above.
+struct SilentSliceStep
+{
+    double start = 0;
+    std::size_t laneIndex = 0;
+    std::size_t beatIndex = 0;
+    std::size_t sliceIndex = 0;
+};
+using PatternSilentSlicePlan = std::vector<SilentSliceStep>;
+
+struct SilentSliceEvent
+{
+    int sampleOffset = 0;
+    std::size_t ordinal = 0;
+    std::size_t laneIndex = 0;
+    std::size_t beatIndex = 0;
+    std::size_t sliceIndex = 0;
+    auto operator<=>(const SilentSliceEvent& other) const noexcept
+    {
+        return std::tie(sampleOffset, ordinal)
+            <=> std::tie(other.sampleOffset, other.ordinal);
+    }
+    bool operator==(const SilentSliceEvent& other) const noexcept = default;
+};
+
+struct SilentSliceCursor
+{
+    SilentSliceEvent after;
+    bool started = false;
+    bool exhausted = false;
+};
+
 // Callback-aware native note ownership. Each batch rescans from the callback's
 // initial state so bounded caller storage never drops dense or simultaneous hits.
 class SequencerPlayback
@@ -51,6 +85,13 @@ class SequencerPlayback
 public:
     static PatternPlaybackPlan preparePattern(const PatternState&);
     static std::vector<PatternPlaybackPlan> prepareProject(const ProjectState&);
+    static PatternSilentSlicePlan prepareSilentPattern(const PatternState&);
+    static std::vector<PatternSilentSlicePlan> prepareSilentProject(const ProjectState&);
+    static std::size_t renderSilentBatch(const ProjectState&, const TransportFrame&,
+                                         std::size_t patternIndex,
+                                         std::span<const SilentSliceStep>,
+                                         std::span<SilentSliceEvent>,
+                                         SilentSliceCursor&) noexcept;
     void reset() noexcept { notes_ = {}; }
     std::size_t renderBatch(const ProjectState&, const TransportFrame&, std::size_t patternIndex,
                             std::span<const PlaybackStep>, std::span<PlaybackEvent>, PlaybackCursor&) noexcept;

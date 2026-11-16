@@ -109,6 +109,7 @@ jobs:
             editor-regression/playback-idle.png \
             editor-regression/playback-first.png \
             editor-regression/playback-second.png \
+            editor-regression/playback-rest.png \
             editor-regression/playback-stopped.png
           sha256sum build/ci/source-candidate.tar.gz > build/ci/source-candidate.sha256
       - name: Save source-built candidates only

@@ -5791,14 +5791,17 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
     check(brighter(first, idle, left) && similar(colour(first, right), colour(idle, right)),
           "first MIDI trigger lights only its visible left slice");
     auto* pad = childWithId<juce::TextButton>(*editor, "pad.0");
-    check(pad != nullptr, "playback pad is visible");
-    juce::Point<int> padPoint;
+    auto* secondPad = childWithId<juce::TextButton>(*editor, "pad.1");
+    check(pad != nullptr && secondPad != nullptr, "playback pads are visible");
+    juce::Point<int> padPoint, secondPadPoint;
     if (pad)
     {
         padPoint = pad->getBounds().getCentre() + juce::Point<int>(0, 12);
         check(!similar(colour(first, padPoint), colour(idle, padPoint)),
               "trigger visibly lights its sampler pad without selecting it");
     }
+    if (secondPad)
+        secondPadPoint = secondPad->getBounds().getCentre() + juce::Point<int>(0, 12);
     saveVisual(*editor, output, "playback-first.png");
     bool secondTriggered = false;
     int next = 480;
@@ -5818,6 +5821,9 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
     const auto second = snapshot();
     check(brighter(second, idle, right) && similar(colour(second, left), colour(idle, left)),
           "second MIDI trigger lights its right slice after the first fades");
+    if (secondPad)
+        check(!similar(colour(second, secondPadPoint), colour(idle, secondPadPoint)),
+              "second MIDI trigger visibly lights its assigned sampler pad");
     saveVisual(*editor, output, "playback-second.png");
     render(next + 480, false);
     const auto stopped = snapshot();
@@ -5845,6 +5851,43 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
     BeatScholarLinuxEditorTestAccess::tick(*editor);
     check(similar(colour(snapshot(), left), colour(idle, left)),
           "expired audio events do not flash after a delayed UI update");
+
+    auto restState = state;
+    restState.patterns[0].lanes[0].beats[0].slices[1].enabled = false;
+    const auto restBytes = bsl::statecodec::encode(restState);
+    processor->setStateInformation(restBytes.getData(), static_cast<int>(restBytes.getSize()));
+    render(0, false);
+    const auto restIdle = snapshot();
+    auto* silentPad = childWithId<juce::TextButton>(*editor, "pad.1");
+    check(silentPad != nullptr, "silent slice pad is visible");
+    juce::Point<int> silentPadPoint;
+    if (silentPad)
+        silentPadPoint = silentPad->getBounds().getCentre() + juce::Point<int>(0, 12);
+    check(render(0, true) == 1, "rest scenario emits its first sounding slice");
+    bool restTriggered = false;
+    int restFrame = 480;
+    for (; restFrame < 18000; restFrame += 480)
+    {
+        const auto notes = render(restFrame, true);
+        const auto current = snapshot();
+        if (restFrame == 12000)
+            check(notes == 0 && similar(colour(current, right), colour(restIdle, right)),
+                  "swing delays the silent visual trigger beyond the straight eighth note");
+        check(notes == 0, "silent slice never emits a MIDI note");
+        if (brighter(current, restIdle, right))
+        {
+            restTriggered = true;
+            break;
+        }
+    }
+    check(restTriggered && restFrame > 12000, "swung silent slice eventually illuminates");
+    const auto rest = snapshot();
+    check(brighter(rest, restIdle, right) && similar(colour(rest, left), colour(restIdle, left)),
+          "silent slice lights grey after the sounding slice fades");
+    if (silentPad)
+        check(similar(colour(rest, silentPadPoint), colour(restIdle, silentPadPoint)),
+              "silent slice does not flash its assigned pad");
+    saveVisual(*editor, output, "playback-rest.png");
     processor->setPlayHead(nullptr);
     processor->releaseResources();
 }

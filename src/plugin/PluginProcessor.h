@@ -84,6 +84,7 @@ public:
         bsl::PatternId pattern = 0;
         std::size_t lane = 0, beat = 0, slice = 0, pad = 0;
         std::uint64_t frame = 0, epoch = 0;
+        bool flashPad = true;
     };
     // Single message-thread consumer; the audio callback never waits for the UI.
     bool takePlaybackActivity(PlaybackActivity&) noexcept;
@@ -129,11 +130,13 @@ private:
     void publishPlaybackActivity(const PlaybackActivity&) noexcept;
     juce::MidiBuffer incomingMidi_;
     std::array<bsl::PlaybackEvent, maximumSequencerEvents> sequencerEvents_ {};
+    std::array<bsl::SilentSliceEvent, maximumSequencerEvents> silentSliceEvents_ {};
     bsl::PatternTriggerCollector patternTriggerCollector_;
     std::array<bsl::PatternRenderSegment,
                bsl::PatternScheduler::maximumPendingTriggers + 1> renderSegments_ {};
     std::array<bsl::ProjectState, 3> stateSnapshots_;
     std::array<std::vector<bsl::PatternPlaybackPlan>, 3> playbackPlans_;
+    std::array<std::vector<bsl::PatternSilentSlicePlan>, 3> silentSlicePlans_;
     std::atomic<int> publishedStateIndex_ { 0 };
     std::atomic<int> readingStateIndex_ { -1 };
     std::atomic<bsl::PatternId> audioPattern_ { 0 };

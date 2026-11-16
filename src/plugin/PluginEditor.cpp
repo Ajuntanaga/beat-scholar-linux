@@ -1671,12 +1671,14 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
                 const auto flash = sliceFlashes_.find({ laneIndex, beatIndex, sliceIndex });
                 const float activity = !previewing && pattern.runtimeId == flashPattern_
                     && flash != sliceFlashes_.end() ? flash->second : 0.0f;
+                const auto silentColour = juce::Colour(lookAndFeel_.palette().panel)
+                    .interpolatedWith(juce::Colour(lookAndFeel_.palette().text), activity * 0.45f);
                 graphics.setColour(slice.enabled
                                        ? padColours_[pad].withBrightness(0.72f)
                                              .interpolatedWith(juce::Colours::white, activity * 0.65f)
                                              .withAlpha(std::clamp(0.55f + slice.velocity * 0.45f,
                                                                    0.0f, 1.0f))
-                                       : juce::Colour(lookAndFeel_.palette().panel));
+                                       : silentColour);
                 graphics.fillPath(wedge);
                 graphics.setColour(populated ? juce::Colour(lookAndFeel_.palette().text)
                                              : juce::Colour(lookAndFeel_.palette().border));
@@ -4492,7 +4494,7 @@ void BeatScholarLinuxEditor::updateDisplay(int activityCount)
         if (strength <= 0.0f) continue; // Ignore old events after a suspended message loop.
         auto& level = sliceFlashes_[{ activity.lane, activity.beat, activity.slice }];
         level = std::max(level, strength);
-        if (activity.pad < padFlashes_.size())
+        if (activity.flashPad && activity.pad < padFlashes_.size())
             padFlashes_[activity.pad] = std::max(padFlashes_[activity.pad], strength);
     }
     for (std::size_t pad = 0; pad < pads_.size(); ++pad)
