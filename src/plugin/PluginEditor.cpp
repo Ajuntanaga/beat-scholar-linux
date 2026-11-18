@@ -1253,15 +1253,10 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
         }
     };
     graphics.fillAll(juce::Colour(lookAndFeel_.palette().background));
-    const auto canvas = designRect(getWidth(), getHeight(), 4.0f, 4.0f, 1272.0f, 712.0f);
-    graphics.setColour(juce::Colour(lookAndFeel_.palette().borderBright));
-    graphics.drawRect(canvas.toFloat(), std::max(1.0f, scale));
 
     const auto toolbar = designRect(getWidth(), getHeight(), 8.0f, 8.0f, 1264.0f, 46.0f);
     graphics.setColour(juce::Colour(lookAndFeel_.palette().panel));
     graphics.fillRect(toolbar);
-    graphics.setColour(juce::Colour(lookAndFeel_.palette().border));
-    graphics.drawRect(toolbar.toFloat(), std::max(1.0f, scale));
 
     // The manual's wordmark is text crossed by a thin geometric star.
     const auto mark = designRect(getWidth(), getHeight(), 83.0f, 14.0f, 38.0f, 34.0f).toFloat();
@@ -1814,15 +1809,18 @@ void BeatScholarLinuxEditor::resized()
 
     const auto kit = kitBounds();
     const int gap = std::max(2, static_cast<int>(3.0f * designScale(getWidth(), getHeight())));
-    const int padWidth = (kit.getWidth() - gap * 7) / 8;
+    const int availablePadWidth = kit.getWidth() - gap * 7;
     const int rowGap = juce::roundToInt(20.0f * designScale(getWidth(), getHeight()));
     const int padHeight = (kit.getHeight() - rowGap) / 2;
     for (std::size_t index = 0; index < pads_.size(); ++index)
     {
         const int column = static_cast<int>(index % 8);
         const int row = 1 - static_cast<int>(index / 8);
-        pads_[index].setBounds(kit.getX() + column * (padWidth + gap),
-                               kit.getY() + row * (padHeight + rowGap), padWidth, padHeight);
+        // Distribute rounding across columns so the final pad reaches the bank edge.
+        const int left = column * availablePadWidth / 8;
+        const int right = (column + 1) * availablePadWidth / 8;
+        pads_[index].setBounds(kit.getX() + left + column * gap,
+                               kit.getY() + row * (padHeight + rowGap), right - left, padHeight);
         midiMapLabels_[index].setBounds(pads_[index].getBounds().reduced(2, 6));
     }
 
