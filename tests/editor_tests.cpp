@@ -5852,6 +5852,10 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
     const auto first = snapshot();
     check(brighter(first, idle, left) && similar(colour(first, right), colour(idle, right)),
           "first MIDI trigger lights only its visible left slice");
+    const auto activeColour = colour(first, left);
+    check(std::abs(static_cast<int>(activeColour.getRed()) - activeColour.getGreen()) < 20
+              && std::abs(static_cast<int>(activeColour.getBlue()) - activeColour.getGreen()) < 20,
+          "active slice flashes neutral near-white like the original, not tinted pink");
     auto* pad = childWithId<juce::TextButton>(*editor, "pad.0");
     auto* secondPad = childWithId<juce::TextButton>(*editor, "pad.1");
     check(pad != nullptr && secondPad != nullptr, "playback pads are visible");

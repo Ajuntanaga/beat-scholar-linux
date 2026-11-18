@@ -1726,14 +1726,14 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
                 const auto flash = sliceFlashes_.find({ laneIndex, beatIndex, sliceIndex });
                 const float activity = !previewing && pattern.runtimeId == flashPattern_
                     && flash != sliceFlashes_.end() ? flash->second : 0.0f;
+                // Original 1.6.2 playback capture: sounding sectors peak at
+                // neutral D0D0D5; silent sectors peak at 727282.
                 const auto silentColour = juce::Colour(lookAndFeel_.palette().panel)
-                    .interpolatedWith(juce::Colour(lookAndFeel_.palette().text), activity * 0.45f);
-                graphics.setColour(slice.enabled
-                                       ? padColours_[pad].withBrightness(0.72f)
-                                             .interpolatedWith(juce::Colours::white, activity * 0.65f)
-                                             .withAlpha(std::clamp(0.55f + slice.velocity * 0.45f,
-                                                                   0.0f, 1.0f))
-                                       : silentColour);
+                    .interpolatedWith(juce::Colour(0xff727282), activity);
+                const auto soundingColour = padColours_[pad].withBrightness(0.72f)
+                    .withAlpha(std::clamp(0.55f + slice.velocity * 0.45f, 0.0f, 1.0f))
+                    .interpolatedWith(juce::Colour(0xffd0d0d5), activity);
+                graphics.setColour(slice.enabled ? soundingColour : silentColour);
                 graphics.fillPath(wedge);
                 graphics.setColour(populated ? juce::Colour(lookAndFeel_.palette().text)
                                              : juce::Colour(lookAndFeel_.palette().border));
