@@ -1316,9 +1316,7 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
         const float x = header.getX() + (firstQuarter - horizontalScroll_) * quarterWidth;
         const float width = duration * quarterWidth;
         juce::Rectangle<float> bounds(x, header.getY(), width - scale, header.getHeight());
-        graphics.setColour(bar == state.ui.selectedBar
-                               ? juce::Colour(lookAndFeel_.palette().panelRaised)
-                               : juce::Colour(lookAndFeel_.palette().panel));
+        graphics.setColour(juce::Colour(lookAndFeel_.palette().patternCanvas));
         graphics.fillRect(bounds);
         graphics.setColour(juce::Colour(lookAndFeel_.palette().border));
         graphics.drawRect(bounds, std::max(1.0f, scale));
