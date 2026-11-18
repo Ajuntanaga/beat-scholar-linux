@@ -1939,8 +1939,8 @@ void BeatScholarLinuxEditor::resized()
                 // Character dials use the smaller insert-control rings in the
                 // Samples & Sounds tutorial; send controls are deliberately larger.
                 soundControls_[index].setBounds(index < 4
-                    ? designRect(getWidth(), getHeight(), characterPositions[index].x + 6.0f,
-                                 index % 2 == 0 ? 589.0f : 662.0f, 42.0f, 42.0f)
+                    ? designRect(getWidth(), getHeight(), characterPositions[index].x + 7.0f,
+                                 index % 2 == 0 ? 591.0f : 668.0f, 40.0f, 40.0f)
                     : designRect(getWidth(), getHeight(), characterPositions[index].x,
                                  characterPositions[index].y + 12.0f, 54.0f, 55.0f));
             }
