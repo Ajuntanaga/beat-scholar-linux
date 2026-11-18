@@ -124,8 +124,8 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             scale = width / 1280
             left, top = int(geometry['X']), int(geometry['Y'])
             editor_top = top + height - 720 * scale
-            play_bounds = (round(left + 539 * scale), round(editor_top + 16 * scale),
-                           round(left + 569 * scale), round(editor_top + 46 * scale))
+            play_bounds = (round(left + 625 * scale), round(editor_top + 16 * scale),
+                           round(left + 663 * scale), round(editor_top + 46 * scale))
 
             def wait_transport(playing, filename):
                 deadline = time.monotonic() + 5
@@ -146,10 +146,10 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             # A fresh processor starts playing. Establish a stopped state and
             # focus the editor background, as after editing in the tutorial.
             editor_y = height - 720 * scale
-            xdo('mousemove', '--window', main, round(510 * scale),
+            xdo('mousemove', '--window', main, round(573 * scale),
                 round(editor_y + 30 * scale), 'click', '1')
             wait_transport(False, 'standalone-stopped.png')
-            xdo('mousemove', '--window', main, round(1000 * scale),
+            xdo('mousemove', '--window', main, round(1038 * scale),
                 round(editor_y + 30 * scale), 'click', '1')
             xdo('key', 'space')
             wait_transport(True, 'standalone-space-playing.png')
@@ -226,7 +226,7 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
                 wait_beats(baseline, [center], True, f'standalone-paste-drag-{center}.png')
             gesture('mouseup', '1')
             gesture('keyup', 'v')
-            gesture('mousemove', '--window', main, round(1000 * scale),
+            gesture('mousemove', '--window', main, round(1038 * scale),
                     round(editor_y + 30 * scale))
             wait_beats(baseline, [463, 730, 998], True, 'standalone-paste-filled.png')
             gesture('key', 'ctrl+z')
@@ -286,7 +286,7 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
                 gesture('mousemove', '--window', main,
                         round((196 + 25 * math.cos(angle)) * scale),
                         round(editor_y + (150 + 25 * math.sin(angle)) * scale), 'click', '1')
-            gesture('mousemove', '--window', main, round(1000 * scale),
+            gesture('mousemove', '--window', main, round(1038 * scale),
                     round(editor_y + 30 * scale))
             wait_beats(before_flam, [196], True, 'standalone-five-slice-flam.png')
             close_app(app, main)
