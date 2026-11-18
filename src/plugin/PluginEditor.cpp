@@ -1273,20 +1273,20 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                           mark.getCentreY() + std::sin(angle) * mark.getHeight() * 0.55f,
                           std::max(0.7f, scale * 0.75f));
     }
-    for (const float x : { 354.0f, 670.0f, 1048.0f })
+    for (const float x : { 427.0f, 784.0f, 1048.0f })
     {
         const auto divider = designRect(getWidth(), getHeight(), x, 14.0f, 1.5f, 34.0f);
         graphics.fillRect(divider);
     }
     graphics.setFont(bsl::ui::font(10.0f * scale, true));
     graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
-    graphics.drawText("Swing", designRect(getWidth(), getHeight(), 365.0f, 12.0f, 70.0f, 15.0f),
+    graphics.drawText("Swing", designRect(getWidth(), getHeight(), 450.0f, 12.0f, 70.0f, 15.0f),
                       juce::Justification::centred);
     graphics.drawText(juce::String(static_cast<int>(requestedSubdivision_)),
-                      designRect(getWidth(), getHeight(), 775.0f, 15.0f, 17.0f, 30.0f),
+                      designRect(getWidth(), getHeight(), 878.0f, 15.0f, 17.0f, 30.0f),
                       juce::Justification::centred);
     {
-        const auto arrowArea = designRect(getWidth(), getHeight(), 791.0f, 20.0f, 13.0f, 20.0f).toFloat();
+        const auto arrowArea = designRect(getWidth(), getHeight(), 894.0f, 20.0f, 13.0f, 20.0f).toFloat();
         juce::Path arrow;
         arrow.startNewSubPath(arrowArea.getX(), arrowArea.getY() + arrowArea.getHeight() * 0.34f);
         arrow.lineTo(arrowArea.getRight(), arrowArea.getY() + arrowArea.getHeight() * 0.34f);
@@ -1782,27 +1782,27 @@ void BeatScholarLinuxEditor::resized()
     title_.setFont(juce::Font(juce::FontOptions("Nimbus Sans Narrow", "Bold",
 +                                                24.0f * designScale(getWidth(), getHeight()))));
     title_.setBounds(designRect(getWidth(), getHeight(), 16.0f, 13.0f, 132.0f, 34.0f));
-    presetPrevious_.setBounds(designRect(getWidth(), getHeight(), 150.0f, 16.0f, 24.0f, 28.0f));
-    preset_.setBounds(designRect(getWidth(), getHeight(), 176.0f, 14.0f, 116.0f, 32.0f));
-    presetNext_.setBounds(designRect(getWidth(), getHeight(), 294.0f, 16.0f, 24.0f, 28.0f));
-    presetSave_.setBounds(designRect(getWidth(), getHeight(), 322.0f, 16.0f, 24.0f, 28.0f));
+    presetPrevious_.setBounds(designRect(getWidth(), getHeight(), 161.0f, 16.0f, 24.0f, 28.0f));
+    preset_.setBounds(designRect(getWidth(), getHeight(), 198.0f, 14.0f, 152.0f, 32.0f));
+    presetNext_.setBounds(designRect(getWidth(), getHeight(), 361.0f, 16.0f, 24.0f, 28.0f));
+    presetSave_.setBounds(designRect(getWidth(), getHeight(), 391.0f, 16.0f, 24.0f, 28.0f));
     sequencer_.setVisible(false);
     sampler_.setVisible(false);
-    swing_.setBounds(designRect(getWidth(), getHeight(), 365.0f, 27.0f, 112.0f, 20.0f));
-    stop_.setBounds(designRect(getWidth(), getHeight(), 493.0f, 14.0f, 34.0f, 34.0f));
-    play_.setBounds(designRect(getWidth(), getHeight(), 535.0f, 12.0f, 38.0f, 38.0f));
+    swing_.setBounds(designRect(getWidth(), getHeight(), 444.0f, 27.0f, 82.0f, 20.0f));
+    stop_.setBounds(designRect(getWidth(), getHeight(), 556.0f, 14.0f, 34.0f, 34.0f));
+    play_.setBounds(designRect(getWidth(), getHeight(), 625.0f, 12.0f, 38.0f, 38.0f));
     pause_.setVisible(false);
-    bpm_.setBounds(designRect(getWidth(), getHeight(), 580.0f, 15.0f, 90.0f, 32.0f));
+    bpm_.setBounds(designRect(getWidth(), getHeight(), 679.0f, 15.0f, 90.0f, 32.0f));
     bpm_.setVisible(true);
-    drumBrush_.setBounds(designRect(getWidth(), getHeight(), 688.0f, 14.0f, 34.0f, 34.0f));
-    slicerBrush_.setBounds(designRect(getWidth(), getHeight(), 742.0f, 14.0f, 34.0f, 34.0f));
-    velocityBrush_.setBounds(designRect(getWidth(), getHeight(), 806.0f, 14.0f, 34.0f, 34.0f));
-    randomizerBrush_.setBounds(designRect(getWidth(), getHeight(), 920.0f, 14.0f, 34.0f, 34.0f));
-    defaultVelocity_.setBounds(designRect(getWidth(), getHeight(), 846.0f, 16.0f, 66.0f, 28.0f));
+    drumBrush_.setBounds(designRect(getWidth(), getHeight(), 799.0f, 14.0f, 34.0f, 34.0f));
+    slicerBrush_.setBounds(designRect(getWidth(), getHeight(), 845.0f, 14.0f, 34.0f, 34.0f));
+    velocityBrush_.setBounds(designRect(getWidth(), getHeight(), 927.0f, 14.0f, 24.0f, 34.0f));
+    randomizerBrush_.setBounds(designRect(getWidth(), getHeight(), 995.0f, 14.0f, 34.0f, 34.0f));
+    defaultVelocity_.setBounds(designRect(getWidth(), getHeight(), 955.0f, 16.0f, 32.0f, 28.0f));
     undo_.setBounds(designRect(getWidth(), getHeight(), 1060.0f, 13.0f, 38.0f, 36.0f));
     redo_.setBounds(designRect(getWidth(), getHeight(), 1100.0f, 13.0f, 38.0f, 36.0f));
     about_.setBounds(designRect(getWidth(), getHeight(), 1144.0f, 13.0f, 120.0f, 36.0f));
-    status_.setBounds(designRect(getWidth(), getHeight(), 958.0f, 15.0f, 94.0f, 30.0f));
+    status_.setBounds(designRect(getWidth(), getHeight(), 8.0f, 704.0f, 1256.0f, 14.0f));
 
     const auto kit = kitBounds();
     const int gap = std::max(2, static_cast<int>(3.0f * designScale(getWidth(), getHeight())));
@@ -2333,7 +2333,7 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
             }
         }
     }
-    if (designRect(getWidth(), getHeight(), 775.0f, 14.0f, 31.0f, 34.0f).contains(position))
+    if (designRect(getWidth(), getHeight(), 878.0f, 14.0f, 31.0f, 34.0f).contains(position))
     {
         showSubdivisionMenu();
         return;

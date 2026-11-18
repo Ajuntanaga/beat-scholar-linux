@@ -5912,6 +5912,35 @@ void testHostedTransportRemainsHostControlled(const juce::File& output)
     processor->releaseResources();
 }
 
+void testReferenceToolbarLayout(const juce::File& output)
+{
+    auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
+    auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    editor->setSize(960, 540);
+    editor->setVisible(true);
+    // Measured original 1.6.2 centres in the 960px client, with its x=160 origin removed.
+    struct Target { const char* id; float x; };
+    const Target targets[] = {
+        { "toolbar.stop", 430.0f }, { "toolbar.play", 483.0f },
+        { "toolbar.bpm", 543.0f }, { "brush.drum", 612.0f },
+        { "brush.dice", 759.0f }
+    };
+    for (const auto& target : targets)
+    {
+        auto* control = childWithId<juce::Component>(*editor, target.id);
+        check(control != nullptr, "reference toolbar control exists");
+        if (control)
+            check(std::abs(control->getBounds().getCentreX() - target.x) <= 1.0f,
+                  "toolbar centre matches original capture");
+    }
+    auto* velocityBrush = childWithId<juce::Component>(*editor, "brush.velocity");
+    auto* velocityValue = childWithId<juce::Component>(*editor, "toolbar.velocity");
+    check(velocityBrush && velocityValue
+              && !velocityBrush->getBounds().intersects(velocityValue->getBounds()),
+          "velocity brush and numeric value have distinct hit areas");
+    saveVisual(*editor, output, "reference-toolbar-layout.png");
+}
+
 void testReferenceVelocityColours(const juce::File& output)
 {
     auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
@@ -7258,6 +7287,7 @@ int main(int argc, char** argv)
     testStandaloneTransportIgnoresDeviceClock(output);
     testHostedPauseResumeMatchesCapturedLifecycle();
     testHostedTransportRemainsHostControlled(output);
+    testReferenceToolbarLayout(output);
     testReferenceVelocityColours(output);
     testPlaybackLightingFollowsHostTriggers(output);
     testMidiExportUsesTheActiveTempo(output);
