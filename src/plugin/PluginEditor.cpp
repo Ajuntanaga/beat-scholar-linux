@@ -251,10 +251,10 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     BeatScholarLinuxProcessor::PlaybackActivity discarded;
     for (int i = 0; i < 2048 && processor_.takePlaybackActivity(discarded); ++i) {} // Do not replay a closed editor's backlog.
     padColours_ = {
-        juce::Colour(0xffbf316b), juce::Colour(0xff4058bd), juce::Colour(0xff2eb574), juce::Colour(0xffd51e42),
-        juce::Colour(0xffb9983a), juce::Colour(0xffa95c35), juce::Colour(0xff55349d), juce::Colour(0xff4e8d2d),
-        juce::Colour(0xff8a2b2d), juce::Colour(0xffc152ad), juce::Colour(0xffab247d), juce::Colour(0xff6d317d),
-        juce::Colour(0xff17aaa5), juce::Colour(0xff4259bd), juce::Colour(0xff2435d9), juce::Colour(0xff3f8026)
+        juce::Colour(0xffbe3063), juce::Colour(0xff495dcb), juce::Colour(0xff30be71), juce::Colour(0xffe11430),
+        juce::Colour(0xffc3a03f), juce::Colour(0xffb96643), juce::Colour(0xff5a3aa6), juce::Colour(0xff7ca83d),
+        juce::Colour(0xff803232), juce::Colour(0xfff06dff), juce::Colour(0xffdc30af), juce::Colour(0xff982ea5),
+        juce::Colour(0xff14bebe), juce::Colour(0xff283282), juce::Colour(0xff1419be), juce::Colour(0xff285a19)
     };
 
     title_.setText("BEAT SCHOLAR", juce::dontSendNotification);
@@ -1748,8 +1748,8 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
                 // neutral D0D0D5; silent sectors peak at 727282.
                 const auto silentColour = juce::Colour(lookAndFeel_.palette().patternCanvas)
                     .interpolatedWith(juce::Colour(0xff727282), activity);
-                const auto soundingColour = padColours_[pad].withBrightness(0.72f)
-                    .withAlpha(std::clamp(0.55f + slice.velocity * 0.45f, 0.0f, 1.0f))
+                const auto soundingColour = padColours_[pad]
+                    .withAlpha(std::clamp(0.30f + slice.velocity * 0.70f, 0.0f, 1.0f))
                     .interpolatedWith(juce::Colour(0xffd0d0d5), activity);
                 graphics.setColour(slice.enabled ? soundingColour : silentColour);
                 graphics.fillPath(wedge);

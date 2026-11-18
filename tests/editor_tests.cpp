@@ -5912,6 +5912,33 @@ void testHostedTransportRemainsHostControlled(const juce::File& output)
     processor->releaseResources();
 }
 
+void testReferenceVelocityColours(const juce::File& output)
+{
+    auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
+    auto state = makeBypassTestProject(0);
+    state.patterns[0].lanes = { bsl::LaneState::make(4) };
+    auto& beat = state.patterns[0].lanes[0].beats[0];
+    beat = bsl::BeatState::withSubdivision(2, 4, 0.8f);
+    beat.slices[0].enabled = beat.slices[1].enabled = true;
+    beat.slices[0].velocity = 0.1f;
+    const auto bytes = bsl::statecodec::encode(state);
+    processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
+    auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    editor->setVisible(true);
+    const auto image = editor->createComponentSnapshot(editor->getLocalBounds());
+    // Original 1.6.2 stopped yellow sectors at velocity .1 and .8.
+    const auto near = [](juce::Colour actual, juce::Colour expected) {
+        return std::abs(int(actual.getRed()) - int(expected.getRed())) <= 3
+            && std::abs(int(actual.getGreen()) - int(expected.getGreen())) <= 3
+            && std::abs(int(actual.getBlue()) - int(expected.getBlue())) <= 3;
+    };
+    check(near(image.getPixelAt(148, 306), juce::Colour(84, 71, 53)),
+          "low-velocity slice matches original dim colour");
+    check(near(image.getPixelAt(244, 306), juce::Colour(170, 140, 60)),
+          "normal-velocity slice matches original pad hue and brightness");
+    saveVisual(*editor, output, "reference-velocity-colours.png");
+}
+
 void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
 {
     struct HostClock final : juce::AudioPlayHead
@@ -7231,6 +7258,7 @@ int main(int argc, char** argv)
     testStandaloneTransportIgnoresDeviceClock(output);
     testHostedPauseResumeMatchesCapturedLifecycle();
     testHostedTransportRemainsHostControlled(output);
+    testReferenceVelocityColours(output);
     testPlaybackLightingFollowsHostTriggers(output);
     testMidiExportUsesTheActiveTempo(output);
     testStandaloneRestoresMultiOutputAsStereo();
