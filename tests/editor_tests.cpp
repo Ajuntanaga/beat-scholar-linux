@@ -5091,6 +5091,29 @@ void testDocumentedNumericEntry(const juce::File& output)
     check(entry->isVisible() && std::abs(swing->getValue() - 32.0) < 1e-6,
           "Swing rejects trailing junk without changing its value");
     entry->onEscapeKey();
+
+    auto standalone = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_Standalone);
+    BeatScholarLinuxEditor standaloneEditor(*standalone);
+    auto* tempo = childWithId<juce::Slider>(standaloneEditor, "toolbar.bpm");
+    auto* tempoEntry = childWithId<juce::TextEditor>(standaloneEditor, "control.value");
+    check(tempo && tempoEntry, "standalone tempo entry exists");
+    if (!tempo || !tempoEntry) return;
+    for (const double bpm : { 1.0, 999.0 })
+    {
+        standaloneEditor.mouseDoubleClick(visualEvent(standaloneEditor,
+            tempo->getBounds().getCentre().toFloat(), juce::ModifierKeys::leftButtonModifier));
+        tempoEntry->setText(juce::String(bpm));
+        tempoEntry->onReturnKey();
+        check(!tempoEntry->isVisible() && std::abs(tempo->getValue() - bpm) < 0.01
+                  && std::abs(standalone->parameters().getRawParameterValue("bpm")->load() - bpm) < 0.01,
+              "standalone accepts the original 1 to 999 BPM limits");
+        juce::MemoryBlock saved;
+        standalone->getStateInformation(saved);
+        auto restored = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_Standalone);
+        restored->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+        check(std::abs(restored->parameters().getRawParameterValue("bpm")->load() - bpm) < 0.01,
+              "standalone tempo extremes survive state recall without clamping");
+    }
 }
 
 void testBarMeterNumericEntry(const juce::File& output)

@@ -121,7 +121,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout BeatScholarLinuxProcessor::m
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID { "swing", 1 }, "Swing", juce::NormalisableRange<float> { -200.0f, 200.0f, 0.1f }, 0.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "bpm", 1 }, "Standalone BPM", juce::NormalisableRange<float> { 20.0f, 300.0f, 0.01f }, 120.0f));
+        juce::ParameterID { "bpm", 1 }, "Standalone BPM", juce::NormalisableRange<float> { 1.0f, 999.0f, 0.01f }, 120.0f));
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID { "routing", 1 }, "Routing", juce::StringArray { "Stereo", "Multi" }, 0));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
