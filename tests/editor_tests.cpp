@@ -4964,7 +4964,7 @@ void testDenseLaneControlsMatchTheirVisibleTargets(const juce::File& output)
     }
     // These are the four displayed first-lane button centres in the 1280x720
     // layout with 15 lanes. They fall in different raw lane quartiles.
-    constexpr std::array<float, 4> centres { 110.99f, 114.98f, 118.96f, 122.94f };
+    constexpr std::array<float, 4> centres { 122.79f, 126.38f, 129.96f, 133.54f };
     for (const int width : { 960, 1280, 1600 })
         for (int action = 0; action < 4; ++action)
         {
@@ -4996,7 +4996,7 @@ void testDenseLaneControlsMatchTheirVisibleTargets(const juce::File& output)
             check(state.patterns[0].lanes.size() == 15
                   && !state.patterns[0].lanes[0].solo && !state.patterns[0].lanes[0].muted,
                   "Undo restores the lane control action");
-            click(33, 106); // Visible padding above the first control.
+            click(33, 118); // Visible padding above the first control.
             check(!processor->projectEditor().canUndo()
                   && !state.patterns[0].lanes[0].solo && !state.patterns[0].lanes[0].muted,
                   "lane-control padding is inert");
@@ -5021,7 +5021,7 @@ void testCommandDragPansBlankGrid(const juce::File& output)
     const juce::ModifierKeys modifiers(juce::ModifierKeys::leftButtonModifier
                                       | juce::ModifierKeys::commandModifier);
     // This corner belongs to beat zero's rectangular cell, but lies outside its pie.
-    editor.mouseDown(visualEvent(editor, { 70, 110 }, modifiers));
+    editor.mouseDown(visualEvent(editor, { 70, 122 }, modifiers));
     editor.mouseDrag(visualEvent(editor, { -1100, -450 }, modifiers));
     editor.mouseUp(visualEvent(editor, { -1100, -450 }, modifiers));
     check(bsl::statecodec::encode(state) == before && !processor->projectEditor().canUndo(),
