@@ -465,9 +465,17 @@ void BeatScholarLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Butto
     {
         g.setColour(juce::Colour(palette_.panel));
         g.fillRect(area);
+        const bool mapping = bool(button.getProperties().getWithDefault("midiMapVisible", false));
+        const auto strip = area.removeFromTop(std::max(3.0f, area.getHeight() * 0.08f));
+        // Original MAP mode leaves the pad strip at 20% over its overlay background.
+        if (mapping)
+        {
+            g.setColour(juce::Colour(palette_.panel == colour::panel ? 0xff181834 : palette_.panel));
+            g.fillRect(strip);
+        }
         g.setColour(button.findColour(juce::TextButton::buttonOnColourId)
-                        .withSaturation(0.78f).withBrightness(0.82f));
-        g.fillRect(area.removeFromTop(std::max(3.0f, area.getHeight() * 0.08f)));
+                        .withAlpha(mapping ? 0.20f : 1.0f));
+        g.fillRect(strip);
         const float activity = std::clamp(static_cast<float>(button.getProperties().getWithDefault("playbackActivity", 0.0f)), 0.0f, 1.0f);
         if (button.getToggleState() || activity > 0.0f)
         {

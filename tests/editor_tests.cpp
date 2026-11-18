@@ -5912,6 +5912,31 @@ void testHostedTransportRemainsHostControlled(const juce::File& output)
     processor->releaseResources();
 }
 
+void testReferenceMapStripColours()
+{
+    auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
+    auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    editor->setSize(960, 540);
+    editor->setVisible(true);
+    auto* pad = childWithId<juce::TextButton>(*editor, "pad.8");
+    auto* map = childWithId<juce::TextButton>(*editor, "kit.map");
+    check(pad && map, "reference MAP strip controls exist");
+    if (!pad || !map) return;
+    const auto sample = [&] {
+        return pad->createComponentSnapshot(pad->getLocalBounds()).getPixelAt(pad->getWidth() / 2, 2);
+    };
+    const auto near = [](juce::Colour actual, juce::Colour expected) {
+        return std::abs(int(actual.getRed()) - int(expected.getRed())) <= 2
+            && std::abs(int(actual.getGreen()) - int(expected.getGreen())) <= 2
+            && std::abs(int(actual.getBlue()) - int(expected.getBlue())) <= 2;
+    };
+    check(near(sample(), juce::Colour(128, 50, 50)), "normal strip retains original pad colour");
+    map->onClick();
+    check(near(sample(), juce::Colour(45, 29, 51)), "MAP strip matches original dimmed colour");
+    map->onClick();
+    check(near(sample(), juce::Colour(128, 50, 50)), "closing MAP restores strip colour");
+}
+
 void testReferenceToolbarLayout(const juce::File& output)
 {
     auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
@@ -7287,6 +7312,7 @@ int main(int argc, char** argv)
     testStandaloneTransportIgnoresDeviceClock(output);
     testHostedPauseResumeMatchesCapturedLifecycle();
     testHostedTransportRemainsHostControlled(output);
+    testReferenceMapStripColours();
     testReferenceToolbarLayout(output);
     testReferenceVelocityColours(output);
     testPlaybackLightingFollowsHostTriggers(output);
