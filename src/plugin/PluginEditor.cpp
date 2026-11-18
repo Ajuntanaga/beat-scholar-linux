@@ -513,6 +513,7 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     kitMenu_.setTooltip("Open factory and user kit presets, save a kit, or show its directory");
     configureButton(kitSave_, "", [this] { saveKitAs(); });
     kitSave_.setComponentID("icon.save");
+    kitSave_.getProperties().set("flatButton", true);
     kitSave_.setTitle("Save kit");
     kitSave_.setTooltip("Save the current kit");
     configureButton(midiMap_, "MAP", [this] {
@@ -525,9 +526,11 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     midiMap_.setComponentID("kit.map");
     configureButton(kitPrevious_, "", [this] { loadAdjacentKit(-1); });
     kitPrevious_.setComponentID("icon.prev");
+    kitPrevious_.getProperties().set("flatButton", true);
     kitPrevious_.setTitle("Previous kit");
     configureButton(kitNext_, "", [this] { loadAdjacentKit(1); });
     kitNext_.setComponentID("icon.next");
+    kitNext_.getProperties().set("flatButton", true);
     kitNext_.setTitle("Next kit");
     configureButton(randomizerPrevious_, "", [this] { loadAdjacentRandomizer(-1); });
     randomizerPrevious_.setComponentID("icon.prev");
