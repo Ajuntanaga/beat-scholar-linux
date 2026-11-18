@@ -5966,6 +5966,14 @@ void testReferenceToolbarLayout(const juce::File& output)
               && !velocityBrush->getBounds().intersects(velocityValue->getBounds()),
           "velocity brush and numeric value have distinct hit areas");
     saveVisual(*editor, output, "reference-toolbar-layout.png");
+    editor->setSize(1280, 720);
+    // The subdivision dropdown starts at x=878. Its first pixel must reach
+    // the editor's menu handler, rather than selecting the slicer brush.
+    check(editor->getComponentAt(878, 31) == editor.get(),
+          "subdivision dropdown left edge reaches its menu handler");
+    auto* slicer = childWithId<juce::Component>(*editor, "brush.slicer");
+    check(slicer && editor->getComponentAt(877, 31) == slicer,
+          "slicer brush retains the adjacent hit area");
 }
 
 void testReferenceVelocityColours(const juce::File& output)

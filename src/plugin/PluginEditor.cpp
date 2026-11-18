@@ -1795,7 +1795,7 @@ void BeatScholarLinuxEditor::resized()
     bpm_.setBounds(designRect(getWidth(), getHeight(), 679.0f, 15.0f, 90.0f, 32.0f));
     bpm_.setVisible(true);
     drumBrush_.setBounds(designRect(getWidth(), getHeight(), 799.0f, 14.0f, 34.0f, 34.0f));
-    slicerBrush_.setBounds(designRect(getWidth(), getHeight(), 845.0f, 14.0f, 34.0f, 34.0f));
+    slicerBrush_.setBounds(designRect(getWidth(), getHeight(), 845.0f, 14.0f, 33.0f, 34.0f));
     velocityBrush_.setBounds(designRect(getWidth(), getHeight(), 927.0f, 14.0f, 24.0f, 34.0f));
     randomizerBrush_.setBounds(designRect(getWidth(), getHeight(), 995.0f, 14.0f, 34.0f, 34.0f));
     defaultVelocity_.setBounds(designRect(getWidth(), getHeight(), 955.0f, 16.0f, 32.0f, 28.0f));
