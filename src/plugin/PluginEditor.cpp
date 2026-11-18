@@ -335,16 +335,19 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
 
     configureButton(presetPrevious_, "", [this] { loadAdjacentPreset(-1); });
     presetPrevious_.setComponentID("icon.prev");
+    presetPrevious_.getProperties().set("flatButton", true);
     presetPrevious_.setTitle("Previous preset");
     presetPrevious_.setTooltip("Load the previous preset");
     configureButton(preset_, "Init", [this] { showPresetMenu(); });
     preset_.setComponentID("toolbar.preset");
     configureButton(presetNext_, "", [this] { loadAdjacentPreset(1); });
     presetNext_.setComponentID("icon.next");
+    presetNext_.getProperties().set("flatButton", true);
     presetNext_.setTitle("Next preset");
     presetNext_.setTooltip("Load the next preset");
     configureButton(presetSave_, "", [this] { savePresetAs(); });
     presetSave_.setComponentID("icon.save");
+    presetSave_.getProperties().set("flatButton", true);
     presetSave_.setTitle("Save preset");
     presetSave_.setTooltip("Save the current preset");
     configureButton(sequencer_, "SEQ", [this] {

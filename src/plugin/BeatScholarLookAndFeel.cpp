@@ -494,7 +494,8 @@ void BeatScholarLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Butto
         return;
     }
 
-    if (id.startsWith("toolbar.") || id.startsWith("brush."))
+    if (id.startsWith("toolbar.") || id.startsWith("brush.")
+        || bool(button.getProperties().getWithDefault("flatButton", false)))
     {
         if (button.getToggleState() || isMouseOver || isDown)
         {
