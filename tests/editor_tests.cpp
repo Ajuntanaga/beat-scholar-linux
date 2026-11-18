@@ -5081,7 +5081,9 @@ void testDocumentedNumericEntry(const juce::File& output)
     const auto swingEvent = visualEvent(*editor, swing->getBounds().getCentre().toFloat(),
                                        juce::ModifierKeys::leftButtonModifier);
     editor->mouseDoubleClick(swingEvent);
-    entry->setText("32%");
+    entry->clear();
+    entry->insertTextAtCaret("32%");
+    check(entry->getText() == "32%", "Swing typing preserves the percent suffix");
     entry->onReturnKey();
     check(!entry->isVisible() && std::abs(swing->getValue() - 32.0) < 1e-6,
           "Swing accepts the original percent-suffixed numeric input");
@@ -5094,6 +5096,7 @@ void testDocumentedNumericEntry(const juce::File& output)
 
     auto standalone = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_Standalone);
     BeatScholarLinuxEditor standaloneEditor(*standalone);
+    standaloneEditor.setVisible(true);
     auto* tempo = childWithId<juce::Slider>(standaloneEditor, "toolbar.bpm");
     auto* tempoEntry = childWithId<juce::TextEditor>(standaloneEditor, "control.value");
     check(tempo && tempoEntry, "standalone tempo entry exists");
@@ -5102,6 +5105,7 @@ void testDocumentedNumericEntry(const juce::File& output)
     {
         standaloneEditor.mouseDoubleClick(visualEvent(standaloneEditor,
             tempo->getBounds().getCentre().toFloat(), juce::ModifierKeys::leftButtonModifier));
+        check(tempoEntry->isVisible(), "standalone tempo double click opens entry");
         tempoEntry->setText(juce::String(bpm));
         tempoEntry->onReturnKey();
         check(!tempoEntry->isVisible() && std::abs(tempo->getValue() - bpm) < 0.01

@@ -896,7 +896,7 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     numericEntry_.setComponentID("control.value");
     numericEntry_.setTitle("Numeric value");
     numericEntry_.setTooltip("Enter a value, then press Return. Escape cancels.");
-    numericEntry_.setInputRestrictions(32, "0123456789.+-eE");
+    numericEntry_.setInputRestrictions(32, "0123456789.+-eE%");
     numericEntry_.setColour(juce::TextEditor::backgroundColourId, juce::Colour(lookAndFeel_.palette().panelRaised));
     numericEntry_.setColour(juce::TextEditor::textColourId, juce::Colour(lookAndFeel_.palette().text));
     numericEntry_.onReturnKey = [this] {
