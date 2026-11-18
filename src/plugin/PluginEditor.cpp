@@ -2706,7 +2706,7 @@ void BeatScholarLinuxEditor::mouseDrag(const juce::MouseEvent& event)
             const int start = found == denominators.end()
                                   ? 1 : static_cast<int>(std::distance(denominators.begin(), found));
             const int denominator = denominators[static_cast<std::size_t>(
-                std::clamp(start + delta, 0, static_cast<int>(denominators.size() - 1)))];
+                std::clamp(start - delta, 0, static_cast<int>(denominators.size() - 1)))];
             if (pattern.bars[draggingBarIndex_].denominator != denominator)
             {
                 processor_.projectEditor().setBarMeter(state.activePattern, draggingBarIndex_,

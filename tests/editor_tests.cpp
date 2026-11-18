@@ -1743,11 +1743,11 @@ void testBarMeterDragIsOneUndoStep(const juce::File& output)
               && processor->projectState().patterns[0].bars[0].numerator == 4,
           "arrangement beat-count gesture is one undo step");
     editor->mouseDown(visualEvent(*editor, { 1220.0f, 146.0f }));
-    for (const float y : { 134.0f, 122.0f })
+    for (const float y : { 158.0f, 170.0f })
         editor->mouseDrag(visualEvent(*editor, { 1220.0f, y }));
-    editor->mouseUp(visualEvent(*editor, { 1220.0f, 122.0f }));
+    editor->mouseUp(visualEvent(*editor, { 1220.0f, 170.0f }));
     check(processor->projectState().patterns[0].bars[0].denominator == 16,
-          "right number on arrangement bar pad changes note value by vertical drag");
+          "downward arrangement note-value drag increases denominator like the original");
     check(processor->projectState().patterns[0].bars[0].numerator == 4,
           "arrangement note-value drag retains beat count");
     const auto snapshot = editor->createComponentSnapshot(editor->getLocalBounds());
