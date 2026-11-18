@@ -1226,7 +1226,8 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
     const float scale = designScale(getWidth(), getHeight());
     const auto drawActionGlyph = [this, &graphics, scale](juce::Rectangle<float> area, int glyph) {
         const float stroke = std::max(1.0f, scale);
-        graphics.setColour(juce::Colour(lookAndFeel_.palette().textMuted));
+        graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
+        graphics.drawRect(area.reduced(stroke * 0.5f), stroke);
         area = area.reduced(4.0f * scale);
         if (glyph == 0)
         {
@@ -1234,7 +1235,7 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                                                          area.getHeight() * 0.48f)
                                   .translated(-2.0f * scale, 2.0f * scale);
             graphics.drawRect(back, stroke);
-            graphics.drawRect(back.translated(3.0f * scale, -3.0f * scale), stroke);
+            graphics.fillRect(back.translated(3.0f * scale, -3.0f * scale));
         }
         else if (glyph == 1)
         {
@@ -1495,7 +1496,7 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                                     .removeFromRight(18.0f * scale), 2);
                 drawActionGlyph(bounds.toFloat().withSize(18.0f * scale, 18.0f * scale)
                                     .withY(bounds.getBottom() - 18.0f * scale), 0);
-                // Action glyphs use the muted tint; note labels retain the text tint.
+                // Restore the note label font after drawing the action controls.
                 graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
                 graphics.setFont(bsl::ui::font(9.0f * scale, true));
                 graphics.drawText(midiNoteLabel(state.patterns[index].triggerNote, state.ui),
