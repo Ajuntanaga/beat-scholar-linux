@@ -1828,7 +1828,7 @@ void BeatScholarLinuxEditor::resized()
 
     auditionDuringPlayback_.setBounds(designRect(getWidth(), getHeight(), 12.0f, 526.0f, 34.0f, 26.0f));
     midiMap_.setBounds(designRect(getWidth(), getHeight(), 48.0f, 526.0f, 42.0f, 26.0f));
-    kitMenu_.setBounds(designRect(getWidth(), getHeight(), 92.0f, 524.0f, 194.0f, 30.0f));
+    kitMenu_.setBounds(designRect(getWidth(), getHeight(), 106.0f, 524.0f, 180.0f, 30.0f));
     kitLocked_.setBounds(designRect(getWidth(), getHeight(), 290.0f, 526.0f, 28.0f, 26.0f));
     kitSave_.setBounds(designRect(getWidth(), getHeight(), 322.0f, 526.0f, 28.0f, 26.0f));
     kitPrevious_.setBounds(designRect(getWidth(), getHeight(), 354.0f, 526.0f, 18.0f, 26.0f));
