@@ -5922,7 +5922,7 @@ void testReferenceMapStripColours()
     check(pad && map, "reference MAP strip controls exist");
     if (!pad || !map) return;
     const auto sample = [&] {
-        return pad->createComponentSnapshot(pad->getLocalBounds()).getPixelAt(pad->getWidth() / 2, 2);
+        return pad->createComponentSnapshot(pad->getLocalBounds()).getPixelAt(pad->getWidth() / 2, 6);
     };
     const auto near = [](juce::Colour actual, juce::Colour expected) {
         return std::abs(int(actual.getRed()) - int(expected.getRed())) <= 2
@@ -5930,6 +5930,9 @@ void testReferenceMapStripColours()
             && std::abs(int(actual.getBlue()) - int(expected.getBlue())) <= 2;
     };
     check(near(sample(), juce::Colour(128, 50, 50)), "normal strip retains original pad colour");
+    const auto normalPad = pad->createComponentSnapshot(pad->getLocalBounds());
+    check(!near(normalPad.getPixelAt(pad->getWidth() / 2, 2), juce::Colour(128, 50, 50)),
+          "reference pad strip leaves a gap below the top frame");
     map->onClick();
     check(near(sample(), juce::Colour(45, 29, 51)), "MAP strip matches original dimmed colour");
     map->onClick();

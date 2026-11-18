@@ -467,7 +467,10 @@ void BeatScholarLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Butto
         g.setColour(juce::Colour(palette_.panel));
         g.fillRect(area);
         const bool mapping = bool(button.getProperties().getWithDefault("midiMapVisible", false));
-        const auto strip = area.removeFromTop(std::max(3.0f, area.getHeight() * 0.08f));
+        // The reference strip sits below the pad frame (4px at the 960px editor size).
+        const float stripHeight = std::max(3.0f, std::round(area.getHeight() * 0.09f));
+        const auto strip = area.withTrimmedTop(stripHeight).withHeight(stripHeight)
+                               .reduced(1.0f, 0.0f);
         // Original MAP mode leaves the pad strip at 20% over its overlay background.
         if (mapping)
         {
