@@ -1756,7 +1756,7 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
                 graphics.setColour(populated ? juce::Colour(lookAndFeel_.palette().populatedBeatOutline)
                                              : juce::Colour(lookAndFeel_.palette().emptyBeatOutline));
                 graphics.strokePath(wedge, juce::PathStrokeType(
-                    std::max(1.0f, scale * (populated ? 1.15f : 8.0f / 3.0f))));
+                    std::max(1.0f, scale * (populated ? 2.0f : 8.0f / 3.0f))));
             }
             if (previewing)
                 graphics.endTransparencyLayer();
