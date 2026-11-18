@@ -2531,7 +2531,7 @@ void testKeyboardFocus(const juce::File& output)
         });
     };
     const auto openSubdivisionMenu = [&] {
-        clickShortcutEditor({789, 30}, [] {
+        clickShortcutEditor({894, 30}, [] {
             return juce::Component::getCurrentlyModalComponent() != nullptr;
         });
     };
