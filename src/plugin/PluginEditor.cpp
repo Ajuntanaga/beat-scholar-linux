@@ -1955,9 +1955,14 @@ void BeatScholarLinuxEditor::resized()
             effectLabels_[index].setBounds(designRect(getWidth(), getHeight(),
                 effectPositions[index].x, effectPositions[index].y, 54.0f, 14.0f));
             if (index < 6)
+            {
+                // Match the original client capture: insert rings are smaller
+                // than send rings, and the lower row aligns with Damp/Fine.
+                constexpr std::array<float, 3> dialOffsets { 4.0f, 5.0f, 7.0f };
                 effectControls_[index].setBounds(designRect(getWidth(), getHeight(),
-                    effectPositions[index].x + 6.0f,
-                    index < 3 ? 589.0f : 662.0f, 42.0f, 42.0f));
+                    effectPositions[index].x + dialOffsets[index % 3],
+                    index < 3 ? 591.0f : 668.0f, 40.0f, 40.0f));
+            }
             else if (index < 9)
                 // Including the centered outline, 50px bounds paint the tutorial's
                 // 40px send rings. The lower ring aligns with the insert row.
