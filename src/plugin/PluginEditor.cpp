@@ -1991,7 +1991,7 @@ void BeatScholarLinuxEditor::resized()
         masterControls_[index].setBounds(index == 4
             ? designRect(getWidth(), getHeight(), 1216.0f, 600.0f, 50.0f, 116.0f)
             : designRect(getWidth(), getHeight(), masterPositions[index].x - 21.0f,
-                         masterPositions[index].y + 19.0f, 42.0f, 42.0f));
+                         masterPositions[index].y + 19.0f, 40.0f, 40.0f));
     }
 
     barsPatterns_.setBounds(designRect(getWidth(), getHeight(), 1185.0f, 64.0f, 60.0f, 22.0f));
