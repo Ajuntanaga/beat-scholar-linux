@@ -359,6 +359,7 @@ void BeatScholarLookAndFeel::setDarkMode(bool enabled)
         palette_.panel = 0xff0f0f0f;
         palette_.patternCanvas = 0xff0f0f0f;
         palette_.panelRaised = 0xff232323;
+        palette_.laneControlIdle = 0xff141414;
         palette_.arrangementCard = 0xff232323;
         palette_.horizontalScrollThumb = 0xff3c3c3c;
         palette_.header = 0xff232323;

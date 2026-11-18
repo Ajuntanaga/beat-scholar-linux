@@ -1405,7 +1405,7 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                                                      ? lookAndFeel_.palette().accent
                                                  : control == 1 && laneState.muted
                                                      ? lookAndFeel_.palette().magenta
-                                                     : lookAndFeel_.palette().panelRaised));
+                                                     : lookAndFeel_.palette().laneControlIdle));
                 graphics.fillRect(slot);
                 graphics.setColour(juce::Colour(lookAndFeel_.palette().borderBright));
                 graphics.drawRect(slot, std::max(0.8f, scale));
