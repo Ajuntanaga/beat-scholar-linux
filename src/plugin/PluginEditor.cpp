@@ -2850,9 +2850,10 @@ void BeatScholarLinuxEditor::showSwingReferenceMenu()
 {
     const auto current = processor_.projectState().global.swingReference;
     juce::PopupMenu menu;
-    menu.addItem(1, "1/8 swing reference", true, current == bsl::SwingReference::eighth);
-    menu.addItem(2, "1/4 swing reference", true, current == bsl::SwingReference::quarter);
-    menu.addItem(3, "1/2 swing reference", true, current == bsl::SwingReference::half);
+    menu.addSectionHeader("Swing Ref:");
+    menu.addItem(1, "1/8", true, current == bsl::SwingReference::eighth);
+    menu.addItem(2, "1/4", true, current == bsl::SwingReference::quarter);
+    menu.addItem(3, "1/2", true, current == bsl::SwingReference::half);
     menu.setLookAndFeel(&lookAndFeel_);
     menu.showMenuAsync({}, [safe = juce::Component::SafePointer<BeatScholarLinuxEditor>(this), revision = processor_.restoredStateRevision()](int result) {
         if (safe == nullptr || result == 0
