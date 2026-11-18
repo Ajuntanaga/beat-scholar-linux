@@ -1446,7 +1446,9 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
 
     // Right-side arrangement rail and vertical pads.
     const auto arrangement = arrangementBounds();
-    graphics.setColour(juce::Colour(lookAndFeel_.palette().panel));
+    graphics.setColour(juce::Colour(state.ui.patternMode || state.ui.darkMode
+                                       ? lookAndFeel_.palette().panel
+                                       : lookAndFeel_.palette().patternCanvas));
     graphics.fillRect(arrangement);
     graphics.setColour(juce::Colour(lookAndFeel_.palette().border));
     graphics.drawRect(arrangement.toFloat(), std::max(1.0f, scale));
@@ -1516,10 +1518,15 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                 if (bounds.getBottom() <= padArea.getY()) continue;
                 graphics.setColour(juce::Colour(lookAndFeel_.palette().arrangementCard));
                 graphics.fillRect(bounds);
-                graphics.setColour(index == state.ui.selectedBar
-                                       ? juce::Colour(lookAndFeel_.palette().borderBright)
-                                       : juce::Colour(lookAndFeel_.palette().border));
-                graphics.drawRect(bounds, index == state.ui.selectedBar ? 2 : 1);
+                // Original normal-theme Bars cards have filled edges, without
+                // a contrasting selection frame. Keep the alternate theme intact.
+                if (state.ui.darkMode)
+                {
+                    graphics.setColour(index == state.ui.selectedBar
+                                           ? juce::Colour(lookAndFeel_.palette().borderBright)
+                                           : juce::Colour(lookAndFeel_.palette().border));
+                    graphics.drawRect(bounds, index == state.ui.selectedBar ? 2 : 1);
+                }
                 graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
                 graphics.setFont(bsl::ui::font(11.0f * scale, true));
                 graphics.drawText(juce::String(current.bars[index].numerator) + "  |  "

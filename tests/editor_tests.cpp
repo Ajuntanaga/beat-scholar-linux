@@ -4734,6 +4734,14 @@ void testTutorialPatternAddTile(const juce::File& output)
         check(std::abs(add->getX() - 1159 * scale) <= 1
                   && std::abs(add->getHeight() - 64 * scale) <= 1,
               "short Bars plus matches reference alignment and height");
+        if (width == 960)
+        {
+            const auto image = editor.createComponentSnapshot(editor.getLocalBounds());
+            check(image.getPixelAt(910, 93) == juce::Colour(35, 35, 87),
+                  "Bars card edge matches original fill without a selection frame");
+            check(image.getPixelAt(910, 90) == juce::Colour(20, 20, 47),
+                  "Bars rail background matches original capture");
+        }
         saveVisual(editor, output, ("bars-add-short-" + std::to_string(width) + ".png").c_str());
         check(editor.getComponentAt(add->getBounds().getCentre()) == add,
               "Bars plus tile owns its moved click target");
