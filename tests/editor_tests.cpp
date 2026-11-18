@@ -4730,8 +4730,12 @@ void testTutorialPatternAddTile(const juce::File& output)
               "bar view names its visible contents as in the Windows reference");
         const auto barsAddY = add->getY();
         const auto barCount = state.patterns[state.activePattern].bars.size();
-        check(std::abs(barsAddY - (112 + 72 * barCount) * scale) <= 2,
-              "short Bars list places plus immediately after its cards");
+        check(std::abs(barsAddY - (123 + 83 * barCount) * scale) <= 2,
+              "short Bars list places plus immediately after reference-spaced cards");
+        check(std::abs(add->getX() - 1159 * scale) <= 1
+                  && std::abs(add->getHeight() - 64 * scale) <= 1,
+              "short Bars plus matches reference alignment and height");
+        saveVisual(editor, output, ("bars-add-short-" + std::to_string(width) + ".png").c_str());
         check(editor.getComponentAt(add->getBounds().getCentre()) == add,
               "Bars plus tile owns its moved click target");
         click(toggle);

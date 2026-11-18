@@ -1070,8 +1070,16 @@ bool BeatScholarLinuxEditor::shortPatternList() const
     return state.ui.patternMode && state.patterns.size() <= 3;
 }
 
+bool BeatScholarLinuxEditor::shortBarList() const
+{
+    const auto& state = processor_.projectState();
+    return !state.ui.patternMode && state.patterns[state.activePattern].bars.size() <= 3;
+}
+
 juce::Rectangle<int> BeatScholarLinuxEditor::arrangementPadBounds() const
 {
+    if (shortBarList())
+        return designRect(getWidth(), getHeight(), 1159.0f, 123.0f, 99.0f, 327.0f);
     return shortPatternList()
         ? designRect(getWidth(), getHeight(), 1161.0f, 127.0f, 99.0f, 323.0f)
         : designRect(getWidth(), getHeight(), 1161.0f, 112.0f, 99.0f, 338.0f);
@@ -1079,6 +1087,8 @@ juce::Rectangle<int> BeatScholarLinuxEditor::arrangementPadBounds() const
 
 int BeatScholarLinuxEditor::arrangementItemHeight() const
 {
+    if (shortBarList())
+        return juce::roundToInt(83.0f * designScale(getWidth(), getHeight()));
     if (shortPatternList())
         return juce::roundToInt(82.0f * designScale(getWidth(), getHeight()));
     const auto& state = processor_.projectState();
@@ -1095,7 +1105,8 @@ juce::Rectangle<int> BeatScholarLinuxEditor::arrangementItemBounds(std::size_t i
     const auto area = arrangementPadBounds();
     const int height = arrangementItemHeight();
     const int gap = shortPatternList()
-        ? juce::roundToInt(8.0f * designScale(getWidth(), getHeight())) : 4;
+        ? juce::roundToInt(8.0f * designScale(getWidth(), getHeight()))
+        : shortBarList() ? juce::roundToInt(7.0f * designScale(getWidth(), getHeight())) : 4;
     return { area.getX(), area.getY() + juce::roundToInt((static_cast<float>(index)
                 - arrangementScroll_) * height), area.getWidth(), height - gap };
 }
@@ -1965,8 +1976,9 @@ void BeatScholarLinuxEditor::resized()
     }
 
     barsPatterns_.setBounds(designRect(getWidth(), getHeight(), 1185.0f, 64.0f, 60.0f, 22.0f));
-    auto addBounds = designRect(getWidth(), getHeight(), 1161.0f, 456.0f, 99.0f,
-                                shortPatternList() ? 62.0f : 46.0f);
+    auto addBounds = designRect(getWidth(), getHeight(),
+                                shortBarList() ? 1159.0f : 1161.0f, 456.0f, 99.0f,
+                                shortPatternList() ? 62.0f : shortBarList() ? 64.0f : 46.0f);
     const auto& arrangementState = processor_.projectState();
     if (maximumArrangementScroll() == 0.0f)
     {

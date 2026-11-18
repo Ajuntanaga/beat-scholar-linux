@@ -165,6 +165,7 @@ private:
     [[nodiscard]] juce::Rectangle<int> barHeaderBounds() const;
     [[nodiscard]] juce::Rectangle<int> arrangementBounds() const;
     [[nodiscard]] bool shortPatternList() const;
+    [[nodiscard]] bool shortBarList() const;
     [[nodiscard]] juce::Rectangle<int> arrangementPadBounds() const;
     [[nodiscard]] int arrangementItemHeight() const;
     [[nodiscard]] juce::Rectangle<int> arrangementItemBounds(std::size_t) const;
