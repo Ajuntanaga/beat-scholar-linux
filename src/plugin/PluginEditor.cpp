@@ -477,6 +477,7 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
         processor_.projectState().ui.randomizerVisible = false;
         configureModuleControls();
     });
+    soundTab_.setComponentID("sound.title");
     configureButton(randomizerTab_, "RANDOM", [this] {
         if (module_ == Module::randomizer)
             showRandomizerPresetMenu();
@@ -1832,7 +1833,7 @@ void BeatScholarLinuxEditor::resized()
     kitSave_.setBounds(designRect(getWidth(), getHeight(), 322.0f, 526.0f, 28.0f, 26.0f));
     kitPrevious_.setBounds(designRect(getWidth(), getHeight(), 354.0f, 526.0f, 18.0f, 26.0f));
     kitNext_.setBounds(designRect(getWidth(), getHeight(), 374.0f, 526.0f, 18.0f, 26.0f));
-    soundTab_.setBounds(designRect(getWidth(), getHeight(), 546.0f, 524.0f, 360.0f, 30.0f));
+    soundTab_.setBounds(designRect(getWidth(), getHeight(), 570.0f, 526.0f, 360.0f, 30.0f));
     randomizerTab_.setBounds(designRect(getWidth(), getHeight(), 546.0f, 524.0f, 360.0f, 30.0f));
     randomizerPrevious_.setBounds(designRect(getWidth(), getHeight(), 1004.0f, 528.0f, 24.0f, 26.0f));
     randomizerNext_.setBounds(designRect(getWidth(), getHeight(), 1032.0f, 528.0f, 24.0f, 26.0f));

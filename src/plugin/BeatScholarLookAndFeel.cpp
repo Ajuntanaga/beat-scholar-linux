@@ -383,8 +383,10 @@ void BeatScholarLookAndFeel::setDarkMode(bool enabled)
     setColour(juce::ComboBox::arrowColourId, juce::Colour(palette_.textMuted));
 }
 
-juce::Font BeatScholarLookAndFeel::getTextButtonFont(juce::TextButton&, int buttonHeight)
+juce::Font BeatScholarLookAndFeel::getTextButtonFont(juce::TextButton& button, int buttonHeight)
 {
+    if (button.getComponentID() == "sound.title")
+        return font(static_cast<float>(buttonHeight) * (2.0f / 3.0f), true);
     return font(std::clamp(static_cast<float>(buttonHeight) * 0.42f, 9.0f, 17.0f), true);
 }
 
