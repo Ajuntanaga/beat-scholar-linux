@@ -1425,7 +1425,8 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
         const auto scrollRail = scrollRailBounds(axis);
         graphics.setColour(juce::Colour(lookAndFeel_.palette().border));
         graphics.fillRect(scrollRail);
-        graphics.setColour(juce::Colour(lookAndFeel_.palette().textMuted));
+        graphics.setColour(juce::Colour(axis == 1 ? lookAndFeel_.palette().horizontalScrollThumb
+                                                : lookAndFeel_.palette().textMuted));
         graphics.fillRect(scrollThumbBounds(axis));
         const auto zoomRail = zoomRailBounds(axis);
         graphics.setColour(juce::Colour(lookAndFeel_.palette().borderBright));
