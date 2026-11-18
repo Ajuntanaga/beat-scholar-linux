@@ -431,12 +431,12 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     redo_.setTitle("Redo");
     configureButton(about_, "MODALICS", [this] { showAbout(); });
     about_.setComponentID("toolbar.about");
-    configureButton(barsPatterns_, "Patterns", [this] {
+    configureButton(barsPatterns_, "Bars", [this] {
         auto& mode = processor_.projectState().ui.patternMode;
         mode = !mode;
         arrangementScroll_ = 0.0f;
         repaint();
-        barsPatterns_.setButtonText(mode ? "Bars" : "Patterns");
+        barsPatterns_.setButtonText(mode ? "Patterns" : "Bars");
         resized();
     });
     barsPatterns_.setComponentID("arrangement.toggle");
@@ -3364,7 +3364,7 @@ void BeatScholarLinuxEditor::configureModuleControls()
             midiMapLabels_[index].setText(midiNoteLabel(padState.midiNote, state.ui), juce::dontSendNotification);
     }
     midiMap_.setToggleState(midiMapVisible_, juce::dontSendNotification);
-    barsPatterns_.setButtonText(state.ui.patternMode ? "Bars" : "Patterns");
+    barsPatterns_.setButtonText(state.ui.patternMode ? "Patterns" : "Bars");
     defaultVelocity_.setValue(state.global.defaultVelocity * 127.0,
                               juce::dontSendNotification);
     auditionDuringPlayback_.setToggleState(state.global.auditionDuringPlayback,

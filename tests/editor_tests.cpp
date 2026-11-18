@@ -4690,11 +4690,11 @@ void testTutorialPatternAddTile(const juce::File& output)
     {
         editor.setSize(width, width * 720 / 1280);
         const float scale = float(width) / 1280.0f;
-        check(!state.ui.patternMode && toggle->getButtonText() == "Patterns",
-              "bar view names its destination");
+        check(!state.ui.patternMode && toggle->getButtonText() == "Bars",
+              "bar view names its visible contents as in the Windows reference");
         const auto bottom = add->getY();
         click(toggle);
-        check(state.ui.patternMode && toggle->getButtonText() == "Bars"
+        check(state.ui.patternMode && toggle->getButtonText() == "Patterns"
                   && add->getY() < 250 * scale && add->getY() < bottom,
               "view switch immediately places plus below the single pattern");
         check(std::abs(add->getY() - 209 * scale) <= 1
