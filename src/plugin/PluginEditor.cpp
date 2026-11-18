@@ -1663,9 +1663,8 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
             const float cellWidth = spans[beatIndex].length * quarterWidth;
             const float x = area.getX() + (spans[beatIndex].start - horizontalScroll_) * quarterWidth;
             const juce::Rectangle<float> cell(x, y, cellWidth, cellHeight);
-            graphics.setColour(juce::Colour((beatIndex + laneIndex) % 2 == 0
-                                                ? lookAndFeel_.palette().panel
-                                                : lookAndFeel_.palette().background));
+            // The reference uses a uniform canvas, with outlines separating beats.
+            graphics.setColour(juce::Colour(lookAndFeel_.palette().panel));
             graphics.fillRect(cell);
             graphics.setColour(juce::Colour(lookAndFeel_.palette().grid));
             graphics.drawRect(cell, std::max(1.0f, scale));
