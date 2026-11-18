@@ -1054,7 +1054,7 @@ juce::Rectangle<float> BeatScholarLinuxEditor::laneControlBounds(std::size_t lan
 
 juce::Rectangle<int> BeatScholarLinuxEditor::kitBounds() const
 {
-    return designRect(getWidth(), getHeight(), 8.0f, 558.0f, 388.0f, 154.0f);
+    return designRect(getWidth(), getHeight(), 8.0f, 566.0f, 388.0f, 136.0f);
 }
 
 juce::Rectangle<int> BeatScholarLinuxEditor::barHeaderBounds() const
@@ -1803,13 +1803,14 @@ void BeatScholarLinuxEditor::resized()
     const auto kit = kitBounds();
     const int gap = std::max(2, static_cast<int>(3.0f * designScale(getWidth(), getHeight())));
     const int padWidth = (kit.getWidth() - gap * 7) / 8;
-    const int padHeight = (kit.getHeight() - gap) / 2;
+    const int rowGap = juce::roundToInt(20.0f * designScale(getWidth(), getHeight()));
+    const int padHeight = (kit.getHeight() - rowGap) / 2;
     for (std::size_t index = 0; index < pads_.size(); ++index)
     {
         const int column = static_cast<int>(index % 8);
         const int row = 1 - static_cast<int>(index / 8);
         pads_[index].setBounds(kit.getX() + column * (padWidth + gap),
-                               kit.getY() + row * (padHeight + gap), padWidth, padHeight);
+                               kit.getY() + row * (padHeight + rowGap), padWidth, padHeight);
         midiMapLabels_[index].setBounds(pads_[index].getBounds().reduced(2, 6));
     }
 
