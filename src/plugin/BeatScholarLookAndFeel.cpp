@@ -366,6 +366,7 @@ void BeatScholarLookAndFeel::setDarkMode(bool enabled)
         palette_.grid = 0xff191919;
         palette_.border = 0xff3c3c3c;
         palette_.emptyBeatOutline = 0xff3c3c3c;
+        palette_.populatedBeatOutline = palette_.text;
         palette_.borderBright = 0xff747474;
     }
     setColour(juce::PopupMenu::backgroundColourId, juce::Colour(palette_.panelRaised));
