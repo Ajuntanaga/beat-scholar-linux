@@ -3582,13 +3582,6 @@ void BeatScholarLinuxEditor::pastePattern(std::size_t patternIndex)
 
 void BeatScholarLinuxEditor::showBarMenu(std::size_t barIndex)
 {
-    static constexpr std::array<std::pair<int, int>, 8> meters {{
-        { 2, 4 }, { 3, 4 }, { 4, 4 }, { 5, 4 }, { 6, 8 }, { 7, 8 }, { 9, 8 }, { 12, 8 }
-    }};
-    juce::PopupMenu meterMenu;
-    for (std::size_t index = 0; index < meters.size(); ++index)
-        meterMenu.addItem(100 + static_cast<int>(index), juce::String(meters[index].first)
-                                                        + "/" + juce::String(meters[index].second));
     const auto& state = processor_.projectState();
     juce::PopupMenu menu;
     addShortcutMenuItem(menu, 4, "Copy", "C");
@@ -3598,8 +3591,6 @@ void BeatScholarLinuxEditor::showBarMenu(std::size_t barIndex)
     menu.addItem(3, "Delete", state.patterns[state.activePattern].bars.size() > 1);
     menu.addItem(6, "Insert Here");
     menu.addItem(7, "Append");
-    menu.addSeparator();
-    menu.addSubMenu("Meter", meterMenu);
     menu.setLookAndFeel(&lookAndFeel_);
     menu.showMenuAsync({}, [safe = juce::Component::SafePointer<BeatScholarLinuxEditor>(this), revision = processor_.restoredStateRevision(), openedPattern = processor_.projectState().activePattern,
                             barIndex](int result) {
@@ -3610,13 +3601,7 @@ void BeatScholarLinuxEditor::showBarMenu(std::size_t barIndex)
         auto& state = safe->processor_.projectState();
         if (barIndex >= state.patterns[state.activePattern].bars.size())
             return;
-        if (result >= 100 && result < 108)
-        {
-            const auto meter = meters[static_cast<std::size_t>(result - 100)];
-            safe->processor_.projectEditor().setBarMeter(state.activePattern, barIndex,
-                                                         meter.first, meter.second);
-        }
-        else if (result == 1)
+        if (result == 1)
         {
             auto& pattern = state.patterns[state.activePattern];
             std::size_t start = 0;
