@@ -266,6 +266,7 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     status_.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(status_);
 
+    swing_.setComponentID("toolbar.swing");
     swing_.setSliderStyle(juce::Slider::LinearHorizontal);
     swing_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
     swing_.setTooltip("Swing. Right-click to select the 1/8, 1/4, or 1/2 reference.");
@@ -899,7 +900,10 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     numericEntry_.setColour(juce::TextEditor::backgroundColourId, juce::Colour(lookAndFeel_.palette().panelRaised));
     numericEntry_.setColour(juce::TextEditor::textColourId, juce::Colour(lookAndFeel_.palette().text));
     numericEntry_.onReturnKey = [this] {
-        const auto text = numericEntry_.getText().trim();
+        auto text = numericEntry_.getText().trim();
+        // Original Swing entry accepts its displayed percent suffix.
+        if (numericEntryControl_ == &swing_ && text.endsWithChar('%'))
+            text = text.dropLastCharacters(1).trimEnd();
         const auto utf8 = text.toRawUTF8();
         char* end = nullptr;
         const double value = std::strtod(utf8, &end);

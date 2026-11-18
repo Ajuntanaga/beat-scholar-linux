@@ -5074,6 +5074,23 @@ void testDocumentedNumericEntry(const juce::File& output)
     entry->onEscapeKey();
     check(std::abs(control->getValue() - 0.625) < 1e-6,
           "Escape cancels numeric entry without changing the control");
+
+    auto* swing = childWithId<juce::Slider>(*editor, "toolbar.swing");
+    check(swing != nullptr, "Swing numeric-entry control exists");
+    if (swing == nullptr) return;
+    const auto swingEvent = visualEvent(*editor, swing->getBounds().getCentre().toFloat(),
+                                       juce::ModifierKeys::leftButtonModifier);
+    editor->mouseDoubleClick(swingEvent);
+    entry->setText("32%");
+    entry->onReturnKey();
+    check(!entry->isVisible() && std::abs(swing->getValue() - 32.0) < 1e-6,
+          "Swing accepts the original percent-suffixed numeric input");
+    editor->mouseDoubleClick(swingEvent);
+    entry->setText("32%junk");
+    entry->onReturnKey();
+    check(entry->isVisible() && std::abs(swing->getValue() - 32.0) < 1e-6,
+          "Swing rejects trailing junk without changing its value");
+    entry->onEscapeKey();
 }
 
 void testBarMeterNumericEntry(const juce::File& output)
