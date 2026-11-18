@@ -1025,7 +1025,13 @@ void testReferenceLaneSpacing(const juce::File& output)
                   "reference-position pie clicks select the corresponding lane");
         }
         if (width == 960)
+        {
+            // Original matched client: a thin beat boundary is RGB(25,25,55).
+            // Four beats span the 800px canvas starting at client x50.
+            check(similar(snapshot.getPixelAt(250, 94), juce::Colour(0xff191937)),
+                  "thin beat boundaries match the reference canvas contrast");
             saveVisual(*editor, output, "reference-lane-spacing.png");
+        }
     }
 }
 
