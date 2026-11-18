@@ -56,6 +56,27 @@ private:
         std::vector<std::vector<bsl::BeatState>> lanes;
     };
 
+    class MidiMapLabel final : public juce::Label
+    {
+    public:
+        std::function<void()> beginDrag;
+        std::function<void(int)> changeDrag;
+        void mouseDown(const juce::MouseEvent& event) override
+        {
+            juce::Label::mouseDown(event);
+            if (event.mods.isLeftButtonDown() && !isBeingEdited() && beginDrag)
+                beginDrag();
+        }
+        void mouseDrag(const juce::MouseEvent& event) override
+        {
+            if (event.mods.isLeftButtonDown() && !isBeingEdited() && changeDrag)
+                changeDrag(-event.getDistanceFromDragStartY());
+        }
+        int initialNote = 0;
+        bool checkpointed = false;
+        std::uint64_t revision = 0;
+    };
+
     class EffectSlider final : public juce::Slider
     {
     public:
@@ -169,6 +190,8 @@ private:
     BeatScholarLinuxProcessor& processor_;
     bsl::ui::BeatScholarLookAndFeel lookAndFeel_;
     std::array<juce::TextButton, bsl::padCount> pads_;
+    std::array<MidiMapLabel, bsl::padCount> midiMapLabels_;
+    bool midiMapVisible_ = false;
     std::array<juce::Colour, bsl::padCount> padColours_;
     juce::Slider swing_;
     juce::Slider bpm_;

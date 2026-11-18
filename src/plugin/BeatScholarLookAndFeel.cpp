@@ -607,7 +607,8 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
         auto icon = area.reduced(std::max(5.0f, area.getWidth() * 0.13f),
                                  std::max(6.0f, area.getHeight() * 0.14f));
         const float stroke = std::max(1.0f, std::min(area.getWidth(), area.getHeight()) * 0.035f);
-        drawInstrumentGlyph(g, icon, pad, tint.withAlpha(0.90f), stroke);
+        const bool mapping = bool(button.getProperties().getWithDefault("midiMapVisible", false));
+        drawInstrumentGlyph(g, icon, pad, tint.withAlpha(mapping ? 0.15f : 0.90f), stroke);
         return;
     }
     if (id == "toolbar.play")

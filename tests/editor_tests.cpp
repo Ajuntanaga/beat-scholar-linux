@@ -50,6 +50,12 @@ struct BeatScholarLinuxProcessorTestAccess
 struct BeatScholarLinuxEditorTestAccess
 {
     static void tick(BeatScholarLinuxEditor& editor) { editor.timerCallback(); }
+    static void dragMapNote(BeatScholarLinuxEditor& editor, int distance)
+    {
+        editor.midiMapLabels_[0].beginDrag();
+        editor.midiMapLabels_[0].changeDrag(distance);
+    }
+
     static void tickWithActivityCount(BeatScholarLinuxEditor& editor, int count)
     {
         editor.updateDisplay(count);
@@ -6434,6 +6440,43 @@ void testOutgoingMidiReleasesOnTransportChanges()
     }
 }
 
+void testMidiMap(const juce::File& output)
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    editor->setSize(1280, 720);
+    auto* map = dynamic_cast<juce::TextButton*>(editor->findChildWithID("kit.map"));
+    auto* label = dynamic_cast<juce::Label*>(editor->findChildWithID("pad.map.0"));
+    check(map && label, "MAP has inline note controls");
+    if (!map || !label) return;
+    check(!label->isVisible(), "MAP starts in instrument view");
+    map->onClick();
+    check(label->isVisible() && map->getToggleState(), "MAP shows inline notes");
+    const int original = processor->projectState().kit.pads[0].midiNote;
+    BeatScholarLinuxEditorTestAccess::dragMapNote(*editor, 33);
+    check(processor->projectState().kit.pads[0].midiNote == original + 10,
+          "upward map drag changes actual MIDI assignment");
+    check(processor->projectEditor().undo()
+          && processor->projectState().kit.pads[0].midiNote == original,
+          "one undo restores MIDI drag");
+    BeatScholarLinuxEditorTestAccess::dragMapNote(*editor, -1000);
+    check(processor->projectState().kit.pads[0].midiNote == 0, "MAP clamps lower MIDI limit");
+    BeatScholarLinuxEditorTestAccess::dragMapNote(*editor, 1000);
+    check(processor->projectState().kit.pads[0].midiNote == 127, "MAP clamps upper MIDI limit");
+    label->onEditorShow();
+    label->setText("61", juce::sendNotificationSync);
+    check(processor->projectState().kit.pads[0].midiNote == 61, "MAP accepts direct note entry");
+    label->setText("invalid", juce::sendNotificationSync);
+    check(processor->projectState().kit.pads[0].midiNote == 61, "invalid mapping preserves assignment");
+    const auto encoded = bsl::statecodec::encode(processor->projectState());
+    auto restored = std::make_unique<BeatScholarLinuxProcessor>();
+    restored->setStateInformation(encoded.getData(), static_cast<int>(encoded.getSize()));
+    check(restored->projectState().kit.pads[0].midiNote == 61, "MAP assignment survives host recall");
+    saveVisual(*editor, output, "midi-map-inline.png");
+    map->onClick();
+    check(!label->isVisible(), "MAP returns to instrument view");
+}
+
 void testPublishedDisplayOptions(const juce::File& output)
 {
     auto base = makeBypassTestProject(0);
@@ -7018,6 +7061,7 @@ int main(int argc, char** argv)
         std::cout << "Functional repair failures: " << failures << '\n';
         return failures == 0 ? 0 : 1;
     }
+    testMidiMap(output);
     testPublishedDisplayOptions(output);
     testHostMidiMapReportsCurrentPadNames();
     testDenseOfflineBlockKeepsEveryHit();

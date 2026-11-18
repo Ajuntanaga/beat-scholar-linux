@@ -512,9 +512,12 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     kitSave_.setTitle("Save kit");
     kitSave_.setTooltip("Save the current kit");
     configureButton(midiMap_, "MAP", [this] {
-        showPadMenu(processor_.projectState().ui.selectedPad);
+        midiMapVisible_ = !midiMapVisible_;
+        for (auto& label : midiMapLabels_)
+            label.hideEditor(true);
+        updateControlsFromState();
     });
-    midiMap_.setTooltip("Edit the selected pad's MIDI output note");
+    midiMap_.setTooltip("Show MIDI mapping; drag notes vertically or double-click to edit");
     midiMap_.setComponentID("kit.map");
     configureButton(kitPrevious_, "", [this] { loadAdjacentKit(-1); });
     kitPrevious_.setComponentID("icon.prev");
@@ -555,6 +558,58 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
         pad.setColour(juce::TextButton::buttonOnColourId, padColours_[index]);
         pad.setComponentID("pad." + juce::String(static_cast<int>(index)));
         pad.setClickingTogglesState(false);
+        auto& label = midiMapLabels_[index];
+        addChildComponent(label);
+        label.setComponentID("pad.map." + juce::String(static_cast<int>(index)));
+        label.setJustificationType(juce::Justification::centred);
+        label.setEditable(false, true, false);
+        label.setColour(juce::Label::textColourId, juce::Colour(0xffd8d6ed));
+        label.beginDrag = [this, index] {
+            auto& noteLabel = midiMapLabels_[index];
+            noteLabel.initialNote = processor_.projectState().kit.pads[index].midiNote;
+            noteLabel.revision = processor_.restoredStateRevision();
+            noteLabel.checkpointed = false;
+        };
+        label.changeDrag = [this, index](int distance) {
+            auto& noteLabel = midiMapLabels_[index];
+            if (noteLabel.revision != processor_.restoredStateRevision())
+                return;
+            const int note = juce::jlimit(0, 127, noteLabel.initialNote
+                + juce::roundToInt(static_cast<float>(distance) / 3.3f));
+            auto& padState = processor_.projectState().kit.pads[index];
+            if (note == padState.midiNote)
+                return;
+            if (!noteLabel.checkpointed)
+                processor_.projectEditor().checkpoint();
+            noteLabel.checkpointed = true;
+            padState.midiNote = static_cast<std::uint8_t>(note);
+            processor_.markProjectDirty();
+            updateControlsFromState();
+        };
+        label.onEditorShow = [this, index] {
+            midiMapLabels_[index].revision = processor_.restoredStateRevision();
+        };
+        label.onTextChange = [this, index] {
+            auto& noteLabel = midiMapLabels_[index];
+            const auto text = noteLabel.getText().trim();
+            const auto& ui = processor_.projectState().ui;
+            int note = -1;
+            for (int candidate = 0; candidate < 128; ++candidate)
+                if (text.equalsIgnoreCase(juce::String(candidate))
+                    || text.equalsIgnoreCase("MIDI " + juce::String(candidate))
+                    || text.equalsIgnoreCase(juce::MidiMessage::getMidiNoteName(candidate, true, true, ui.middleCOctave))
+                    || text.equalsIgnoreCase(juce::MidiMessage::getMidiNoteName(candidate, false, true, ui.middleCOctave)))
+                    note = candidate;
+            auto& padState = processor_.projectState().kit.pads[index];
+            if (note >= 0 && note != padState.midiNote
+                && noteLabel.revision == processor_.restoredStateRevision())
+            {
+                processor_.projectEditor().checkpoint();
+                padState.midiNote = static_cast<std::uint8_t>(note);
+                processor_.markProjectDirty();
+            }
+            updateControlsFromState();
+        };
     }
 
     configureButton(loadSample_, "", [this] {
@@ -1740,6 +1795,7 @@ void BeatScholarLinuxEditor::resized()
         const int row = 1 - static_cast<int>(index / 8);
         pads_[index].setBounds(kit.getX() + column * (padWidth + gap),
                                kit.getY() + row * (padHeight + gap), padWidth, padHeight);
+        midiMapLabels_[index].setBounds(pads_[index].getBounds().reduced(2, 6));
     }
 
     auditionDuringPlayback_.setBounds(designRect(getWidth(), getHeight(), 12.0f, 526.0f, 34.0f, 26.0f));
@@ -3297,7 +3353,12 @@ void BeatScholarLinuxEditor::configureModuleControls()
             tooltip << " — " << factorySampleDisplayName(
                 juce::File(juce::String(padState.factorySampleIds[0])));
         pads_[index].setTooltip(tooltip);
+        pads_[index].getProperties().set("midiMapVisible", midiMapVisible_);
+        midiMapLabels_[index].setVisible(midiMapVisible_);
+        if (!midiMapLabels_[index].isBeingEdited())
+            midiMapLabels_[index].setText(midiNoteLabel(padState.midiNote, state.ui), juce::dontSendNotification);
     }
+    midiMap_.setToggleState(midiMapVisible_, juce::dontSendNotification);
     barsPatterns_.setButtonText(state.ui.patternMode ? "Bars" : "Patterns");
     defaultVelocity_.setValue(state.global.defaultVelocity * 127.0,
                               juce::dontSendNotification);
