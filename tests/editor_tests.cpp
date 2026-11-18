@@ -103,10 +103,10 @@ void testSectors(const juce::File& output)
     state.patterns.front().lanes = { bsl::LaneState::make(4) };
     state.ui.selectedPad = 15;
     auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
-    const auto centre = juce::Point<float>(62.0f + 1070.0f / 8.0f, 306.0f);
-    constexpr float radius = (1070.0f / 4.0f) * 0.36f;
-    const std::array colours { 0xffbf316bU, 0xff4058bdU, 0xff2eb574U, 0xffd51e42U,
-        0xffb9983aU, 0xffa95c35U, 0xff55349dU, 0xff4e8d2dU, 0xff8a2b2dU };
+    const auto centre = juce::Point<float>(62.0f + 1067.0f / 8.0f, 306.0f);
+    constexpr float radius = (1067.0f / 4.0f) * 0.36f;
+    const std::array colours { 0xffbe3063U, 0xff495dcbU, 0xff30be71U, 0xffe11430U,
+        0xffc3a03fU, 0xffb96643U, 0xff5a3aa6U, 0xff7ca83dU, 0xff803232U };
     for (std::size_t count = 1; count <= bsl::maximumSubdivision; ++count)
     {
         auto& beat = state.patterns.front().lanes.front().beats.front();
@@ -121,8 +121,7 @@ void testSectors(const juce::File& output)
         for (std::size_t i = 0; i < count; ++i)
         {
             const float angle = juce::MathConstants<float>::twoPi * (float(i) + 0.5f) / float(count);
-            const auto expected = juce::Colour(colours[i % colours.size()])
-                                      .withBrightness(0.72f);
+            const auto expected = juce::Colour(colours[i % colours.size()]);
             for (const float distance : { 0.35f, 0.80f })
             {
                 // At 45 slices use the outer point, safely clear of antialiased edges.
@@ -165,8 +164,8 @@ void testPartialSliceOutlines(const juce::File& output)
     {
         const float scale = float(width) / 1280.0f;
         editor->setSize(width, width * 9 / 16);
-        const auto centre = juce::Point<float>(62.0f + 1070.0f / 8.0f, 306.0f) * scale;
-        const float radius = (1070.0f / 4.0f) * 0.36f * scale;
+        const auto centre = juce::Point<float>(62.0f + 1067.0f / 8.0f, 306.0f) * scale;
+        const float radius = (1067.0f / 4.0f) * 0.36f * scale;
         const auto pointAt = [&](float angle, float distance)
         {
             return centre + juce::Point<float>(-std::sin(angle), std::cos(angle))
@@ -1017,7 +1016,7 @@ void testReferenceLaneSpacing(const juce::File& output)
         for (int row = 0; row < 4; ++row)
         {
             const juce::Point<float> point {
-                (62.0f + 1070.0f / 8.0f) * scale,
+                (62.0f + 1067.0f / 8.0f) * scale,
                 (116.0f + (static_cast<float>(row) + 0.5f) * 95.0f) * scale };
             const auto click = visualEvent(*editor, point);
             editor->mouseDown(click);
@@ -1043,18 +1042,18 @@ void testMixedMeterGeometry(const juce::File& output)
     state.ui.selectedPad = 15;
     auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
     const std::array lengths { 2.0f, 2.0f, 1.0f, 1.0f, 0.5f, 0.5f, 0.25f, 0.25f };
-    const std::array colours { 0xffbf316bU, 0xff4058bdU, 0xff2eb574U, 0xffd51e42U,
-                              0xffb9983aU, 0xffa95c35U, 0xff55349dU, 0xff4e8d2dU };
+    const std::array colours { 0xffbe3063U, 0xff495dcbU, 0xff30be71U, 0xffe11430U,
+                              0xffc3a03fU, 0xffb96643U, 0xff5a3aa6U, 0xff7ca83dU };
     const auto snapshot = editor->createComponentSnapshot(editor->getLocalBounds());
     saveVisual(*editor, output, "mixed-meters.png");
     float start = 0.0f;
     for (std::size_t beat = 0; beat < lengths.size(); ++beat)
     {
-        const juce::Point<float> centre { 62.0f + (start + lengths[beat] * 0.5f) * 1070.0f / 7.5f, 306.0f };
-        const auto expected = juce::Colour(colours[beat]).withBrightness(0.72f);
+        const juce::Point<float> centre { 62.0f + (start + lengths[beat] * 0.5f) * 1067.0f / 7.5f, 306.0f };
+        const auto expected = juce::Colour(colours[beat]);
         check(similar(snapshot.getPixelAt(juce::roundToInt(centre.x), juce::roundToInt(centre.y)), expected),
               "mixed-meter beat is drawn at its time-proportional centre");
-        const float radius = std::min(1.0f, lengths[beat]) * 1070.0f / 7.5f * 0.36f;
+        const float radius = std::min(1.0f, lengths[beat]) * 1067.0f / 7.5f * 0.36f;
         check(!similar(snapshot.getPixelAt(juce::roundToInt(centre.x + radius * 1.2f),
                                            juce::roundToInt(centre.y)), expected),
               "long beats retain quarter-note circle size as shown in the public visual");
