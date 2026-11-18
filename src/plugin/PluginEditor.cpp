@@ -1018,13 +1018,13 @@ void BeatScholarLinuxEditor::configureSlider(juce::Slider& slider, double minimu
 
 juce::Rectangle<int> BeatScholarLinuxEditor::patternBounds() const
 {
-    return designRect(getWidth(), getHeight(), 62.0f, 104.0f, 1070.0f, 404.0f);
+    return designRect(getWidth(), getHeight(), 62.0f, 116.0f, 1070.0f, 380.0f);
 }
 
 juce::Rectangle<float> BeatScholarLinuxEditor::laneCellBounds(std::size_t lane) const
 {
     const auto pattern = patternBounds();
-    const auto rail = designRect(getWidth(), getHeight(), 8.0f, 60.0f, 50.0f, 448.0f);
+    const auto rail = designRect(getWidth(), getHeight(), 8.0f, 66.0f, 50.0f, 430.0f);
     const auto& state = processor_.projectState();
     const float height = static_cast<float>(pattern.getHeight())
                          / static_cast<float>(state.patterns[state.activePattern].lanes.size())
@@ -1056,7 +1056,7 @@ juce::Rectangle<int> BeatScholarLinuxEditor::kitBounds() const
 
 juce::Rectangle<int> BeatScholarLinuxEditor::barHeaderBounds() const
 {
-    return designRect(getWidth(), getHeight(), 62.0f, 60.0f, 1070.0f, 42.0f);
+    return designRect(getWidth(), getHeight(), 62.0f, 66.0f, 1070.0f, 48.0f);
 }
 
 juce::Rectangle<int> BeatScholarLinuxEditor::arrangementBounds() const
@@ -1348,12 +1348,12 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
         || (!laneModifiers.isAltDown()
             && (brush_ == Brush::slicer || brush_ == Brush::randomizer
                 || juce::KeyPress::isKeyCurrentlyDown('/')));
-    const auto laneRail = designRect(getWidth(), getHeight(), 8.0f, 60.0f, 50.0f, 448.0f);
+    const auto laneRail = designRect(getWidth(), getHeight(), 8.0f, 66.0f, 50.0f, 430.0f);
     graphics.setColour(juce::Colour(lookAndFeel_.palette().panel));
     graphics.fillRect(laneRail);
     graphics.setColour(juce::Colour(lookAndFeel_.palette().border));
     graphics.drawRect(laneRail.toFloat(), std::max(1.0f, scale));
-    const auto addLane = designRect(getWidth(), getHeight(), 8.0f, 60.0f, 50.0f, 42.0f);
+    const auto addLane = designRect(getWidth(), getHeight(), 8.0f, 66.0f, 50.0f, 48.0f);
     graphics.setFont(bsl::ui::font(22.0f * scale, true));
     graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
     graphics.drawText("+", addLane, juce::Justification::centred);
@@ -1694,14 +1694,14 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
         const auto& lane = pattern.lanes[laneIndex];
         const float y = area.getY()
                         + (static_cast<float>(laneIndex) - verticalScroll_ + 0.5f) * cellHeight;
-        if (y + cellHeight * 0.36f < area.getY() || y - cellHeight * 0.36f > area.getBottom())
+        if (y + cellHeight * 0.38f < area.getY() || y - cellHeight * 0.38f > area.getBottom())
             continue;
         for (std::size_t beatIndex = 0; beatIndex < beatCount; ++beatIndex)
         {
             const bool previewing = preview && preview->lane == laneIndex && preview->beat == beatIndex;
             const auto& beat = previewing ? *beatClipboard_ : lane.beats[beatIndex];
-            const float radius = std::max(3.0f, std::min(std::min(1.0f, spans[beatIndex].length) * quarterWidth,
-                                                       cellHeight) * 0.36f);
+            const float radius = std::max(3.0f, std::min(std::min(1.0f, spans[beatIndex].length) * quarterWidth * 0.36f,
+                                                       cellHeight * 0.38f));
             const float x = area.getX()
                             + (spans[beatIndex].start + spans[beatIndex].length * 0.5f - horizontalScroll_) * quarterWidth;
             if (x + radius < area.getX() || x - radius > area.getRight())
@@ -2018,7 +2018,7 @@ std::optional<BeatScholarLinuxEditor::BeatHit> BeatScholarLinuxEditor::beatAt(ju
     if (insidePieOnly)
     {
         const float radius = std::max(3.0f,
-            std::min(std::min(1.0f, found->length) * quarterWidth, cellHeight) * 0.36f);
+            std::min(std::min(1.0f, found->length) * quarterWidth * 0.36f, cellHeight * 0.38f));
         if (point.toFloat().getDistanceFrom({ centreX, centreY }) > radius)
             return std::nullopt;
     }
@@ -2318,7 +2318,7 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
         showSubdivisionMenu();
         return;
     }
-    if (designRect(getWidth(), getHeight(), 8.0f, 60.0f, 50.0f, 42.0f).contains(position))
+    if (designRect(getWidth(), getHeight(), 8.0f, 66.0f, 50.0f, 48.0f).contains(position))
     {
         if (event.mods.isPopupMenu())
             return;

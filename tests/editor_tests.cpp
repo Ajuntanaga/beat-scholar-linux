@@ -994,6 +994,42 @@ private:
 };
 
 
+void testReferenceLaneSpacing(const juce::File& output)
+{
+    // Original 1.6.2, 960x540 client: row centres are approximately
+    // 122.6, 193.9, 265.1 and 336.4; separators have a 71.25px pitch.
+    for (const int width : { 960, 1280, 1920 })
+    {
+        auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+        auto& state = processor->projectState();
+        auto& pattern = state.patterns.front();
+        pattern.lanes.assign(4, bsl::LaneState::make(4));
+        state.ui.selectedPad = 15;
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        editor->setSize(width, width * 9 / 16);
+        const float scale = static_cast<float>(width) / 1280.0f;
+        const auto snapshot = editor->createComponentSnapshot(editor->getLocalBounds());
+        for (int row = 1; row < 4; ++row)
+            check(similar(snapshot.getPixelAt(juce::roundToInt(80.0f * scale),
+                                             juce::roundToInt((116.0f + row * 95.0f) * scale)),
+                          juce::Colour(0xff272761)),
+                  "lane separators match reference client spacing at every editor size");
+        for (int row = 0; row < 4; ++row)
+        {
+            const juce::Point<float> point {
+                (62.0f + 1070.0f / 8.0f) * scale,
+                (116.0f + (static_cast<float>(row) + 0.5f) * 95.0f) * scale };
+            const auto click = visualEvent(*editor, point);
+            editor->mouseDown(click);
+            editor->mouseUp(click);
+            check(pattern.lanes[static_cast<std::size_t>(row)].beats.front().slices.front().padIndex == 15,
+                  "reference-position pie clicks select the corresponding lane");
+        }
+        if (width == 960)
+            saveVisual(*editor, output, "reference-lane-spacing.png");
+    }
+}
+
 void testMixedMeterGeometry(const juce::File& output)
 {
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
@@ -7212,6 +7248,7 @@ int main(int argc, char** argv)
     testKitAuditionToggleAcrossTransports();
     testEmptyPadRestoreIsSilent();
     testHostNoteOffKeepsMidiChannelsIndependent();
+    testReferenceLaneSpacing(output);
     testMixedMeterGeometry(output);
     testBarHeaderActions(output);
     testCustomSampleAndMasterVisualStates(output);
