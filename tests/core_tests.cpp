@@ -472,6 +472,26 @@ void testRandomizerIsDeterministicAndRespectsFillEmpty()
         }
 }
 
+void testRandomizerDefaultsEmptyPadSelectionToKick()
+{
+    bsl::RandomizerSettings settings;
+    settings.selectedPads.clear();
+    settings.slicingEnabled = false;
+    settings.noteSelectionEnabled = true;
+    settings.triggeringEnabled = true;
+    settings.velocityEnabled = false;
+    settings.triggerChance = 1.0f;
+    auto beat = bsl::BeatState::withSubdivision(3, 7, 0.91f);
+    for (auto& slice : beat.slices)
+        slice.enabled = false;
+
+    bsl::Randomizer::apply(beat, settings, 123u);
+
+    check(std::all_of(beat.slices.begin(), beat.slices.end(), [](const auto& slice) {
+              return slice.enabled && slice.padIndex == 0;
+          }), "empty randomizer pad selection defaults generated hits to Kick");
+}
+
 void testFillEmptySpacingFollowsPreservedHits()
 {
     bsl::RandomizerSettings settings;
@@ -954,6 +974,7 @@ int main()
     testUndoRedoRestoresCanonicalProjectState();
     testBeatTransformsPreserveNotesAndVelocities();
     testRandomizerIsDeterministicAndRespectsFillEmpty();
+    testRandomizerDefaultsEmptyPadSelectionToKick();
     testFillEmptySpacingFollowsPreservedHits();
     testLaneRandomizerSpacingCrossesBeatBoundaries();
     testRandomizerUsesDefaultVelocityWhenVelocityModuleIsOff();

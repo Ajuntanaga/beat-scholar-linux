@@ -1417,6 +1417,35 @@ void testRandomizerPadSelectionIsUndoable()
           "undo restores the prior randomizer pad selection");
 }
 
+void testRandomizerAllSelectsOnlyCurrentSlicePage()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    editor->setSize(1280, 720);
+    editor->setVisible(true);
+    auto* dice = childWithId<juce::TextButton>(*editor, "brush.dice");
+    check(dice != nullptr, "slice-page test locates randomizer brush");
+    if (dice == nullptr) return;
+    dice->onClick();
+    const auto click = [&](juce::Point<int> point, const juce::String& caption) {
+        auto* button = dynamic_cast<juce::TextButton*>(editor->getComponentAt(point));
+        const bool found = button != nullptr && button->getButtonText() == caption;
+        check(found, "slice-page control is visible and reachable");
+        if (found) button->onClick();
+        return found;
+    };
+    if (!click({ 602, 602 }, "Clear") || !click({ 692, 663 }, "")
+        || !click({ 653, 602 }, "All")) return;
+    const auto& selected = processor->projectState().randomizer.selectedSubdivisions;
+    check(selected == std::vector<std::size_t> { 10, 11, 12, 13, 14, 15, 16, 17, 18 },
+          "All selects only the nine subdivisions on the visible second page");
+    if (!click({ 692, 663 }, "") || !click({ 653, 602 }, "All")
+        || !click({ 653, 602 }, "All")) return;
+    check(selected == std::vector<std::size_t> { 10, 11, 12, 13, 14, 15, 16, 17, 18,
+                                               19, 20, 21, 22, 23, 24, 25, 26, 27 },
+          "page All retains earlier selections without adding duplicates");
+}
+
 void configureExportPattern(bsl::ProjectState& state, int numerator, int denominator,
                             const juce::String& name, bool empty, bool finalTriplet)
 {
@@ -7191,6 +7220,7 @@ int main(int argc, char** argv)
     testRandomizerTriggerModuleToggleIsIndependent(output);
     testRandomizerFillEmptyIsClickToggle(output);
     testRandomizerPadSelectionIsUndoable();
+    testRandomizerAllSelectsOnlyCurrentSlicePage();
     testPatternMidiExportPreservesNameAndMeterDuration(output);
     testMidiExportGatesFollowPlayback(output);
     testShiftExportPreservesPlayingAndQueuedPatterns();
