@@ -359,6 +359,7 @@ void BeatScholarLookAndFeel::setDarkMode(bool enabled)
         palette_.panel = 0xff0f0f0f;
         palette_.patternCanvas = 0xff0f0f0f;
         palette_.panelRaised = 0xff232323;
+        palette_.arrangementCard = 0xff232323;
         palette_.header = 0xff232323;
         palette_.grid = 0xff191919;
         palette_.border = 0xff3c3c3c;
@@ -480,6 +481,20 @@ void BeatScholarLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Butto
         {
             g.setColour(juce::Colour(palette_.text).withAlpha(isDown ? 0.16f : 0.08f));
             g.fillRect(button.getLocalBounds().toFloat().reduced(1.0f));
+        }
+        return;
+    }
+
+    if (id == "arrangement.add")
+    {
+        g.setColour(juce::Colour(palette_.patternCanvas));
+        g.fillRect(area);
+        g.setColour(juce::Colour(palette_.emptyBeatOutline));
+        g.drawRect(area.reduced(0.5f), 1.0f);
+        if (isMouseOver || isDown)
+        {
+            g.setColour(juce::Colour(palette_.text).withAlpha(isDown ? 0.16f : 0.07f));
+            g.fillRect(area.reduced(1.0f));
         }
         return;
     }

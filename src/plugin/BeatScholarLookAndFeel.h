@@ -30,6 +30,7 @@ struct Palette
     juce::uint32 grid = colour::grid;
     juce::uint32 border = colour::border;
     juce::uint32 patternCanvas = 0xff14142fU;
+    juce::uint32 arrangementCard = 0xff232357U;
     juce::uint32 emptyBeatOutline = 0xff3c3c64U;
     juce::uint32 borderBright = colour::borderBright;
     juce::uint32 text = colour::text;

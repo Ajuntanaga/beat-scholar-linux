@@ -1511,9 +1511,7 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                 const auto bounds = arrangementItemBounds(index);
                 if (bounds.getY() >= padArea.getBottom()) break;
                 if (bounds.getBottom() <= padArea.getY()) continue;
-                graphics.setColour(index == state.ui.selectedBar
-                                       ? juce::Colour(lookAndFeel_.palette().panelRaised)
-                                       : juce::Colour(lookAndFeel_.palette().panel));
+                graphics.setColour(juce::Colour(lookAndFeel_.palette().arrangementCard));
                 graphics.fillRect(bounds);
                 graphics.setColour(index == state.ui.selectedBar
                                        ? juce::Colour(lookAndFeel_.palette().borderBright)
