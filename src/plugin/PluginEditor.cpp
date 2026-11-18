@@ -1025,7 +1025,7 @@ void BeatScholarLinuxEditor::configureSlider(juce::Slider& slider, double minimu
 
 juce::Rectangle<int> BeatScholarLinuxEditor::patternBounds() const
 {
-    return designRect(getWidth(), getHeight(), 62.0f, 116.0f, 1067.0f, 380.0f);
+    return designRect(getWidth(), getHeight(), 67.0f, 116.0f, 1067.0f, 380.0f);
 }
 
 juce::Rectangle<float> BeatScholarLinuxEditor::laneCellBounds(std::size_t lane) const
@@ -1063,7 +1063,7 @@ juce::Rectangle<int> BeatScholarLinuxEditor::kitBounds() const
 
 juce::Rectangle<int> BeatScholarLinuxEditor::barHeaderBounds() const
 {
-    return designRect(getWidth(), getHeight(), 62.0f, 66.0f, 1067.0f, 48.0f);
+    return designRect(getWidth(), getHeight(), 67.0f, 66.0f, 1067.0f, 48.0f);
 }
 
 juce::Rectangle<int> BeatScholarLinuxEditor::arrangementBounds() const

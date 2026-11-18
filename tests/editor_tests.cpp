@@ -103,7 +103,7 @@ void testSectors(const juce::File& output)
     state.patterns.front().lanes = { bsl::LaneState::make(4) };
     state.ui.selectedPad = 15;
     auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
-    const auto centre = juce::Point<float>(62.0f + 1067.0f / 8.0f, 306.0f);
+    const auto centre = juce::Point<float>(67.0f + 1067.0f / 8.0f, 306.0f);
     constexpr float radius = (1067.0f / 4.0f) * 0.36f;
     const std::array colours { 0xffbe3063U, 0xff495dcbU, 0xff30be71U, 0xffe11430U,
         0xffc3a03fU, 0xffb96643U, 0xff5a3aa6U, 0xff7ca83dU, 0xff803232U };
@@ -164,7 +164,7 @@ void testPartialSliceOutlines(const juce::File& output)
     {
         const float scale = float(width) / 1280.0f;
         editor->setSize(width, width * 9 / 16);
-        const auto centre = juce::Point<float>(62.0f + 1067.0f / 8.0f, 306.0f) * scale;
+        const auto centre = juce::Point<float>(67.0f + 1067.0f / 8.0f, 306.0f) * scale;
         const float radius = (1067.0f / 4.0f) * 0.36f * scale;
         const auto pointAt = [&](float angle, float distance)
         {
@@ -1016,7 +1016,7 @@ void testReferenceLaneSpacing(const juce::File& output)
         for (int row = 0; row < 4; ++row)
         {
             const juce::Point<float> point {
-                (62.0f + 1067.0f / 8.0f) * scale,
+                (67.0f + 1067.0f / 8.0f) * scale,
                 (116.0f + (static_cast<float>(row) + 0.5f) * 95.0f) * scale };
             const auto click = visualEvent(*editor, point);
             editor->mouseDown(click);
@@ -1049,7 +1049,7 @@ void testMixedMeterGeometry(const juce::File& output)
     float start = 0.0f;
     for (std::size_t beat = 0; beat < lengths.size(); ++beat)
     {
-        const juce::Point<float> centre { 62.0f + (start + lengths[beat] * 0.5f) * 1067.0f / 7.5f, 306.0f };
+        const juce::Point<float> centre { 67.0f + (start + lengths[beat] * 0.5f) * 1067.0f / 7.5f, 306.0f };
         const auto expected = juce::Colour(colours[beat]);
         check(similar(snapshot.getPixelAt(juce::roundToInt(centre.x), juce::roundToInt(centre.y)), expected),
               "mixed-meter beat is drawn at its time-proportional centre");
