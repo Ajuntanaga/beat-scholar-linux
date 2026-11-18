@@ -357,6 +357,7 @@ void BeatScholarLookAndFeel::setDarkMode(bool enabled)
     {
         palette_.background = 0xff050505;
         palette_.panel = 0xff0f0f0f;
+        palette_.patternCanvas = 0xff0f0f0f;
         palette_.panelRaised = 0xff232323;
         palette_.header = 0xff232323;
         palette_.grid = 0xff191919;

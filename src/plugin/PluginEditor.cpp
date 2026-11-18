@@ -1675,7 +1675,7 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
             const float x = area.getX() + (spans[beatIndex].start - horizontalScroll_) * quarterWidth;
             const juce::Rectangle<float> cell(x, y, cellWidth, cellHeight);
             // The reference uses a uniform canvas, with outlines separating beats.
-            graphics.setColour(juce::Colour(lookAndFeel_.palette().panel));
+            graphics.setColour(juce::Colour(lookAndFeel_.palette().patternCanvas));
             graphics.fillRect(cell);
             graphics.setColour(juce::Colour(lookAndFeel_.palette().grid));
             graphics.drawRect(cell, std::max(1.0f, scale));
@@ -1742,7 +1742,7 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
                     && flash != sliceFlashes_.end() ? flash->second : 0.0f;
                 // Original 1.6.2 playback capture: sounding sectors peak at
                 // neutral D0D0D5; silent sectors peak at 727282.
-                const auto silentColour = juce::Colour(lookAndFeel_.palette().panel)
+                const auto silentColour = juce::Colour(lookAndFeel_.palette().patternCanvas)
                     .interpolatedWith(juce::Colour(0xff727282), activity);
                 const auto soundingColour = padColours_[pad].withBrightness(0.72f)
                     .withAlpha(std::clamp(0.55f + slice.velocity * 0.45f, 0.0f, 1.0f))
