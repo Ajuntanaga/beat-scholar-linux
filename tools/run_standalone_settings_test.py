@@ -237,7 +237,7 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             # Enter a non-default tempo through the actual editor, then verify
             # the app's own close/reopen persistence (no synthetic state file).
             xdo('windowfocus', '--sync', main)
-            tempo_x = round(625 * width / 1280)
+            tempo_x = round(724 * width / 1280)
             tempo_y = round(height - 720 * width / 1280 + 30 * width / 1280)
             xdo('mousemove', '--window', main, tempo_x, tempo_y,
                 'click', '--repeat', '2', '--delay', '100', '1')
