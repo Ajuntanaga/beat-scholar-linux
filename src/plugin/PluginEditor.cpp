@@ -1968,12 +1968,14 @@ void BeatScholarLinuxEditor::resized()
     auto addBounds = designRect(getWidth(), getHeight(), 1161.0f, 456.0f, 99.0f,
                                 shortPatternList() ? 62.0f : 46.0f);
     const auto& arrangementState = processor_.projectState();
-    if (arrangementState.ui.patternMode && maximumArrangementScroll() == 0.0f)
+    if (maximumArrangementScroll() == 0.0f)
     {
-        // The tutorial's short Pattern lists place + immediately after the cards.
+        // Both reference views place + immediately after a short list of cards.
         // Keep it below the viewport when the complete list and tile do not fit.
+        const auto count = arrangementState.ui.patternMode ? arrangementState.patterns.size()
+            : arrangementState.patterns[arrangementState.activePattern].bars.size();
         const auto nextY = arrangementPadBounds().getY()
-            + static_cast<int>(arrangementState.patterns.size()) * arrangementItemHeight();
+            + static_cast<int>(count) * arrangementItemHeight();
         if (nextY + addBounds.getHeight() <= arrangementPadBounds().getBottom())
             addBounds.setY(nextY);
     }

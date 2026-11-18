@@ -4728,10 +4728,15 @@ void testTutorialPatternAddTile(const juce::File& output)
         const float scale = float(width) / 1280.0f;
         check(!state.ui.patternMode && toggle->getButtonText() == "Bars",
               "bar view names its visible contents as in the Windows reference");
-        const auto bottom = add->getY();
+        const auto barsAddY = add->getY();
+        const auto barCount = state.patterns[state.activePattern].bars.size();
+        check(std::abs(barsAddY - (112 + 72 * barCount) * scale) <= 2,
+              "short Bars list places plus immediately after its cards");
+        check(editor.getComponentAt(add->getBounds().getCentre()) == add,
+              "Bars plus tile owns its moved click target");
         click(toggle);
         check(state.ui.patternMode && toggle->getButtonText() == "Patterns"
-                  && add->getY() < 250 * scale && add->getY() < bottom,
+                  && add->getY() < 250 * scale,
               "view switch immediately places plus below the single pattern");
         check(std::abs(add->getY() - 209 * scale) <= 1
                   && std::abs(add->getHeight() - 62 * scale) <= 1,
@@ -4740,8 +4745,8 @@ void testTutorialPatternAddTile(const juce::File& output)
               "moved plus tile owns its visible click target");
         saveVisual(editor, output, ("pattern-add-one-" + std::to_string(width) + ".png").c_str());
         click(toggle);
-        check(!state.ui.patternMode && add->getY() == bottom,
-              "returning to Bars restores the bottom add control");
+        check(!state.ui.patternMode && add->getY() == barsAddY,
+              "returning to Bars restores plus immediately after its cards");
     }
     editor.setSize(1280, 720);
     click(toggle);
