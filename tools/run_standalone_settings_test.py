@@ -133,6 +133,25 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             width, height = int(geometry['WIDTH']), int(geometry['HEIGHT'])
             xdo('windowfocus', '--sync', main)
             capture_rendered_window(main, 'standalone-before.png')
+            # Manual p5: F2 restores window size after a user resize.
+            wrapper_height = round(height - 720 * width / 1280)
+            xdo('windowsize', '--sync', main, '960', str(540 + wrapper_height))
+            time.sleep(0.2)
+            resized = dict(line.split('=', 1) for line in xdo('getwindowgeometry', '--shell', main).stdout.splitlines() if '=' in line)
+            if int(resized['WIDTH']) != 960:
+                raise RuntimeError(f'Window resize precondition failed: {resized}')
+            xdo('mousemove', '--window', main, '778', str(wrapper_height + 22), 'click', '1')
+            xdo('key', 'F2')
+            deadline = time.monotonic() + 5
+            while True:
+                geometry = dict(line.split('=', 1) for line in xdo('getwindowgeometry', '--shell', main).stdout.splitlines() if '=' in line)
+                width, height = int(geometry['WIDTH']), int(geometry['HEIGHT'])
+                if (width, height) == (1280, 720 + wrapper_height):
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(f'F2 did not restore default client size: {geometry}')
+                time.sleep(0.05)
+            capture_rendered_window(main, 'standalone-f2-restored.png')
             scale = width / 1280
             left, top = int(geometry['X']), int(geometry['Y'])
             editor_top = top + height - 720 * scale
@@ -377,7 +396,7 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
                 'saved_output_device': audio_saved['audioOutputDeviceName'],
                 'sample_rate_changed_via_ui': True, 'audio_setup_recalled': True,
                 'saved_sample_rate': float(audio_saved['audioDeviceRate']),
-                'standalone_space_play_pause': True,
+                'standalone_space_play_pause': True, 'f2_restores_window_size': True,
                 'actual_c_copy_v_preview_drag_fill': True,
                 'single_undo_restores_drag_targets': True, 'redo_restores_drag_targets': True,
                 'filled_beats_persisted': True,
