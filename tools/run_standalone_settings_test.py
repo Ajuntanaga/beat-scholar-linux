@@ -55,7 +55,7 @@ def wait_window(name, owner):
         time.sleep(0.1)
     raise RuntimeError(f'Window did not appear: {name}')
 
-def capture_rendered_window(window, filename):
+def capture_rendered_window(window, filename, expected_size=None):
     # A mapped X11 window can precede its first paint in a busy cloud runner.
     # Require varied pixels inside the content area before saving evidence.
     deadline = time.monotonic() + 15
@@ -67,7 +67,14 @@ def capture_rendered_window(window, filename):
         frame = ImageGrab.grab(xdisplay=os.environ['DISPLAY'])
         content = frame.crop((left + width // 10, top + height // 5,
                               left + width * 9 // 10, top + height * 9 // 10)).convert('RGB')
-        if content.getcolors(maxcolors=32) is None:
+        # A resize can update X11 geometry before JUCE paints the new area.
+        # In this isolated black Xvfb desktop, both restored outer regions
+        # must contain the application, not the previous smaller frame.
+        size_painted = expected_size is None or (
+            (width, height) == expected_size
+            and max(frame.getpixel((left + width - 12, top + height // 2))[:3]) > 20
+            and max(frame.getpixel((left + width // 2, top + height - 12))[:3]) > 20)
+        if content.getcolors(maxcolors=32) is None and size_painted:
             frame.save(output / filename)
             return
         if time.monotonic() >= deadline:
@@ -153,7 +160,7 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
                 if time.monotonic() >= deadline:
                     raise RuntimeError(f'F2 did not restore default client size: {geometry}')
                 time.sleep(0.05)
-            capture_rendered_window(main, 'standalone-f2-restored.png')
+            capture_rendered_window(main, 'standalone-f2-restored.png', default_window_size)
             scale = width / 1280
             left, top = int(geometry['X']), int(geometry['Y'])
             editor_top = top + height - 720 * scale
