@@ -1024,7 +1024,7 @@ void BeatScholarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, i
         g.setColour(juce::Colour(darkMode_ ? palette_.border : 0xff343463));
         g.fillRect(track);
         g.setColour(juce::Colour(darkMode_ ? palette_.text : 0xffd7dbf6));
-        g.fillEllipse(juce::Rectangle<float>(9.0f * scale, 9.0f * scale)
+        g.fillEllipse(juce::Rectangle<float>(8.0f * scale, 8.0f * scale)
                           .withCentre({ sliderPos, track.getCentreY() }));
         return;
     }
