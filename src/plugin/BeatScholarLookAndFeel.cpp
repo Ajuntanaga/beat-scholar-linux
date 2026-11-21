@@ -655,7 +655,7 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
     if (id == "toolbar.stop")
     {
         g.setColour(tint);
-        const float side = std::min(area.getWidth(), area.getHeight()) * 0.48f;
+        const float side = std::min(area.getWidth(), area.getHeight()) * 0.74f;
         g.fillRect(juce::Rectangle<float>(side, side).withCentre(area.getCentre()));
         return;
     }

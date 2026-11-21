@@ -1809,7 +1809,7 @@ void BeatScholarLinuxEditor::resized()
     sequencer_.setVisible(false);
     sampler_.setVisible(false);
     swing_.setBounds(designRect(getWidth(), getHeight(), 444.0f, 27.0f, 82.0f, 20.0f));
-    stop_.setBounds(designRect(getWidth(), getHeight(), 556.0f, 14.0f, 34.0f, 34.0f));
+    stop_.setBounds(designRect(getWidth(), getHeight(), 556.0f, 18.0f, 34.0f, 34.0f));
     play_.setBounds(designRect(getWidth(), getHeight(), 625.0f, 12.0f, 38.0f, 38.0f));
     pause_.setVisible(false);
     bpm_.setBounds(designRect(getWidth(), getHeight(), 679.0f, 15.0f, 90.0f, 32.0f));
