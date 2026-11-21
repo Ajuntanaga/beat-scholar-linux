@@ -1118,7 +1118,7 @@ void BeatScholarLookAndFeel::drawPopupMenuSectionHeader(juce::Graphics& g,
     }
     // The original Swing title shares the option-label gutter and is muted.
     g.setFont(getPopupMenuFont().boldened());
-    g.setColour(juce::Colour(palette_.textMuted));
+    g.setColour(juce::Colour(darkMode_ ? palette_.textMuted : 0xff85859bU));
     g.drawFittedText(sectionName, area.getX() + 21, area.getY(), area.getWidth() - 25,
                      static_cast<int>(area.getHeight() * 0.8f), juce::Justification::bottomLeft, 1);
 }
@@ -1140,7 +1140,7 @@ void BeatScholarLookAndFeel::drawPopupMenuItem(juce::Graphics& g, const juce::Re
 {
     if (separator)
     {
-        g.setColour(juce::Colour(palette_.border));
+        g.setColour(juce::Colour(darkMode_ ? palette_.border : 0xff68688aU));
         g.fillRect(area.reduced(7, 0).withHeight(1).withCentre(area.getCentre()));
         return;
     }
@@ -1156,7 +1156,7 @@ void BeatScholarLookAndFeel::drawPopupMenuItem(juce::Graphics& g, const juce::Re
     auto mark = content.removeFromLeft(markWidth);
     auto arrow = content.removeFromRight(submenu ? std::max(17, content.getHeight()) : 0);
     const auto tint = textColour != nullptr ? *textColour
-                     : active ? juce::Colour(palette_.text)
+                     : active ? juce::Colour(darkMode_ ? palette_.text : 0xffffffffU)
                               : juce::Colour(palette_.textMuted).withAlpha(0.6f);
     if (icon != nullptr)
         icon->drawWithin(g, mark.toFloat(), juce::RectanglePlacement::centred, 1.0f);
