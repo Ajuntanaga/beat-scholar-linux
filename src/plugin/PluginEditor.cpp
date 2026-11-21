@@ -1088,7 +1088,7 @@ bool BeatScholarLinuxEditor::shortBarList() const
 juce::Rectangle<int> BeatScholarLinuxEditor::arrangementPadBounds() const
 {
     if (shortBarList())
-        return designRect(getWidth(), getHeight(), 1159.0f, 123.0f, 99.0f, 327.0f);
+        return designRect(getWidth(), getHeight(), 1164.0f, 123.0f, 97.0f, 327.0f);
     return shortPatternList()
         ? designRect(getWidth(), getHeight(), 1164.0f, 123.0f, 97.0f, 327.0f)
         : designRect(getWidth(), getHeight(), 1161.0f, 112.0f, 99.0f, 338.0f);
@@ -2008,8 +2008,8 @@ void BeatScholarLinuxEditor::resized()
 
     barsPatterns_.setBounds(designRect(getWidth(), getHeight(), 1185.0f, 64.0f, 60.0f, 22.0f));
     auto addBounds = designRect(getWidth(), getHeight(),
-                                shortBarList() ? 1159.0f : shortPatternList() ? 1164.0f : 1161.0f,
-                                456.0f, shortPatternList() ? 97.0f : 99.0f,
+                                shortBarList() || shortPatternList() ? 1164.0f : 1161.0f,
+                                456.0f, shortBarList() || shortPatternList() ? 97.0f : 99.0f,
                                 shortPatternList() ? 62.0f : shortBarList() ? 64.0f : 46.0f);
     const auto& arrangementState = processor_.projectState();
     if (maximumArrangementScroll() == 0.0f)

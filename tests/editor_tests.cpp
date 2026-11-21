@@ -4737,7 +4737,8 @@ void testTutorialPatternAddTile(const juce::File& output)
         const auto barCount = state.patterns[state.activePattern].bars.size();
         check(std::abs(barsAddY - (123 + 83 * barCount) * scale) <= 2,
               "short Bars list places plus immediately after reference-spaced cards");
-        check(std::abs(add->getX() - 1159 * scale) <= 1
+        check(std::abs(add->getX() - 1164 * scale) <= 1
+                  && std::abs(add->getWidth() - 97 * scale) <= 1
                   && std::abs(add->getHeight() - 64 * scale) <= 1,
               "short Bars plus matches reference alignment and height");
         if (width == 960)
