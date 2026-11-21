@@ -2464,6 +2464,8 @@ void testKeyboardFocus(const juce::File& output)
         lastInjectedKey = juce::String(action) + " " + key;
     };
     std::function<bool()> pendingUiInput;
+    std::size_t momentaryStep = 0;
+    juce::String pendingClickDetail;
     const auto afterInput = [&](std::function<void()> next) {
         const auto uiReady = std::move(pendingUiInput);
         pendingUiInput = nullptr;
@@ -2491,7 +2493,10 @@ void testKeyboardFocus(const juce::File& output)
             }
             if (uiReady && (!uiReady() || mods.isLeftButtonDown()))
             {
-                inputBarrierDetail = "waiting for the injected mouse/menu action";
+                inputBarrierDetail = "step " + juce::String(static_cast<int>(momentaryStep))
+                    + ": " + pendingClickDetail + ", modal="
+                    + juce::String(juce::Component::getNumCurrentlyModalComponents())
+                    + ", leftDown=" + juce::String(mods.isLeftButtonDown() ? 1 : 0);
                 return false;
             }
             return true;
@@ -2526,8 +2531,12 @@ void testKeyboardFocus(const juce::File& output)
         // Deliver the click while JUCE can dispatch X11 events. Blocking its
         // message thread until xdotool exits can strand the input before the
         // menu has received it. Keep the child alive and observe both results.
-        pendingUiInput = [command, ready = std::move(ready)] {
-            return !command->isRunning() && command->getExitCode() == 0 && ready();
+        pendingUiInput = [&, command, screen, ready = std::move(ready)] {
+            const bool running = command->isRunning();
+            pendingClickDetail = "click at " + juce::String(screen.x) + ","
+                + juce::String(screen.y) + ", xdotool="
+                + (running ? juce::String("running") : juce::String(command->getExitCode()));
+            return !running && command->getExitCode() == 0 && ready();
         };
     };
     const auto clickShortcutGrid = [&](juce::Point<int> position) {
@@ -2554,7 +2563,8 @@ void testKeyboardFocus(const juce::File& output)
         auto* item = menu != nullptr ? findFour(*menu) : nullptr;
         const bool selected = item != nullptr
             && item->getActions().invoke(juce::AccessibilityActionType::press);
-        check(selected, "select four slices through the actual Slicer dropdown");
+        check(selected, "select four slices through the actual Slicer dropdown at step "
+              + juce::String(static_cast<int>(momentaryStep)));
         if (!selected) juce::PopupMenu::dismissAllActiveMenus();
         pendingUiInput = [] { return juce::Component::getCurrentlyModalComponent() == nullptr; };
     };
@@ -2841,6 +2851,7 @@ void testKeyboardFocus(const juce::File& output)
     };
     std::function<void(std::size_t)> testMomentaryShortcuts;
     testMomentaryShortcuts = [&](std::size_t step) {
+        momentaryStep = step;
         momentarySteps[step]();
         if (step == 0)
             focusEditor([&] { testMomentaryShortcuts(1); });
