@@ -82,6 +82,12 @@ def capture_rendered_window(window, filename, expected_size=None):
             raise RuntimeError(f'Window content was blank or unpainted: {filename}')
         time.sleep(0.1)
 
+def record_geometry(stage, geometry):
+    # Preserve distinct X11 sizes even if the F2 check fails before its report.
+    with (output / 'window-geometry.jsonl').open('a') as trace:
+        trace.write(json.dumps({'stage': stage, 'time': time.monotonic(),
+                                'geometry': geometry}) + '\n')
+
 def saved_project(home):
     settings = ET.parse(home / '.config' / 'Beat Scholar Linux.settings').getroot()
     encoded = settings.find("VALUE[@name='filterState']").attrib['val']
@@ -137,9 +143,12 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             app = subprocess.Popen([str(executable)], env=env, stdout=log, stderr=subprocess.STDOUT)
             main = wait_window('Beat Scholar Linux', app.pid)
             geometry = dict(line.split('=', 1) for line in xdo('getwindowgeometry', '--shell', main).stdout.splitlines() if '=' in line)
+            record_geometry('mapped', geometry)
             width, height = int(geometry['WIDTH']), int(geometry['HEIGHT'])
             xdo('windowfocus', '--sync', main)
             capture_rendered_window(main, 'standalone-before.png')
+            record_geometry('painted', dict(line.split('=', 1) for line in
+                xdo('getwindowgeometry', '--shell', main).stdout.splitlines() if '=' in line))
             # Manual p5: F2 restores window size after a user resize.
             # X11 measures the JUCE frame too; retain the fresh default size.
             default_window_size = (width, height)
@@ -147,13 +156,18 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             xdo('windowsize', '--sync', main, '960', str(540 + wrapper_height))
             time.sleep(0.2)
             resized = dict(line.split('=', 1) for line in xdo('getwindowgeometry', '--shell', main).stdout.splitlines() if '=' in line)
+            record_geometry('resized', resized)
             if int(resized['WIDTH']) != 960:
                 raise RuntimeError(f'Window resize precondition failed: {resized}')
             xdo('mousemove', '--window', main, '778', str(wrapper_height + 22), 'click', '1')
             xdo('key', 'F2')
             deadline = time.monotonic() + 5
+            last_geometry = None
             while True:
                 geometry = dict(line.split('=', 1) for line in xdo('getwindowgeometry', '--shell', main).stdout.splitlines() if '=' in line)
+                if geometry != last_geometry:
+                    record_geometry('after-f2', geometry)
+                    last_geometry = geometry
                 width, height = int(geometry['WIDTH']), int(geometry['HEIGHT'])
                 if (width, height) == default_window_size:
                     break
