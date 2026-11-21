@@ -39,6 +39,17 @@ juce::Rectangle<float> barHeaderActions(juce::Rectangle<float> bounds, float sca
              bounds.getY(), 3.0f * spacing * scale, bounds.getHeight() };
 }
 
+// Share the original Bars card control geometry between drawing and input.
+juce::Rectangle<float> barCardActionBounds(juce::Rectangle<float> bounds, float scale, int action)
+{
+    const float inset = 4.0f * scale;
+    const float width = 24.0f * scale;
+    const float height = 18.0f * scale;
+    return { action == 2 ? bounds.getRight() - inset - width : bounds.getX() + inset,
+             action == 0 ? bounds.getBottom() - inset - height : bounds.getY() + inset,
+             width, height };
+}
+
 void enableSlice(bsl::SliceState& slice, std::uint8_t pad, float defaultVelocity)
 {
     if (!slice.velocityAssigned || slice.padIndex != pad)
@@ -1132,6 +1143,14 @@ float BeatScholarLinuxEditor::maximumArrangementScroll() const
 int BeatScholarLinuxEditor::arrangementActionAt(juce::Point<int> point, std::size_t index) const
 {
     const auto bounds = arrangementItemBounds(index).toFloat();
+    if (!processor_.projectState().ui.patternMode)
+    {
+        const float scale = designScale(getWidth(), getHeight());
+        for (const int action : { 1, 2, 0 })
+            if (barCardActionBounds(bounds, scale, action).contains(point.toFloat()))
+                return action;
+        return -1;
+    }
     const float size = 18.0f * designScale(getWidth(), getHeight());
     if (bounds.withSize(size, size).contains(point.toFloat())) return 1;
     if (bounds.withSize(size, size).withX(bounds.getRight() - size).contains(point.toFloat())) return 2;
@@ -1541,13 +1560,8 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                 graphics.drawText(juce::String(current.bars[index].numerator) + "  |  "
                                       + juce::String(current.bars[index].denominator),
                                   bounds, juce::Justification::centred);
-                const auto padBounds = bounds.toFloat();
-                drawActionGlyph(padBounds.withSizeKeepingCentre(18.0f * scale, 18.0f * scale)
-                                     .withPosition(padBounds.getX(), padBounds.getY()), 1);
-                drawActionGlyph(padBounds.withSizeKeepingCentre(18.0f * scale, 18.0f * scale)
-                                     .withPosition(padBounds.getRight() - 18.0f * scale, padBounds.getY()), 2);
-                drawActionGlyph(padBounds.withSizeKeepingCentre(18.0f * scale, 18.0f * scale)
-                                     .withPosition(padBounds.getX(), padBounds.getBottom() - 18.0f * scale), 0);
+                for (const int action : { 1, 2, 0 })
+                    drawActionGlyph(barCardActionBounds(bounds.toFloat(), scale, action), action);
             }
         }
 
