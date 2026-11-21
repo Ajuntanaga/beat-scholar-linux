@@ -5996,6 +5996,14 @@ void testReferenceToolbarLayout(const juce::File& output)
         check(layout.sliderBounds.getWidth() >= 20,
               "960px velocity readout has room for three MIDI digits");
     }
+    if (auto* swing = childWithId<juce::Slider>(*editor, "toolbar.swing"))
+    {
+        const auto layout = swing->getLookAndFeel().getSliderLayout(*swing);
+        check(layout.sliderBounds.getWidth() == swing->getWidth(),
+              "reference Swing rail spans the full control width");
+        check(std::abs(swing->getBounds().getCentreY() - 32) <= 1,
+              "reference Swing rail sits below its label at 960px");
+    }
     saveVisual(*editor, output, "reference-toolbar-layout.png");
     editor->setSize(1280, 720);
     // The subdivision dropdown starts at x=878. Its first pixel must reach

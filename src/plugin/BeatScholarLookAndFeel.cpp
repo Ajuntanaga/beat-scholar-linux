@@ -973,6 +973,10 @@ juce::Slider::SliderLayout BeatScholarLookAndFeel::getSliderLayout(juce::Slider&
         // insets leave only four pixels for three digits at the 960px size.
         layout.sliderBounds = slider.getLocalBounds();
     }
+    else if (slider.getComponentID() == "toolbar.swing")
+    {
+        layout.sliderBounds = slider.getLocalBounds();
+    }
     else if (slider.getComponentID() == "master.4")
     {
         // Keep the gain gesture range aligned with the painted stereo meters
@@ -1004,6 +1008,18 @@ void BeatScholarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, i
         const auto suffix = id == "toolbar.bpm" ? " BPM" : "";
         g.drawFittedText(juce::String(static_cast<int>(std::lround(slider.getValue()))) + suffix,
                          area.toNearestInt(), juce::Justification::centred, 1);
+        return;
+    }
+    if (id == "toolbar.swing")
+    {
+        // Original 960px capture: full 62px rail, 2px high, with a 7px thumb.
+        const float scale = area.getHeight() / 20.0f;
+        const auto track = area.withSizeKeepingCentre(area.getWidth(), 8.0f * scale / 3.0f);
+        g.setColour(juce::Colour(darkMode_ ? palette_.border : 0xff343463));
+        g.fillRect(track);
+        g.setColour(juce::Colour(darkMode_ ? palette_.text : 0xffd7dbf6));
+        g.fillEllipse(juce::Rectangle<float>(9.0f * scale, 9.0f * scale)
+                          .withCentre({ sliderPos, area.getCentreY() }));
         return;
     }
     if (id == "master.4")
