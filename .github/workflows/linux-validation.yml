@@ -86,7 +86,7 @@ jobs:
           set -o pipefail
           xvfb-run -a gdb --batch --return-child-result \
             -ex run -ex 'thread apply all bt' --args \
-            tools/bin/pluginval --strictness-level 10 --validate-in-process \
+            tools/bin/pluginval --strictness-level 10 --validate-in-process --random-seed 0x23ef10a \
             --validate 'build/ci/BeatScholarLinux_artefacts/Release/VST3/Beat Scholar Linux.vst3' \
             2>&1 | tee build/ci/pluginval.log
       - name: Check standalone settings and state recall
