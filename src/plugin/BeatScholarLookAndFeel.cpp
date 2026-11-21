@@ -1040,6 +1040,15 @@ void BeatScholarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, i
     g.setColour(juce::Colour(palette_.border));
     g.fillRoundedRectangle(track, track.getHeight() * 0.5f);
     g.setColour(juce::Colour(palette_.text));
+    if (id == "sound.6" && style == juce::Slider::LinearHorizontal)
+    {
+        // Saved original at 960 px: centered pan handle is 2 px wide and 9 px tall.
+        g.fillRoundedRectangle(juce::Rectangle<float>(area.getHeight() / 6.0f,
+                                                       area.getHeight() * (2.0f / 3.0f))
+                                   .withCentre({ sliderPos, track.getCentreY() }),
+                               area.getHeight() / 12.0f);
+        return;
+    }
     const float thumb = std::max(8.0f, area.getHeight() * 0.35f);
     g.fillEllipse(juce::Rectangle<float>(thumb, thumb)
                       .withCentre({ sliderPos, track.getCentreY() }));
