@@ -529,9 +529,11 @@ void BeatScholarLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Butto
     if (id.startsWith("toolbar.") || id.startsWith("brush.")
         || bool(button.getProperties().getWithDefault("flatButton", false)))
     {
-        if (button.getToggleState() || isMouseOver || isDown)
+        // The original Drum brush shows its colored circle without a selected box.
+        const bool selectedBackground = button.getToggleState() && id != "brush.drum";
+        if (selectedBackground || isMouseOver || isDown)
         {
-            g.setColour(juce::Colour(button.getToggleState() ? palette_.header : palette_.panelRaised)
+            g.setColour(juce::Colour(selectedBackground ? palette_.header : palette_.panelRaised)
                             .withAlpha(isDown ? 0.75f : 1.0f));
             g.fillRoundedRectangle(area.reduced(1.0f), 2.0f);
         }
