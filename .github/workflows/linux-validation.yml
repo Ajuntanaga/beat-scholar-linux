@@ -166,4 +166,5 @@ jobs:
             build/ci/pluginval*.log
             build/ci/standalone-settings/**/*.png
             build/ci/standalone-settings/**/*.json
+            build/ci/standalone-settings/**/*.jsonl
             build/ci/standalone-settings/**/*.log
