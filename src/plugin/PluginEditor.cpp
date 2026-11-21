@@ -1630,6 +1630,10 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                             && !selectedPad.customSamples[0].name.empty();
         graphics.setColour(juce::Colour(lookAndFeel_.palette().panel));
         graphics.fillRect(samplePanel);
+        // The original flashes the selected sample body with its instrument pad.
+        const float sampleActivity = std::clamp(padFlashes_[state.ui.selectedPad], 0.0f, 1.0f);
+        graphics.setColour(padColours_[state.ui.selectedPad].withAlpha(sampleActivity * 0.5f));
+        graphics.fillRect(samplePanel);
         graphics.setColour(sampleColour);
         graphics.fillRect(samplePanel.removeFromTop(static_cast<int>((custom ? 7.0f : 10.0f) * scale)));
         graphics.setColour(juce::Colour(lookAndFeel_.palette().text).withAlpha(0.90f));

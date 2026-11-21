@@ -6047,7 +6047,7 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
     state.global.samplerEnabled = false; // MIDI-only sequencing must still animate.
     state.global.swingPercent = 50.0;
     state.global.swingReference = bsl::SwingReference::quarter;
-    state.ui.selectedPad = 15;
+    state.ui.selectedPad = 0;
     state.patterns[0].lanes = { bsl::LaneState::make(4) };
     for (auto& beat : state.patterns[0].lanes[0].beats)
         beat.slices[0].enabled = false;
@@ -6090,6 +6090,9 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
     saveVisual(*editor, output, "playback-idle.png");
     check(render(0, true) == 1, "host start emits first slice note");
     const auto first = snapshot();
+    const auto sampleBody = juce::Point<int>(410, 605);
+    check(!similar(colour(first, sampleBody), colour(idle, sampleBody)),
+          "selected sample body lights on its own instrument trigger");
     check(brighter(first, idle, left) && similar(colour(first, right), colour(idle, right)),
           "first MIDI trigger lights only its visible left slice");
     const auto activeColour = colour(first, left);
@@ -6104,7 +6107,7 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
     {
         padPoint = pad->getBounds().getCentre() + juce::Point<int>(0, 12);
         check(!similar(colour(first, padPoint), colour(idle, padPoint)),
-              "trigger visibly lights its sampler pad without selecting it");
+              "trigger visibly lights the selected sampler pad");
     }
     if (secondPad)
         secondPadPoint = secondPad->getBounds().getCentre() + juce::Point<int>(0, 12);
@@ -6125,6 +6128,8 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
     }
     check(secondTriggered && next > 12000, "swung second slice eventually triggers");
     const auto second = snapshot();
+    check(similar(colour(second, sampleBody), colour(idle, sampleBody)),
+          "another instrument trigger does not light the selected sample body");
     check(brighter(second, idle, right) && similar(colour(second, left), colour(idle, left)),
           "second MIDI trigger lights its right slice after the first fades");
     if (secondPad)
@@ -6133,6 +6138,8 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
     saveVisual(*editor, output, "playback-second.png");
     render(next + 480, false);
     const auto stopped = snapshot();
+    check(similar(colour(stopped, sampleBody), colour(idle, sampleBody)),
+          "host stop clears selected sample body lighting");
     check(similar(colour(stopped, left), colour(idle, left))
               && similar(colour(stopped, right), colour(idle, right)),
           "host stop clears all slice lighting immediately");
