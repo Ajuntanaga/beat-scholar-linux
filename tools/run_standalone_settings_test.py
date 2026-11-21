@@ -134,6 +134,8 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             xdo('windowfocus', '--sync', main)
             capture_rendered_window(main, 'standalone-before.png')
             # Manual p5: F2 restores window size after a user resize.
+            # X11 measures the JUCE frame too; retain the fresh default size.
+            default_window_size = (width, height)
             wrapper_height = round(height - 720 * width / 1280)
             xdo('windowsize', '--sync', main, '960', str(540 + wrapper_height))
             time.sleep(0.2)
@@ -146,7 +148,7 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             while True:
                 geometry = dict(line.split('=', 1) for line in xdo('getwindowgeometry', '--shell', main).stdout.splitlines() if '=' in line)
                 width, height = int(geometry['WIDTH']), int(geometry['HEIGHT'])
-                if (width, height) == (1280, 720 + wrapper_height):
+                if (width, height) == default_window_size:
                     break
                 if time.monotonic() >= deadline:
                     raise RuntimeError(f'F2 did not restore default client size: {geometry}')
