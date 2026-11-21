@@ -1468,9 +1468,12 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
         graphics.fillPath(triangle);
     }
     else
+    {
+        graphics.setFont(bsl::ui::font(16.0f * scale, true));
         graphics.drawText(juce::String(current.name),
                           designRect(getWidth(), getHeight(), 1161.0f, 88.0f, 99.0f, 18.0f),
                           juce::Justification::centred);
+    }
     {
         const auto padArea = arrangementPadBounds();
         const juce::Graphics::ScopedSaveState savedGraphics(graphics);
@@ -1530,7 +1533,7 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                     graphics.drawRect(bounds, index == state.ui.selectedBar ? 2 : 1);
                 }
                 graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
-                graphics.setFont(bsl::ui::font(11.0f * scale, true));
+                graphics.setFont(bsl::ui::font(18.0f * scale, true));
                 graphics.drawText(juce::String(current.bars[index].numerator) + "  |  "
                                       + juce::String(current.bars[index].denominator),
                                   bounds, juce::Justification::centred);
