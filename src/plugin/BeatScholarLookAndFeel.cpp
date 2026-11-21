@@ -965,7 +965,13 @@ void BeatScholarLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, i
 juce::Slider::SliderLayout BeatScholarLookAndFeel::getSliderLayout(juce::Slider& slider)
 {
     auto layout = juce::LookAndFeel_V4::getSliderLayout(slider);
-    if (slider.getComponentID() == "master.4")
+    if (slider.getComponentID() == "toolbar.velocity")
+    {
+        // This control paints a numeric readout, not a thumb. JUCE's thumb
+        // insets leave only four pixels for three digits at the 960px size.
+        layout.sliderBounds = slider.getLocalBounds();
+    }
+    else if (slider.getComponentID() == "master.4")
     {
         // Keep the gain gesture range aligned with the painted stereo meters
         // at every editor size, rather than JUCE's fixed 12-pixel thumb inset.

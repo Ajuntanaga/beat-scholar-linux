@@ -5979,6 +5979,12 @@ void testReferenceToolbarLayout(const juce::File& output)
     check(velocityBrush && velocityValue
               && !velocityBrush->getBounds().intersects(velocityValue->getBounds()),
           "velocity brush and numeric value have distinct hit areas");
+    if (auto* velocity = childWithId<juce::Slider>(*editor, "toolbar.velocity"))
+    {
+        const auto layout = velocity->getLookAndFeel().getSliderLayout(*velocity);
+        check(layout.sliderBounds.getWidth() >= 20,
+              "960px velocity readout has room for three MIDI digits");
+    }
     saveVisual(*editor, output, "reference-toolbar-layout.png");
     editor->setSize(1280, 720);
     // The subdivision dropdown starts at x=878. Its first pixel must reach
