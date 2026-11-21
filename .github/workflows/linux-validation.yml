@@ -84,11 +84,30 @@ jobs:
         timeout-minutes: 10
         run: |
           set -o pipefail
-          xvfb-run -a gdb --batch --return-child-result \
-            -ex run -ex 'thread apply all bt' --args \
-            tools/bin/pluginval --strictness-level 10 --validate-in-process --random-seed 0x23ef10a \
-            --validate 'build/ci/BeatScholarLinux_artefacts/Release/VST3/Beat Scholar Linux.vst3' \
-            2>&1 | tee build/ci/pluginval.log
+          ulimit -c unlimited
+          # Ephemeral runner only: preserve normal timing and inspect cores afterward.
+          sudo sysctl -w "kernel.core_pattern=$GITHUB_WORKSPACE/build/ci/pluginval-core.%p"
+          result=0
+          for attempt in 1 2 3; do
+            if xvfb-run -a tools/bin/pluginval --strictness-level 10 --validate-in-process \
+              --random-seed 0x23ef10a \
+              --validate 'build/ci/BeatScholarLinux_artefacts/Release/VST3/Beat Scholar Linux.vst3' \
+              > "build/ci/pluginval-$attempt.log" 2>&1; then
+              cat "build/ci/pluginval-$attempt.log"
+            else
+              result=$?
+              cat "build/ci/pluginval-$attempt.log"
+              break
+            fi
+          done
+          shopt -s nullglob
+          for core in build/ci/pluginval-core.*; do
+            gdb --batch -ex 'thread apply all bt' tools/bin/pluginval "$core" \
+              > "$core.backtrace.log" 2>&1 || true
+            cat "$core.backtrace.log"
+            rm -- "$core"
+          done
+          exit "$result"
       - name: Check standalone settings and state recall
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         timeout-minutes: 5
@@ -144,7 +163,7 @@ jobs:
             build/ci/actual-vst3-panic/results.json
             build/ci/actual-vst3-panic/*.log
             build/ci/host-gate-reference.log
-            build/ci/pluginval.log
+            build/ci/pluginval*.log
             build/ci/standalone-settings/**/*.png
             build/ci/standalone-settings/**/*.json
             build/ci/standalone-settings/**/*.log
