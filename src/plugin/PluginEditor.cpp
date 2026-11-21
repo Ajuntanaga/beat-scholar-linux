@@ -39,8 +39,8 @@ juce::Rectangle<float> barHeaderActions(juce::Rectangle<float> bounds, float sca
              bounds.getY(), 3.0f * spacing * scale, bounds.getHeight() };
 }
 
-// Share the original Bars card control geometry between drawing and input.
-juce::Rectangle<float> barCardActionBounds(juce::Rectangle<float> bounds, float scale, int action)
+// Share the original arrangement card control geometry between drawing and input.
+juce::Rectangle<float> arrangementCardActionBounds(juce::Rectangle<float> bounds, float scale, int action)
 {
     const float inset = 4.0f * scale;
     const float width = 24.0f * scale;
@@ -1143,18 +1143,10 @@ float BeatScholarLinuxEditor::maximumArrangementScroll() const
 int BeatScholarLinuxEditor::arrangementActionAt(juce::Point<int> point, std::size_t index) const
 {
     const auto bounds = arrangementItemBounds(index).toFloat();
-    if (!processor_.projectState().ui.patternMode)
-    {
-        const float scale = designScale(getWidth(), getHeight());
-        for (const int action : { 1, 2, 0 })
-            if (barCardActionBounds(bounds, scale, action).contains(point.toFloat()))
-                return action;
-        return -1;
-    }
-    const float size = 18.0f * designScale(getWidth(), getHeight());
-    if (bounds.withSize(size, size).contains(point.toFloat())) return 1;
-    if (bounds.withSize(size, size).withX(bounds.getRight() - size).contains(point.toFloat())) return 2;
-    if (bounds.withSize(size, size).withY(bounds.getBottom() - size).contains(point.toFloat())) return 0;
+    const float scale = designScale(getWidth(), getHeight());
+    for (const int action : { 1, 2, 0 })
+        if (arrangementCardActionBounds(bounds, scale, action).contains(point.toFloat()))
+            return action;
     return -1;
 }
 
@@ -1522,12 +1514,8 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                                         bounds.reduced(juce::roundToInt(5.0f * scale),
                                                        juce::roundToInt(3.0f * scale)),
                                         juce::Justification::centred, 1);
-                drawActionGlyph(bounds.toFloat().removeFromTop(18.0f * scale)
-                                    .removeFromLeft(18.0f * scale), 1);
-                drawActionGlyph(bounds.toFloat().removeFromTop(18.0f * scale)
-                                    .removeFromRight(18.0f * scale), 2);
-                drawActionGlyph(bounds.toFloat().withSize(18.0f * scale, 18.0f * scale)
-                                    .withY(bounds.getBottom() - 18.0f * scale), 0);
+                for (const int action : { 1, 2, 0 })
+                    drawActionGlyph(arrangementCardActionBounds(bounds.toFloat(), scale, action), action);
                 // Restore the note label font after drawing the action controls.
                 graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
                 graphics.setFont(bsl::ui::font(9.0f * scale, true));
@@ -1561,7 +1549,7 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                                       + juce::String(current.bars[index].denominator),
                                   bounds, juce::Justification::centred);
                 for (const int action : { 1, 2, 0 })
-                    drawActionGlyph(barCardActionBounds(bounds.toFloat(), scale, action), action);
+                    drawActionGlyph(arrangementCardActionBounds(bounds.toFloat(), scale, action), action);
             }
         }
 

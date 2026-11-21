@@ -4852,6 +4852,11 @@ void testArrangementOverflowAndContextActions(const juce::File& output)
             editor.setSize(width, width * 720 / 1280);
             const float scale = float(width) / 1280.0f;
             const auto count = [&] { return patterns ? state.patterns.size() : state.patterns[0].bars.size(); };
+            // The reference glyph extends beyond the former 18px square hit target.
+            editor.mouseDown(visualEvent(editor, juce::Point<float>(1185, 125) * scale));
+            check(count() == 13, "wide arrangement add glyph responds in Bars and Patterns at every size");
+            childWithId<juce::TextButton>(editor, "toolbar.undo")->onClick();
+            check(count() == 12, "undo restores the list after the arrangement glyph click");
             editor.mouseDown(visualEvent(editor, juce::Point<float>(1252, 120) * scale,
                                         juce::ModifierKeys::rightButtonModifier));
             check(count() == 12, "right click over arrangement delete opens menu without deletion");
