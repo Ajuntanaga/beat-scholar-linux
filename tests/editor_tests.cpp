@@ -4755,7 +4755,7 @@ void testTutorialPatternAddTile(const juce::File& output)
         check(state.ui.patternMode && toggle->getButtonText() == "Patterns"
                   && add->getY() < 250 * scale,
               "view switch immediately places plus below the single pattern");
-        check(std::abs(add->getY() - 209 * scale) <= 1
+        check(std::abs(add->getY() - 205 * scale) <= 1
                   && std::abs(add->getHeight() - 62 * scale) <= 1,
               "single-pattern add tile matches tutorial position and height");
         check(editor.getComponentAt(add->getBounds().getCentre()) == add,
@@ -4776,20 +4776,20 @@ void testTutorialPatternAddTile(const juce::File& output)
     {
         editor.setSize(width, width * 720 / 1280);
         const float scale = float(width) / 1280.0f;
-        check(std::abs(add->getY() - 291 * scale) <= 2
+        check(std::abs(add->getY() - 287 * scale) <= 2
                   && std::abs(add->getHeight() - 62 * scale) <= 1,
               "two-pattern add tile matches tutorial position and height");
         const auto clickCard = [&](float y) {
             const auto event = visualEvent(editor, juce::Point<float>(1210, y) * scale);
             editor.mouseDown(event); editor.mouseUp(event);
         };
-        clickCard(279);
+        clickCard(275);
         check(state.activePattern == 1, "second card lower edge selects second pattern");
-        clickCard(204);
+        clickCard(200);
         check(state.activePattern == 1, "blank card gap does not select the preceding pattern");
-        clickCard(197);
+        clickCard(193);
         check(state.activePattern == 0, "first card lower edge selects first pattern");
-        clickCard(279);
+        clickCard(275);
         saveVisual(editor, output, ("pattern-add-two-" + std::to_string(width) + ".png").c_str());
     }
     // Match the retained Samples & Sounds frame for direct typography inspection.
@@ -4814,7 +4814,7 @@ void testTutorialPatternAddTile(const juce::File& output)
     {
         click(add);
         if (state.patterns.size() == 3)
-            check(add->getY() == 373 && add->getHeight() == 62,
+            check(add->getY() == 369 && add->getHeight() == 62,
                   "third pattern and add tile fit before compact overflow layout");
     }
     check(state.patterns.size() == 12 && add->getY() == 456,
