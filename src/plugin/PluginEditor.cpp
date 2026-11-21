@@ -3646,7 +3646,8 @@ void BeatScholarLinuxEditor::showBarMenu(std::size_t barIndex)
     menu.addItem(6, "Insert Here");
     menu.addItem(7, "Append");
     menu.setLookAndFeel(&lookAndFeel_);
-    menu.showMenuAsync({}, [safe = juce::Component::SafePointer<BeatScholarLinuxEditor>(this), revision = processor_.restoredStateRevision(), openedPattern = processor_.projectState().activePattern,
+    // Measured original Bars popup: 137 px wide, seven 23 px rows.
+    menu.showMenuAsync(juce::PopupMenu::Options().withMinimumWidth(137).withStandardItemHeight(23), [safe = juce::Component::SafePointer<BeatScholarLinuxEditor>(this), revision = processor_.restoredStateRevision(), openedPattern = processor_.projectState().activePattern,
                             barIndex](int result) {
         if (safe == nullptr || result == 0
             || safe->processor_.restoredStateRevision() != revision
