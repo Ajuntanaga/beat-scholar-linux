@@ -4733,6 +4733,11 @@ void testTutorialPatternAddTile(const juce::File& output)
         const float scale = float(width) / 1280.0f;
         check(!state.ui.patternMode && toggle->getButtonText() == "Bars",
               "bar view names its visible contents as in the Windows reference");
+        check(std::abs(toggle->getY() - 72 * scale) <= 1
+                  && std::abs(toggle->getHeight() - 18 * scale) <= 1,
+              "Bars/Patterns switch matches reference vertical bounds");
+        check(editor.getComponentAt(toggle->getBounds().getCentre()) == toggle,
+              "moved Bars/Patterns switch owns its click target");
         const auto barsAddY = add->getY();
         const auto barCount = state.patterns[state.activePattern].bars.size();
         check(std::abs(barsAddY - (123 + 83 * barCount) * scale) <= 2,

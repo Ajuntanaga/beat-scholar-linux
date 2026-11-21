@@ -2006,7 +2006,7 @@ void BeatScholarLinuxEditor::resized()
                          masterPositions[index].y + 19.0f, 40.0f, 40.0f));
     }
 
-    barsPatterns_.setBounds(designRect(getWidth(), getHeight(), 1185.0f, 64.0f, 60.0f, 22.0f));
+    barsPatterns_.setBounds(designRect(getWidth(), getHeight(), 1185.0f, 72.0f, 60.0f, 18.0f));
     auto addBounds = designRect(getWidth(), getHeight(),
                                 shortBarList() || shortPatternList() ? 1164.0f : 1161.0f,
                                 456.0f, shortBarList() || shortPatternList() ? 97.0f : 99.0f,
