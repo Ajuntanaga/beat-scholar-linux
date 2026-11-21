@@ -1448,7 +1448,7 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
 
     // Right-side arrangement rail and vertical pads.
     const auto arrangement = arrangementBounds();
-    graphics.setColour(juce::Colour(state.ui.patternMode || state.ui.darkMode
+    graphics.setColour(juce::Colour(state.ui.darkMode
                                        ? lookAndFeel_.palette().panel
                                        : lookAndFeel_.palette().patternCanvas));
     graphics.fillRect(arrangement);
@@ -1485,14 +1485,17 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                 const auto bounds = arrangementItemBounds(index);
                 if (bounds.getY() >= padArea.getBottom()) break;
                 if (bounds.getBottom() <= padArea.getY()) continue;
-                graphics.setColour(index == state.activePattern
-                                       ? juce::Colour(lookAndFeel_.palette().panelRaised)
-                                       : juce::Colour(lookAndFeel_.palette().panel));
+                const bool selected = index == state.activePattern;
+                // Normal-theme reference cards share a subdued fill; selection
+                // changes only the thin border, not the card background.
+                graphics.setColour(juce::Colour(state.ui.darkMode
+                    ? (selected ? lookAndFeel_.palette().panelRaised : lookAndFeel_.palette().panel)
+                    : 0xff19192fU));
                 graphics.fillRect(bounds);
-                graphics.setColour(index == state.activePattern
-                                       ? juce::Colour(lookAndFeel_.palette().borderBright)
-                                       : juce::Colour(lookAndFeel_.palette().border));
-                graphics.drawRect(bounds, index == state.activePattern ? 2 : 1);
+                graphics.setColour(juce::Colour(state.ui.darkMode
+                    ? (selected ? lookAndFeel_.palette().borderBright : lookAndFeel_.palette().border)
+                    : (selected ? 0xffadb1cbU : 0xff39395bU)));
+                graphics.drawRect(bounds, state.ui.darkMode && selected ? 2 : 1);
                 graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
                 // Match the original Patterns card title at the 960px reference size.
                 graphics.setFont(bsl::ui::font(18.0f * scale, true).withHorizontalScale(1.1f));
