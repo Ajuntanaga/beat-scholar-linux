@@ -98,10 +98,11 @@ def saved_project(home):
 def saved_audio_setup(home):
     settings = ET.parse(home / '.config' / 'Beat Scholar Linux.settings').getroot()
     entry = settings.find("VALUE[@name='audioSetup']")
-    if entry is None or not entry.get('val'):
+    if entry is None:
         raise RuntimeError('Explicit audio selection was not saved')
-    setup = ET.fromstring(entry.attrib['val'])
-    if setup.tag != 'DEVICESETUP':
+    # JUCE PropertiesFile serializes XML values as child elements.
+    setup = entry.find('DEVICESETUP')
+    if setup is None:
         raise RuntimeError('Unexpected saved audio setup format')
     return setup.attrib
 
@@ -275,6 +276,17 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             app = subprocess.Popen([str(executable)], env=env, stdout=log, stderr=subprocess.STDOUT)
             main = wait_window('Beat Scholar Linux', app.pid)
             capture_rendered_window(main, 'standalone-restored.png')
+            # Inspect the reopened device manager, not only its saved XML.
+            xdo('mousemove', '--window', main, x, y, 'click', '1')
+            settings = wait_window('Audio/MIDI Settings', app.pid)
+            capture_rendered_window(settings, 'standalone-settings-restored.png')
+            xdo('windowfocus', '--sync', settings)
+            xdo('key', 'Escape')
+            deadline = time.monotonic() + 5
+            while windows('Audio/MIDI Settings', app.pid) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            if windows('Audio/MIDI Settings', app.pid):
+                raise RuntimeError('Restored settings dialog did not close with Escape')
             close_app(app, main)
             audio_recalled = saved_audio_setup(scratch)
             if audio_recalled != audio_saved:
