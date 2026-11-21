@@ -195,10 +195,10 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             settings = wait_window('Audio/MIDI Settings', app.pid)
             capture_rendered_window(settings, 'standalone-settings.png')
             xdo('windowfocus', '--sync', settings)
-            # JUCE enumerates the hinted Offline Null device before adding
-            # Default ALSA Output. Switch through the actual output selector.
+            # The displayed menu orders Default ALSA Output, Offline Null,
+            # then none. Move down from Default to the actual null device.
             xdo('mousemove', '--window', settings, 300, 27, 'click', '1')
-            xdo('key', 'Up', 'Return')
+            xdo('key', 'Down', 'Return')
             time.sleep(0.2)
             capture_rendered_window(settings, 'standalone-settings-device-changed.png')
             # This dialog belongs to the private ALSA null fixture. Its rate
