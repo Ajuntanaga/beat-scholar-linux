@@ -176,6 +176,12 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             settings = wait_window('Audio/MIDI Settings', app.pid)
             capture_rendered_window(settings, 'standalone-settings.png')
             xdo('windowfocus', '--sync', settings)
+            # JUCE enumerates the hinted Offline Null device before adding
+            # Default ALSA Output. Switch through the actual output selector.
+            xdo('mousemove', '--window', settings, 300, 27, 'click', '1')
+            xdo('key', 'Up', 'Return')
+            time.sleep(0.2)
+            capture_rendered_window(settings, 'standalone-settings-device-changed.png')
             # This dialog belongs to the private ALSA null fixture. Its rate
             # list advances from 44100 to 48000; exercise actual UI selection.
             xdo('mousemove', '--window', settings, 300, 165, 'click', '1')
@@ -264,6 +270,8 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             xdo('key', 'Return')
             close_app(app, main)
             audio_saved = saved_audio_setup(scratch)
+            if audio_saved.get('audioOutputDeviceName') != 'Offline Null':
+                raise RuntimeError(f'Output selection did not save Offline Null: {audio_saved}')
             if float(audio_saved.get('audioDeviceRate', 0)) != 48000:
                 raise RuntimeError(f'Rate selection did not save 48000 Hz: {audio_saved}')
             saved = saved_project(scratch)
@@ -365,7 +373,8 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
                 midi_result = {'pass': True, 'module_sha256': digest, 'host_tempo': 120,
                                'saved_tempo': flam['global']['beatsPerMinute'], 'note_on_samples': [0, 4800]}
             (output / 'result.json').write_text(json.dumps({'settings_opened_from_cog': True,
-                'settings_closed_with_escape': True, 'device_selection_changed': False,
+                'settings_closed_with_escape': True, 'device_selection_changed': True,
+                'saved_output_device': audio_saved['audioOutputDeviceName'],
                 'sample_rate_changed_via_ui': True, 'audio_setup_recalled': True,
                 'saved_sample_rate': float(audio_saved['audioDeviceRate']),
                 'standalone_space_play_pause': True,
