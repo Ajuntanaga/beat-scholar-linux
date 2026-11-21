@@ -655,8 +655,11 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
     if (id == "toolbar.stop")
     {
         g.setColour(tint);
-        const float side = std::min(area.getWidth(), area.getHeight()) * 0.74f;
-        g.fillRect(juce::Rectangle<float>(side, side).withCentre(area.getCentre()));
+        // Align the solid square to pixels: fractional edges produced a 20px
+        // fringe around the reference's 19px square at the 960px editor size.
+        const int side = juce::roundToInt(std::min(area.getWidth(), area.getHeight()) * 0.74f);
+        g.fillRect(juce::roundToInt(area.getCentreX() - side * 0.5f),
+                   juce::roundToInt(area.getCentreY() - side * 0.5f), side, side);
         return;
     }
     if (id == "toolbar.pause")
