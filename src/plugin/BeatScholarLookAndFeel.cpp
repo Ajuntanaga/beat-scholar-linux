@@ -370,7 +370,8 @@ void BeatScholarLookAndFeel::setDarkMode(bool enabled)
         palette_.populatedBeatOutline = palette_.text;
         palette_.borderBright = 0xff747474;
     }
-    setColour(juce::PopupMenu::backgroundColourId, juce::Colour(palette_.panelRaised));
+    setColour(juce::PopupMenu::backgroundColourId,
+              juce::Colour(darkMode_ ? palette_.panelRaised : 0xff282858U));
     setColour(juce::PopupMenu::textColourId, juce::Colour(palette_.text));
     setColour(juce::PopupMenu::highlightedBackgroundColourId, juce::Colour(palette_.accent));
     setColour(juce::PopupMenu::highlightedTextColourId, juce::Colour(palette_.text));
@@ -1124,8 +1125,9 @@ void BeatScholarLookAndFeel::drawPopupMenuSectionHeader(juce::Graphics& g,
 
 void BeatScholarLookAndFeel::drawPopupMenuBackground(juce::Graphics& g, int width, int height)
 {
-    g.fillAll(juce::Colour(palette_.panelRaised));
-    g.setColour(juce::Colour(palette_.borderBright));
+    // Sampled from the original Swing and Bars context-menu captures.
+    g.fillAll(findColour(juce::PopupMenu::backgroundColourId));
+    g.setColour(juce::Colour(darkMode_ ? palette_.borderBright : 0xffafafafU));
     g.drawRect(juce::Rectangle<int>(0, 0, width, height), 1);
 }
 
