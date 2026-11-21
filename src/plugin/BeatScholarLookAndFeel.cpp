@@ -1134,7 +1134,8 @@ void BeatScholarLookAndFeel::drawPopupMenuSectionHeader(juce::Graphics& g,
                      24, juce::Justification::bottomLeft, 1);
     // Original 131x106 menu: divider at y29, with the 2px menu border above.
     g.setColour(juce::Colour(darkMode_ ? palette_.border : 0xff68688aU));
-    g.fillRect(area.getX() + 5, area.getY() + 27, area.getWidth() - 10, 1);
+    // Header bounds already include the 2px horizontal menu inset.
+    g.fillRect(area.getX() + 3, area.getY() + 27, area.getWidth() - 6, 1);
 }
 
 void BeatScholarLookAndFeel::drawPopupMenuBackground(juce::Graphics& g, int width, int height)
