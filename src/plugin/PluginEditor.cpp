@@ -4365,23 +4365,10 @@ bool BeatScholarLinuxEditor::keyPressed(const juce::KeyPress& key)
     }
     if (key.getKeyCode() == juce::KeyPress::F2Key)
     {
-        auto* topLevel = getTopLevelComponent();
-        const int frameWidth = topLevel != nullptr ? topLevel->getWidth() - getWidth() : 0;
-        const int frameHeight = topLevel != nullptr ? topLevel->getHeight() - getHeight() : 0;
+        // The standalone wrapper observes the editor bounds and resizes its
+        // content and frame. Direct peer writes race that propagation and can
+        // feed a transient frame offset back into the editor's default size.
         setSize(1280, 720);
-        if (processor_.wrapperType == juce::AudioProcessor::wrapperType_Standalone
-            && topLevel != nullptr)
-        {
-            const int targetWidth = 1280 + std::max(0, frameWidth);
-            const int targetHeight = 720 + std::max(0, frameHeight);
-            topLevel->setSize(targetWidth, targetHeight);
-            if (auto* peer = topLevel->getPeer())
-            {
-                const auto target = peer->getBounds().withSizeKeepingCentre(targetWidth, targetHeight);
-                peer->setBounds(target.withSizeKeepingCentre(targetWidth - 1, targetHeight - 1), false);
-                peer->setBounds(target, false);
-            }
-        }
         return true;
     }
     if (key.getKeyCode() == juce::KeyPress::F1Key)
