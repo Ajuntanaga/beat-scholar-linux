@@ -42,7 +42,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config python3-venv unzip \
+            build-essential cmake ninja-build pkg-config python3-venv unzip gdb \
             libasound2-dev libfontconfig1-dev libfreetype6-dev libgl1-mesa-dev libgtk-3-dev \
             libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev \
             libxrandr-dev libxrender-dev xvfb openbox xauth xdotool x11-utils \
@@ -83,8 +83,12 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         timeout-minutes: 10
         run: |
-          xvfb-run -a tools/bin/pluginval --strictness-level 10 --validate-in-process \
-            --validate 'build/ci/BeatScholarLinux_artefacts/Release/VST3/Beat Scholar Linux.vst3'
+          set -o pipefail
+          xvfb-run -a gdb --batch --return-child-result \
+            -ex run -ex 'thread apply all bt' --args \
+            tools/bin/pluginval --strictness-level 10 --validate-in-process \
+            --validate 'build/ci/BeatScholarLinux_artefacts/Release/VST3/Beat Scholar Linux.vst3' \
+            2>&1 | tee build/ci/pluginval.log
       - name: Check standalone settings and state recall
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         timeout-minutes: 5
@@ -140,6 +144,7 @@ jobs:
             build/ci/actual-vst3-panic/results.json
             build/ci/actual-vst3-panic/*.log
             build/ci/host-gate-reference.log
+            build/ci/pluginval.log
             build/ci/standalone-settings/**/*.png
             build/ci/standalone-settings/**/*.json
             build/ci/standalone-settings/**/*.log
