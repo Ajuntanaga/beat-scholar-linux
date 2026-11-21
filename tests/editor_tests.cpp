@@ -2656,7 +2656,17 @@ void testKeyboardFocus(const juce::File& output)
             && item->getActions().invoke(juce::AccessibilityActionType::press);
         check(selected, "select four slices through the actual Slicer dropdown at step "
               + juce::String(static_cast<int>(momentaryStep)));
-        if (!selected) juce::PopupMenu::dismissAllActiveMenus();
+        if (!selected)
+        {
+            saveVisual(*shortcutEditor, output, "slicer-dropdown-failure.png");
+            auto* hit = shortcutEditor->getComponentAt(894, 30);
+            std::cerr << "Slicer dropdown failure: editor="
+                      << shortcutEditor->getWidth() << "x" << shortcutEditor->getHeight()
+                      << ", hit=" << (hit != nullptr ? hit->getComponentID().toStdString() : "none")
+                      << ", editorHit=" << (hit == shortcutEditor.get())
+                      << ", focused=" << shortcutEditor->hasKeyboardFocus(true) << std::endl;
+            juce::PopupMenu::dismissAllActiveMenus();
+        }
         pendingUiInput = [] { return juce::Component::getCurrentlyModalComponent() == nullptr; };
     };
     const auto undoShortcutEdit = [&] {
