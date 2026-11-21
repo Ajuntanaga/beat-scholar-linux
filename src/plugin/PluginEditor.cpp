@@ -1470,10 +1470,10 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
     graphics.setFont(bsl::ui::font(10.0f * scale, true));
     if (state.ui.patternMode)
     {
-        graphics.setFont(bsl::ui::font(14.0f * scale, true));
-        graphics.drawText("Q", designRect(getWidth(), getHeight(), 1198.0f, 98.0f, 18.0f, 18.0f),
+        graphics.setFont(bsl::ui::font(16.0f * scale, true));
+        graphics.drawText("Q", designRect(getWidth(), getHeight(), 1198.0f, 95.0f, 18.0f, 18.0f),
                           juce::Justification::centred);
-        const auto arrow = designRect(getWidth(), getHeight(), 1224.0f, 102.0f, 8.0f, 7.0f).toFloat();
+        const auto arrow = designRect(getWidth(), getHeight(), 1224.0f, 103.0f, 7.0f, 8.0f).toFloat();
         juce::Path triangle;
         triangle.addTriangle(arrow.getTopLeft(), arrow.getTopRight(),
                              {arrow.getCentreX(), arrow.getBottom()});
