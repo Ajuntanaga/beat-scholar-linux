@@ -1106,6 +1106,22 @@ void BeatScholarLookAndFeel::positionComboBoxText(juce::ComboBox& box, juce::Lab
     label.setFont(font(std::max(9.0f, static_cast<float>(box.getHeight()) * 0.44f), true));
 }
 
+void BeatScholarLookAndFeel::drawPopupMenuSectionHeader(juce::Graphics& g,
+                                                       const juce::Rectangle<int>& area,
+                                                       const juce::String& sectionName)
+{
+    if (sectionName != "Swing Ref:")
+    {
+        juce::LookAndFeel_V4::drawPopupMenuSectionHeader(g, area, sectionName);
+        return;
+    }
+    // The original Swing title shares the option-label gutter and is muted.
+    g.setFont(getPopupMenuFont().boldened());
+    g.setColour(juce::Colour(palette_.textMuted));
+    g.drawFittedText(sectionName, area.getX() + 21, area.getY(), area.getWidth() - 25,
+                     static_cast<int>(area.getHeight() * 0.8f), juce::Justification::bottomLeft, 1);
+}
+
 void BeatScholarLookAndFeel::drawPopupMenuBackground(juce::Graphics& g, int width, int height)
 {
     g.fillAll(juce::Colour(palette_.panelRaised));
