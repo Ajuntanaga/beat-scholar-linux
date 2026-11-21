@@ -1117,9 +1117,9 @@ void BeatScholarLookAndFeel::drawPopupMenuSectionHeader(juce::Graphics& g,
         return;
     }
     // The original Swing title shares the option-label gutter and is muted.
-    g.setFont(getPopupMenuFont().boldened());
+    g.setFont(getPopupMenuFont().withHeight(18.0f).boldened());
     g.setColour(juce::Colour(darkMode_ ? palette_.textMuted : 0xff85859bU));
-    g.drawFittedText(sectionName, area.getX() + 21, area.getY(), area.getWidth() - 25,
+    g.drawFittedText(sectionName, area.getX() + 21, area.getY() - 4, area.getWidth() - 25,
                      static_cast<int>(area.getHeight() * 0.8f), juce::Justification::bottomLeft, 1);
 }
 
