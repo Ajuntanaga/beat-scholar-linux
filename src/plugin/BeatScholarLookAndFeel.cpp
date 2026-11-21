@@ -1015,9 +1015,12 @@ void BeatScholarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, i
     }
     if (id == "toolbar.swing")
     {
-        // Original 960px capture: full 62px rail, 2px high, with a 7px thumb.
+        // Original 960px capture: two solid rail rows with fractional outer
+        // edges, centred at y=32. Keep the thumb and interaction bounds intact.
         const float scale = area.getHeight() / 20.0f;
-        const auto track = area.withSizeKeepingCentre(area.getWidth(), 8.0f * scale / 3.0f);
+        const auto track = juce::Rectangle<float>(
+            area.getX(), area.getCentreY() - 2.5f * scale,
+            area.getWidth() - 0.5f * scale, 11.0f * scale / 3.0f);
         g.setColour(juce::Colour(darkMode_ ? palette_.border : 0xff343463));
         g.fillRect(track);
         g.setColour(juce::Colour(darkMode_ ? palette_.text : 0xffd7dbf6));
