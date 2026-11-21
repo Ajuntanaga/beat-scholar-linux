@@ -1471,7 +1471,7 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
     if (state.ui.patternMode)
     {
         graphics.setFont(bsl::ui::font(16.0f * scale, true));
-        graphics.drawText("Q", designRect(getWidth(), getHeight(), 1198.0f, 95.0f, 18.0f, 18.0f),
+        graphics.drawText("Q", designRect(getWidth(), getHeight(), 1198.0f, 96.0f, 18.0f, 18.0f),
                           juce::Justification::centred);
         const auto arrow = designRect(getWidth(), getHeight(), 1224.0f, 103.0f, 7.0f, 8.0f).toFloat();
         juce::Path triangle;
@@ -1803,7 +1803,7 @@ void BeatScholarLinuxEditor::resized()
 +                                                24.0f * designScale(getWidth(), getHeight()))));
     title_.setBounds(designRect(getWidth(), getHeight(), 16.0f, 13.0f, 132.0f, 34.0f));
     presetPrevious_.setBounds(designRect(getWidth(), getHeight(), 161.0f, 16.0f, 24.0f, 28.0f));
-    preset_.setBounds(designRect(getWidth(), getHeight(), 198.0f, 20.0f, 152.0f, 32.0f));
+    preset_.setBounds(designRect(getWidth(), getHeight(), 198.0f, 19.0f, 152.0f, 32.0f));
     presetNext_.setBounds(designRect(getWidth(), getHeight(), 361.0f, 16.0f, 24.0f, 28.0f));
     presetSave_.setBounds(designRect(getWidth(), getHeight(), 391.0f, 16.0f, 24.0f, 28.0f));
     sequencer_.setVisible(false);
