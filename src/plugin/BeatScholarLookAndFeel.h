@@ -77,6 +77,8 @@ public:
                       juce::ComboBox&) override;
     void positionComboBoxText(juce::ComboBox&, juce::Label&) override;
     void drawPopupMenuBackground(juce::Graphics&, int width, int height) override;
+    void getIdealPopupMenuSectionHeaderSizeWithOptions(const juce::String&, int,
+        int& idealWidth, int& idealHeight, const juce::PopupMenu::Options&) override;
     void drawPopupMenuSectionHeader(juce::Graphics&, const juce::Rectangle<int>&,
                                     const juce::String&) override;
     void drawPopupMenuItem(juce::Graphics&, const juce::Rectangle<int>& area,

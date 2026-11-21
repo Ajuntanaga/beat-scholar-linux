@@ -2905,7 +2905,6 @@ void BeatScholarLinuxEditor::showSwingReferenceMenu()
     const auto current = processor_.projectState().global.swingReference;
     juce::PopupMenu menu;
     menu.addSectionHeader("Swing Ref:");
-    menu.addSeparator();
     menu.addItem(1, "1/8", true, current == bsl::SwingReference::eighth);
     menu.addItem(2, "1/4", true, current == bsl::SwingReference::quarter);
     menu.addItem(3, "1/2", true, current == bsl::SwingReference::half);

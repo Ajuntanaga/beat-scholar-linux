@@ -1107,6 +1107,17 @@ void BeatScholarLookAndFeel::positionComboBoxText(juce::ComboBox& box, juce::Lab
     label.setFont(font(std::max(9.0f, static_cast<float>(box.getHeight()) * 0.44f), true));
 }
 
+void BeatScholarLookAndFeel::getIdealPopupMenuSectionHeaderSizeWithOptions(
+    const juce::String& text, int standardHeight, int& width, int& height,
+    const juce::PopupMenu::Options& options)
+{
+    juce::LookAndFeel_V4::getIdealPopupMenuSectionHeaderSizeWithOptions(
+        text, standardHeight, width, height, options);
+    // Swing includes its divider here: 33px header + three 23px rows + 4px border.
+    if (text == "Swing Ref:")
+        height = 33;
+}
+
 void BeatScholarLookAndFeel::drawPopupMenuSectionHeader(juce::Graphics& g,
                                                        const juce::Rectangle<int>& area,
                                                        const juce::String& sectionName)
@@ -1120,7 +1131,10 @@ void BeatScholarLookAndFeel::drawPopupMenuSectionHeader(juce::Graphics& g,
     g.setFont(getPopupMenuFont().withHeight(18.0f).boldened());
     g.setColour(juce::Colour(darkMode_ ? palette_.textMuted : 0xff85859bU));
     g.drawFittedText(sectionName, area.getX() + 21, area.getY() - 4, area.getWidth() - 25,
-                     static_cast<int>(area.getHeight() * 0.8f), juce::Justification::bottomLeft, 1);
+                     24, juce::Justification::bottomLeft, 1);
+    // Original 131x106 menu: divider at y29, with the 2px menu border above.
+    g.setColour(juce::Colour(darkMode_ ? palette_.border : 0xff68688aU));
+    g.fillRect(area.getX() + 5, area.getY() + 27, area.getWidth() - 10, 1);
 }
 
 void BeatScholarLookAndFeel::drawPopupMenuBackground(juce::Graphics& g, int width, int height)
