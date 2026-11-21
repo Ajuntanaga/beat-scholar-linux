@@ -1470,9 +1470,10 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
     graphics.setFont(bsl::ui::font(10.0f * scale, true));
     if (state.ui.patternMode)
     {
-        graphics.drawText("Q", designRect(getWidth(), getHeight(), 1198.0f, 88.0f, 12.0f, 18.0f),
+        graphics.setFont(bsl::ui::font(14.0f * scale, true));
+        graphics.drawText("Q", designRect(getWidth(), getHeight(), 1198.0f, 98.0f, 18.0f, 18.0f),
                           juce::Justification::centred);
-        const auto arrow = designRect(getWidth(), getHeight(), 1213.0f, 94.0f, 8.0f, 5.0f).toFloat();
+        const auto arrow = designRect(getWidth(), getHeight(), 1224.0f, 102.0f, 8.0f, 7.0f).toFloat();
         juce::Path triangle;
         triangle.addTriangle(arrow.getTopLeft(), arrow.getTopRight(),
                              {arrow.getCentreX(), arrow.getBottom()});
@@ -2323,7 +2324,7 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
     if (!event.mods.isPopupMenu())
     {
         if (processor_.projectState().ui.patternMode
-            && designRect(getWidth(), getHeight(), 1161.0f, 88.0f, 99.0f, 18.0f).contains(position))
+            && designRect(getWidth(), getHeight(), 1161.0f, 98.0f, 99.0f, 18.0f).contains(position))
         {
             showPatternQuantizationMenu();
             return;
@@ -3684,7 +3685,7 @@ void BeatScholarLinuxEditor::showPatternQuantizationMenu()
     if (index >= state.patterns.size()) return;
     auto menu = quantizationMenu(state.global.quantization.value_or(state.patterns[index].quantization));
     menu.setLookAndFeel(&lookAndFeel_);
-    const auto bounds = designRect(getWidth(), getHeight(), 1161.0f, 88.0f, 99.0f, 18.0f);
+    const auto bounds = designRect(getWidth(), getHeight(), 1161.0f, 98.0f, 99.0f, 18.0f);
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(localAreaToGlobal(bounds)),
         [safe = juce::Component::SafePointer<BeatScholarLinuxEditor>(this),
          revision = processor_.restoredStateRevision(), index,

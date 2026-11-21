@@ -2115,7 +2115,7 @@ private:
             }
             else
             {
-                const juce::Point<float> point {1209.0f * width / 1280.0f, 97.0f * width / 1280.0f};
+                const juce::Point<float> point {1209.0f * width / 1280.0f, 107.0f * width / 1280.0f};
                 juce::Desktop::setMousePosition(editor_->localPointToGlobal(point.toInt()));
                 editor_->mouseDown(visualEvent(*editor_, point));
             }
