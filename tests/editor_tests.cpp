@@ -6323,6 +6323,30 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
         check(similar(colour(rest, silentPadPoint), colour(restIdle, silentPadPoint)),
               "silent slice does not flash its assigned pad");
     saveVisual(*editor, output, "playback-rest.png");
+
+    // Hosts may destroy the editor while processing continues. Reopening must
+    // discard expired activity yet still display the next host-triggered hit.
+    editor.reset();
+    render(0, true, false);
+    for (int start = 480; start <= 9600; start += 480)
+        render(start, true, false);
+    editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    editor->setVisible(true);
+    BeatScholarLinuxEditorTestAccess::tick(*editor);
+    check(similar(colour(snapshot(), left), colour(restIdle, left)),
+          "reopened hosted editor does not replay expired slice activity");
+    check(render(0, true) == 1, "host seek after editor reopen emits its first note");
+    check(brighter(snapshot(), restIdle, left),
+          "reopened hosted editor lights the next host-triggered slice");
+    if (auto* reopenedPad = childWithId<juce::TextButton>(*editor, "pad.0"))
+    {
+        const auto point = reopenedPad->getBounds().getCentre() + juce::Point<int>(0, 12);
+        check(!similar(colour(snapshot(), point), colour(restIdle, point)),
+              "reopened hosted editor lights the next host-triggered pad");
+    }
+    else
+        check(false, "reopened hosted editor retains its sampler pad");
+    saveVisual(*editor, output, "playback-reopened.png");
     processor->setPlayHead(nullptr);
     processor->releaseResources();
 }
