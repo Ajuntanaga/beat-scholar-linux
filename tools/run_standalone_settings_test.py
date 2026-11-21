@@ -95,6 +95,17 @@ def saved_project(home):
         raise RuntimeError('Saved standalone state has no BSLX envelope')
     return json.loads(zlib.decompress(raw[8:]))
 
+def saved_audio_setup(home):
+    settings = ET.parse(home / '.config' / 'Beat Scholar Linux.settings').getroot()
+    entry = settings.find("VALUE[@name='audioSetup']")
+    if entry is None or not entry.get('val'):
+        raise RuntimeError('Explicit audio selection was not saved')
+    setup = ET.fromstring(entry.attrib['val'])
+    if setup.tag != 'DEVICESETUP':
+        raise RuntimeError('Unexpected saved audio setup format')
+    return setup.attrib
+
+
 def close_app(app, main):
     # Click JUCE's own title-bar close button, so the real close/save path
     # also works without a window manager on an isolated Xvfb display.
@@ -164,6 +175,12 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             settings = wait_window('Audio/MIDI Settings', app.pid)
             capture_rendered_window(settings, 'standalone-settings.png')
             xdo('windowfocus', '--sync', settings)
+            # This dialog belongs to the private ALSA null fixture. Its rate
+            # list advances from 44100 to 48000; exercise actual UI selection.
+            xdo('mousemove', '--window', settings, 300, 165, 'click', '1')
+            xdo('key', 'Down', 'Return')
+            time.sleep(0.2)
+            capture_rendered_window(settings, 'standalone-settings-rate-changed.png')
             xdo('key', 'Escape')
             deadline = time.monotonic() + 5
             while windows('Audio/MIDI Settings', app.pid) and time.monotonic() < deadline:
@@ -245,6 +262,9 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             xdo('type', '--clearmodifiers', '137')
             xdo('key', 'Return')
             close_app(app, main)
+            audio_saved = saved_audio_setup(scratch)
+            if float(audio_saved.get('audioDeviceRate', 0)) != 48000:
+                raise RuntimeError(f'Rate selection did not save 48000 Hz: {audio_saved}')
             saved = saved_project(scratch)
             if saved['global']['beatsPerMinute'] != 137:
                 raise RuntimeError('Standalone did not save the edited tempo of 137 BPM')
@@ -256,6 +276,9 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             main = wait_window('Beat Scholar Linux', app.pid)
             capture_rendered_window(main, 'standalone-restored.png')
             close_app(app, main)
+            audio_recalled = saved_audio_setup(scratch)
+            if audio_recalled != audio_saved:
+                raise RuntimeError('Standalone audio setup changed across close/reopen')
             recalled = saved_project(scratch)
             if recalled != saved:
                 raise RuntimeError('Standalone project changed across close/reopen')
@@ -331,6 +354,8 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
                                'saved_tempo': flam['global']['beatsPerMinute'], 'note_on_samples': [0, 4800]}
             (output / 'result.json').write_text(json.dumps({'settings_opened_from_cog': True,
                 'settings_closed_with_escape': True, 'device_selection_changed': False,
+                'sample_rate_changed_via_ui': True, 'audio_setup_recalled': True,
+                'saved_sample_rate': float(audio_saved['audioDeviceRate']),
                 'standalone_space_play_pause': True,
                 'actual_c_copy_v_preview_drag_fill': True,
                 'single_undo_restores_drag_targets': True, 'redo_restores_drag_targets': True,
