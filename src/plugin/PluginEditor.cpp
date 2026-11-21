@@ -1268,7 +1268,9 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
     graphics.fillAll(juce::Colour(lookAndFeel_.palette().background));
 
     const auto toolbar = designRect(getWidth(), getHeight(), 8.0f, 8.0f, 1264.0f, 46.0f);
-    graphics.setColour(juce::Colour(lookAndFeel_.palette().panel));
+    // Original toolbar capture uses a distinct background from the lower panels.
+    graphics.setColour(juce::Colour(processor_.projectState().ui.darkMode
+                                       ? lookAndFeel_.palette().panel : 0xff14142fU));
     graphics.fillRect(toolbar);
 
     // The manual's wordmark is text crossed by a thin geometric star.
