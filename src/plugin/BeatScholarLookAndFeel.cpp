@@ -1141,7 +1141,8 @@ void BeatScholarLookAndFeel::drawPopupMenuItem(juce::Graphics& g, const juce::Re
     if (separator)
     {
         g.setColour(juce::Colour(darkMode_ ? palette_.border : 0xff68688aU));
-        g.fillRect(area.reduced(7, 0).withHeight(1).withCentre(area.getCentre()));
+        // Original popup divider spans x=5..125 in a 131-pixel menu.
+        g.fillRect(area.reduced(5, 0).withHeight(1).withCentre(area.getCentre()));
         return;
     }
     if (highlighted && active)
