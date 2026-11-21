@@ -1565,9 +1565,10 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
     }
     graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
     graphics.setFont(bsl::ui::font(14.0f * scale, true));
-    graphics.drawText(module_ == Module::randomizer ? "Randomizer" : juce::String(padNames[state.ui.selectedPad]),
-                      designRect(getWidth(), getHeight(), 546.0f, 524.0f, 384.0f, 30.0f),
-                      juce::Justification::centred);
+    if (module_ == Module::randomizer)
+        graphics.drawText("Randomizer",
+                          designRect(getWidth(), getHeight(), 546.0f, 524.0f, 384.0f, 30.0f),
+                          juce::Justification::centred);
     graphics.setFont(bsl::ui::font(17.0f * scale, true));
     graphics.drawText("Master", designRect(getWidth(), getHeight(), 1066.0f, 526.0f, 206.0f, 30.0f),
                       juce::Justification::centred);
