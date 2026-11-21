@@ -1016,7 +1016,7 @@ void BeatScholarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, i
     if (id == "toolbar.swing")
     {
         // Original 960px capture: two solid rail rows with fractional outer
-        // edges, centred at y=32. Keep the thumb and interaction bounds intact.
+        // edges, centred at y=32. Align the thumb without changing interaction bounds.
         const float scale = area.getHeight() / 20.0f;
         const auto track = juce::Rectangle<float>(
             area.getX(), area.getCentreY() - 2.5f * scale,
@@ -1025,7 +1025,7 @@ void BeatScholarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, i
         g.fillRect(track);
         g.setColour(juce::Colour(darkMode_ ? palette_.text : 0xffd7dbf6));
         g.fillEllipse(juce::Rectangle<float>(9.0f * scale, 9.0f * scale)
-                          .withCentre({ sliderPos, area.getCentreY() }));
+                          .withCentre({ sliderPos, track.getCentreY() }));
         return;
     }
     if (id == "master.4")
