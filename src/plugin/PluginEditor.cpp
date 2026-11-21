@@ -28,14 +28,14 @@ void addShortcutMenuItem(juce::PopupMenu& menu, int id, const juce::String& text
     menu.addItem(std::move(item));
 }
 
-// Basic Beat Making & Editing: duplicate sits 70% along the bar, with
-// fixed spacing for add/remove. Share the rectangle between paint and input.
+// Matched 1.6.2 capture: shift the tutorial action group 24 design pixels
+// right, retaining its spacing. Share the rectangle between paint and input.
 juce::Rectangle<float> barHeaderActions(juce::Rectangle<float> bounds, float scale)
 {
     if (bounds.getWidth() < 300.0f * scale)
         return {};
     constexpr float spacing = 33.0f;
-    return { bounds.getX() + bounds.getWidth() * 0.70f - spacing * scale * 0.5f,
+    return { bounds.getX() + bounds.getWidth() * 0.70f + (24.0f - spacing * 0.5f) * scale,
              bounds.getY(), 3.0f * spacing * scale, bounds.getHeight() };
 }
 
@@ -1351,7 +1351,7 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
             const float actionWidth = actions.getWidth() / 3.0f;
             for (int action = 0; action < 3; ++action)
                 drawActionGlyph(actions.removeFromLeft(actionWidth)
-                                    .withSizeKeepingCentre(18.0f * scale, 18.0f * scale), action);
+                                    .withSizeKeepingCentre(24.0f * scale, 18.0f * scale), action);
         }
         firstQuarter += duration;
     }

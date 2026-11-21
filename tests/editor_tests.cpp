@@ -1099,18 +1099,18 @@ void testBarHeaderActions(const juce::File& output)
             editor->mouseUp(event);
         };
         const auto barCount = [&] { return processor->projectState().patterns.front().bars.size(); };
-        // Reference centers: 70% along each bar, then 33 design pixels apart.
-        click(436);
+        // Matched original centers include the 24-design-pixel group offset.
+        click(460);
         check(barCount() == 3, "bar-header duplicate follows tutorial placement at each window size");
         check(processor->projectEditor().undo() && barCount() == 2,
               "one Undo restores header duplication");
         check(processor->projectEditor().redo() && barCount() == 3,
               "one Redo restores header duplication");
-        click(377);
+        click(401);
         check(barCount() == 2, "bar-header remove follows resized bar after duplication");
-        click(469);
+        click(493);
         check(barCount() == 3, "bar-header add appends a bar at tutorial placement");
-        click(410);
+        click(434);
         check(barCount() == 3, "empty far-right header space no longer activates remove");
         if (width == 1280) saveVisual(*editor, output, "tutorial-bar-header-three.png");
 
@@ -1128,7 +1128,7 @@ void testBarHeaderActions(const juce::File& output)
         scroll.deltaX = -0.75f; // 6 quarter notes: bar two is partially clipped.
         editor->mouseWheelMove(visualEvent(*editor, { 100.0f * scale, 300.0f * scale }, {}), scroll);
         if (width == 1280) saveVisual(*editor, output, "tutorial-bar-header-scrolled.png");
-        click(168);
+        click(192);
         check(barCount() == 5, "partially clipped header retains the visible duplicate target");
         check(processor->projectEditor().undo() && barCount() == 4,
               "one Undo restores the scrolled header action");
