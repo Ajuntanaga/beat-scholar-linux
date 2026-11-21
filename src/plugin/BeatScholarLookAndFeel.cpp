@@ -358,6 +358,7 @@ void BeatScholarLookAndFeel::setDarkMode(bool enabled)
         palette_.background = 0xff050505;
         palette_.panel = 0xff0f0f0f;
         palette_.patternCanvas = 0xff0f0f0f;
+        palette_.barHeaderDivider = 0xff303030;
         palette_.panelRaised = 0xff232323;
         palette_.laneControlIdle = 0xff141414;
         palette_.arrangementCard = 0xff232323;
@@ -969,6 +970,12 @@ juce::Slider::SliderLayout BeatScholarLookAndFeel::getSliderLayout(juce::Slider&
         const int inset = juce::roundToInt(static_cast<float>(slider.getHeight()) * 12.0f / 116.0f);
         layout.sliderBounds = slider.getLocalBounds().reduced(0, inset);
     }
+    else if (slider.getComponentID() == "sound.5" && slider.isVertical())
+    {
+        // Match the reference Level rail and mouse travel at every editor size.
+        const int inset = juce::roundToInt(static_cast<float>(slider.getHeight()) * 4.0f / 97.0f);
+        layout.sliderBounds = slider.getLocalBounds().reduced(0, inset);
+    }
     return layout;
 }
 
@@ -996,6 +1003,19 @@ void BeatScholarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, i
         g.setColour(juce::Colour(palette_.text));
         g.fillRoundedRectangle(area.withSizeKeepingCentre(area.getWidth() * 0.56f,
                                                            area.getHeight() * (8.0f / 92.0f))
+                                   .withCentre({ area.getCentreX(), sliderPos }),
+                               area.getWidth() * 0.04f);
+        return;
+    }
+    if (id == "sound.5" && style == juce::Slider::LinearVertical)
+    {
+        const auto track = area.withSizeKeepingCentre(area.getWidth() * (6.0f / 42.0f),
+                                                       area.getHeight());
+        g.setColour(juce::Colour(darkMode_ ? 0xff282828U : 0xff282856U));
+        g.fillRoundedRectangle(track, track.getWidth() * 0.5f);
+        g.setColour(juce::Colour(palette_.text));
+        g.fillRoundedRectangle(area.withSizeKeepingCentre(area.getWidth() * (20.0f / 42.0f),
+                                                           area.getHeight() * (8.0f / 89.0f))
                                    .withCentre({ area.getCentreX(), sliderPos }),
                                area.getWidth() * 0.04f);
         return;

@@ -1317,8 +1317,12 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
         juce::Rectangle<float> bounds(x, header.getY(), width - scale, header.getHeight());
         graphics.setColour(juce::Colour(lookAndFeel_.palette().patternCanvas));
         graphics.fillRect(bounds);
-        graphics.setColour(juce::Colour(lookAndFeel_.palette().border));
-        graphics.drawRect(bounds, std::max(1.0f, scale));
+        // The reference header has vertical separators, without a horizontal frame.
+        graphics.setColour(juce::Colour(lookAndFeel_.palette().barHeaderDivider));
+        const int dividerWidth = std::max(1, juce::roundToInt(scale));
+        for (const float edge : { bounds.getX(), bounds.getRight() })
+            graphics.fillRect(juce::roundToInt(edge), juce::roundToInt(bounds.getY()),
+                              dividerWidth, juce::roundToInt(bounds.getHeight()));
         graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
         const auto meterArea = bounds.withSizeKeepingCentre(std::min(bounds.getWidth() * 0.45f, 120.0f * scale),
                                                             bounds.getHeight());
@@ -1922,13 +1926,13 @@ void BeatScholarLinuxEditor::resized()
             }
             else if (index == 5)
             {
-                soundLabels_[index].setBounds(designRect(getWidth(), getHeight(), 984.0f, 566.0f, 54.0f, 14.0f));
-                soundControls_[index].setBounds(designRect(getWidth(), getHeight(), 990.0f, 607.0f, 42.0f, 95.0f));
+                soundLabels_[index].setBounds(designRect(getWidth(), getHeight(), 997.0f, 566.0f, 54.0f, 14.0f));
+                soundControls_[index].setBounds(designRect(getWidth(), getHeight(), 1003.0f, 610.0f, 42.0f, 97.0f));
             }
             else if (index == 6)
             {
-                soundLabels_[index].setBounds(designRect(getWidth(), getHeight(), 983.0f, 582.0f, 56.0f, 18.0f));
-                soundControls_[index].setBounds(designRect(getWidth(), getHeight(), 992.0f, 582.0f, 38.0f, 18.0f));
+                soundLabels_[index].setBounds(designRect(getWidth(), getHeight(), 996.0f, 590.0f, 56.0f, 18.0f));
+                soundControls_[index].setBounds(designRect(getWidth(), getHeight(), 1005.0f, 590.0f, 38.0f, 18.0f));
             }
             else
             {
