@@ -147,10 +147,13 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             width, height = int(geometry['WIDTH']), int(geometry['HEIGHT'])
             xdo('windowfocus', '--sync', main)
             capture_rendered_window(main, 'standalone-before.png')
-            record_geometry('painted', dict(line.split('=', 1) for line in
-                xdo('getwindowgeometry', '--shell', main).stdout.splitlines() if '=' in line))
+            geometry = dict(line.split('=', 1) for line in
+                xdo('getwindowgeometry', '--shell', main).stdout.splitlines() if '=' in line)
+            record_geometry('painted', geometry)
+            width, height = int(geometry['WIDTH']), int(geometry['HEIGHT'])
             # Manual p5: F2 restores window size after a user resize.
-            # X11 measures the JUCE frame too; retain the fresh default size.
+            # X11 measures the JUCE frame too; use the painted default size,
+            # not the earlier mapping size before the window has rendered.
             default_window_size = (width, height)
             wrapper_height = round(height - 720 * width / 1280)
             xdo('windowsize', '--sync', main, '960', str(540 + wrapper_height))
