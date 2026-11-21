@@ -1132,9 +1132,11 @@ void BeatScholarLookAndFeel::drawPopupMenuItem(juce::Graphics& g, const juce::Re
         g.fillRect(area.reduced(1, 0));
     }
     auto content = area.reduced(9, 1);
-    const int markWidth = std::max(17, content.getHeight());
+    // Original Bars and Swing menus reserve a fixed gutter for the checkmark.
+    // Taller rows must not push their labels further to the right.
+    const int markWidth = icon != nullptr ? std::max(17, content.getHeight()) : 12;
     auto mark = content.removeFromLeft(markWidth);
-    auto arrow = content.removeFromRight(submenu ? markWidth : 0);
+    auto arrow = content.removeFromRight(submenu ? std::max(17, content.getHeight()) : 0);
     const auto tint = textColour != nullptr ? *textColour
                      : active ? juce::Colour(palette_.text)
                               : juce::Colour(palette_.textMuted).withAlpha(0.6f);
