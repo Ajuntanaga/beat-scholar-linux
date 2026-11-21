@@ -1494,7 +1494,8 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
                                        : juce::Colour(lookAndFeel_.palette().border));
                 graphics.drawRect(bounds, index == state.activePattern ? 2 : 1);
                 graphics.setColour(juce::Colour(lookAndFeel_.palette().text));
-                graphics.setFont(bsl::ui::font(14.0f * scale, true));
+                // Match the original Patterns card title at the 960px reference size.
+                graphics.setFont(bsl::ui::font(18.0f * scale, true).withHorizontalScale(1.1f));
                 graphics.drawFittedText(juce::String(state.patterns[index].name),
                                         bounds.reduced(juce::roundToInt(5.0f * scale),
                                                        juce::roundToInt(3.0f * scale)),
