@@ -478,6 +478,7 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
         configureModuleControls();
     });
     soundTab_.setComponentID("sound.title");
+    soundTab_.getProperties().set("flatButton", true);
     configureButton(randomizerTab_, "RANDOM", [this] {
         if (module_ == Module::randomizer)
             showRandomizerPresetMenu();
@@ -511,6 +512,7 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     kitLocked_.setComponentID("kit.lock");
     configureButton(kitMenu_, "Init", [this] { showKitPresetMenu(); });
     kitMenu_.setComponentID("kit.menu");
+    kitMenu_.getProperties().set("flatButton", true);
     kitMenu_.setTooltip("Open factory and user kit presets, save a kit, or show its directory");
     configureButton(kitSave_, "", [this] { saveKitAs(); });
     kitSave_.setComponentID("icon.save");
