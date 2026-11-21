@@ -2381,8 +2381,99 @@ private:
     int phase_ = 0;
 };
 
+class SwingReferenceMenuTests final : private juce::Timer
+{
+public:
+    explicit SwingReferenceMenuTests(const juce::File& output) : output_(output)
+    {
+        editor_ = std::make_unique<BeatScholarLinuxEditor>(processor_);
+        editor_->setSize(960, 540);
+        window_.setContentNonOwned(editor_.get(), true);
+    }
+    ~SwingReferenceMenuTests() override { window_.clearContentComponent(); }
+    void start(std::function<void()> done)
+    {
+        done_ = std::move(done);
+        window_.setVisible(true);
+        window_.toFront(true);
+        startTimer(75);
+    }
+private:
+    static juce::AccessibilityHandler* item(juce::Component& component, const juce::String& title)
+    {
+        if (auto* h = component.getAccessibilityHandler(); h != nullptr && h->getTitle() == title) return h;
+        for (auto* child : component.getChildren())
+            if (auto* h = item(*child, title)) return h;
+        return nullptr;
+    }
+    void finish()
+    {
+        juce::PopupMenu::dismissAllActiveMenus();
+        stopTimer();
+        window_.setVisible(false);
+        done_();
+    }
+    void timerCallback() override
+    {
+        const char* labels[] = { "1/8", "1/4", "1/2" };
+        const bsl::SwingReference values[] = { bsl::SwingReference::eighth,
+            bsl::SwingReference::quarter, bsl::SwingReference::half };
+        if (phase_ == 0)
+        {
+            auto* slider = childWithId<juce::Slider>(*editor_, "toolbar.swing");
+            check(slider != nullptr, "Swing slider exposes its reference popup target");
+            if (slider == nullptr) { finish(); return; }
+            const auto point = slider->getBounds().getCentre().toFloat();
+            juce::Desktop::setMousePosition(editor_->localPointToGlobal(point.toInt()));
+            editor_->mouseDown(visualEvent(*editor_, point, juce::ModifierKeys::rightButtonModifier));
+            phase_ = 1;
+        }
+        else if (phase_ == 1)
+        {
+            auto* menu = juce::Component::getCurrentlyModalComponent();
+            check(menu != nullptr, "Right clicking Swing opens its reference menu");
+            if (menu == nullptr) { finish(); return; }
+            if (selection_ == 0) saveVisual(*menu, output_, "swing-reference-menu.png");
+            for (int i = 0; i < 3; ++i)
+            {
+                auto* action = item(*menu, labels[i]);
+                check(action != nullptr, "Swing menu includes every original timing reference");
+                if (action != nullptr)
+                    check(action->getCurrentState().isChecked()
+                              == (processor_.projectState().global.swingReference == values[i]),
+                          "Swing menu checkmark reflects the active timing reference");
+            }
+            auto* action = item(*menu, labels[selection_]);
+            const bool invoked = action != nullptr
+                && action->getActions().invoke(juce::AccessibilityActionType::press);
+            check(invoked, "Swing timing reference is actionable");
+            if (!invoked) { finish(); return; }
+            deadline_ = juce::Time::getMillisecondCounterHiRes() + 2000.0;
+            phase_ = 2;
+        }
+        else
+        {
+            const bool applied = processor_.projectState().global.swingReference == values[selection_];
+            if (!applied && juce::Time::getMillisecondCounterHiRes() < deadline_) return;
+            check(applied, "Swing popup selection updates the timing reference");
+            if (++selection_ == 3) { finish(); return; }
+            phase_ = 0;
+        }
+    }
+    juce::File output_;
+    BeatScholarLinuxProcessor processor_;
+    std::unique_ptr<BeatScholarLinuxEditor> editor_;
+    juce::DocumentWindow window_ { "Swing reference menu", juce::Colours::black,
+                                   juce::DocumentWindow::closeButton };
+    std::function<void()> done_;
+    double deadline_ = 0;
+    int phase_ = 0;
+    int selection_ = 0;
+};
+
 void testKeyboardFocus(const juce::File& output)
 {
+    SwingReferenceMenuTests swingReferenceMenus(output);
     InitPresetMenuTests initPresetMenus(output);
     TutorialHeaderAndFactoryMenus headerAndFactory(output);
     TutorialArrangementMenuTests arrangementMenus(output);
@@ -2843,7 +2934,9 @@ void testKeyboardFocus(const juce::File& output)
             arrangementMenus.start([&] {
                 sampleChooser.start([&] {
                     headerAndFactory.start([&] {
-                        initPresetMenus.start([] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
+                        initPresetMenus.start([&] {
+                            swingReferenceMenus.start([] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
+                        });
                     });
                 });
             });
