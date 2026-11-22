@@ -2877,6 +2877,30 @@ void testTwoFactoryLayersMixContinuously()
 
 void testNativeLayerMixGainPrecision()
 {
+    // Original snare captures at 0.67 and 0.674 are bit-identical. Matching
+    // their HPF input requires the float interval product 67 * 0.01f.
+    std::array<float, 3> snappedOutputs {};
+    const float mixes[] { 0.6699999570846558f, 0.67f, 0.674f };
+    for (std::size_t i = 0; i < snappedOutputs.size(); ++i)
+    {
+        bsl::AudioEngine engine;
+        prepareDryEngine(engine, 48000.0);
+        engine.setModuleEnables(false, false);
+        engine.setPadLayerSample(0, 0, { 48000.0, { { 1.0f } } });
+        engine.setPadLayerSample(0, 1, { 48000.0, { { 0.0f } } });
+        auto settings = dryPadSettings();
+        settings.layerMix = mixes[i];
+        settings.pan = -1.0f;
+        engine.setPadSettings(0, settings);
+        engine.noteOn(36, 1.0f);
+        auto output = makeBlock(34, 1);
+        engine.process(output, 1);
+        snappedOutputs[i] = output[0][0];
+    }
+    check(snappedOutputs[0] == snappedOutputs[1]
+              && snappedOutputs[0] == snappedOutputs[2],
+          "layer mix snaps to the native float interval before gain conversion");
+
     // Original Volume parameters captured at LayerMix 0.81: 0x3ff42424 and
     // 0x3f16d284. The previous fitted pow curve rounds layer 2 up one ULP,
     // which accumulates into a rendered-reference mismatch through the HPF.

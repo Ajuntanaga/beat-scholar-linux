@@ -300,7 +300,9 @@ void AudioEngine::setPadSettings(std::size_t padIndex, PadPlaybackSettings setti
 {
     if (padIndex >= padCount)
         return;
-    settings.layerMix = std::clamp(settings.layerMix, 0.0f, 1.0f);
+    // Match the native parameter's float interval snapping before gain conversion.
+    settings.layerMix = std::floor(std::clamp(settings.layerMix, 0.0f, 1.0f)
+                                   / 0.01f + 0.5f) * 0.01f;
     settings.gain = std::clamp(settings.gain, 0.0f, 4.0f);
     settings.pan = std::clamp(settings.pan, -1.0f, 1.0f);
     settings.attackSeconds = std::clamp(settings.attackSeconds, 0.0f, 10.0f);
