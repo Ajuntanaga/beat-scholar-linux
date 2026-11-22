@@ -954,6 +954,15 @@ void testMidiChannelRouting()
 
 int main()
 {
+    check(bsl::filterResonanceQ(-1.0f) == bsl::filterResonanceQ(0.0f) &&
+              bsl::filterResonanceQ(2.0f) == bsl::filterResonanceQ(1.0f) &&
+              std::abs(bsl::filterResonanceQ(1.0f) - 2.5f) < 3e-7f,
+          "resonance clamps to the native Q range");
+    check(bsl::filterResonanceQ(0.649999976158141979f) == 1.659999966621399f,
+          "resonance matches the native FX1 Q step exactly");
+    check(std::abs(bsl::filterResonanceQ((0.804f - 0.1f) / 2.4f) - 0.8f) < 1e-7f &&
+              std::abs(bsl::filterResonanceQ((0.806f - 0.1f) / 2.4f) - 0.81f) < 1e-7f,
+          "resonance snaps on both sides of a native hundredth-step boundary");
     // Original plugin parameter 58 for the 12.19 kHz snare fixture.
     check(bsl::normalizedFilterCutoff(12190.0f) == 0.86169862747192383f,
           "cutoff normalization matches native float midpoint skew");

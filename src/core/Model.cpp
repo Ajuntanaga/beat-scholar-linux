@@ -41,6 +41,15 @@ float normalizedPadHighPassCutoff(float frequencyHz) noexcept
     return position > 0.0f ? std::exp(std::log(position) * skew) : 0.0f;
 }
 
+float filterResonanceQ(float normalized) noexcept
+{
+    // Native Reso range: 0.1..2.5, interval 0.01, linear skew.
+    // Snap after denormalizing, preserving the native float operation order.
+    const float value = 0.1f + 2.4f * std::clamp(normalized, 0.0f, 1.0f);
+    return std::clamp(0.1f + 0.01f * std::floor((value - 0.1f) / 0.01f + 0.5f),
+                      0.1f, 2.5f);
+}
+
 float filterCutoffHz(float normalized) noexcept
 {
     // Native FreqParameter computes its midpoint skew in float precision.

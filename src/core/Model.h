@@ -19,6 +19,7 @@ inline constexpr float defaultFilterResonance = 7.0f / 24.0f;
 
 [[nodiscard]] float padHighPassCutoffHz(float normalized) noexcept;
 [[nodiscard]] float normalizedPadHighPassCutoff(float frequencyHz) noexcept;
+[[nodiscard]] float filterResonanceQ(float normalized) noexcept;
 [[nodiscard]] float filterCutoffHz(float normalized) noexcept;
 [[nodiscard]] float normalizedFilterCutoff(float frequencyHz) noexcept;
 

@@ -26,6 +26,15 @@ float auxiliaryTaper(float amount, float decibelsPerHalving)
         ? std::pow(10.0f, decibelsPerHalving * std::log2(amount) / 20.0f) : 0.0f;
 }
 
+float auxiliarySendGain(float amount)
+{
+    // Native Aux1..Aux4 use a gain range with a -12 dB midpoint.
+    // Preserve its float skew and inverse operation order; the algebraically
+    // equivalent decibel taper rounds differently before nonlinear effects.
+    constexpr float skew = 0.501716673374176f;
+    return amount > 0.0f ? std::exp(std::log(amount) / skew) : 0.0f;
+}
+
 float padDriveAmount(float gainDb)
 {
     constexpr float span = 14.848933219909668f;
@@ -598,11 +607,11 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
         // Aux4 ramps from zero over 100 ms, including silent time before a hit.
         // It is independent of per-voice and idle-to-active resets.
         auto& auxGain = padAuxGains_[pad];
-        auxGain.setTarget(auxiliaryTaper(settings.auxGain, 12.0f),
+        auxGain.setTarget(auxiliarySendGain(settings.auxGain),
                           static_cast<std::size_t>(sampleRate_ * 0.1));
         auto& distortionSend = padDistortionSends_[pad];
         distortionSend.setTarget(settings.independentDistortion
-                                     ? auxiliaryTaper(settings.distortionMix, 12.0f) : 0.0f,
+                                     ? auxiliarySendGain(settings.distortionMix) : 0.0f,
                                  static_cast<std::size_t>(sampleRate_ * 0.1));
         const std::size_t target = routingMode_ == RoutingMode::stereo ? 0 : 2 + pad * 2;
         if (target + 1 >= output.size())
@@ -655,7 +664,7 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                                                 static_cast<float>(sampleRate_ * 0.499));
         const float lowPassG = std::tan(3.14159265358979323846f * lowPassFrequency
                                         / static_cast<float>(sampleRate_));
-        const float lowPassR = 1.0f / (0.1f + 2.4f * settings.resonance);
+        const float lowPassR = 1.0f / filterResonanceQ(settings.resonance);
         // Native c977f5-c97809 adds r*g + 1 before g*g; float grouping
         // matters because the resulting coefficient feeds recursive state.
         const float lowPassA = 1.0f / (lowPassG * lowPassG + (lowPassR * lowPassG + 1.0f));
@@ -735,8 +744,8 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
             padDspResetPending_[pad] = false;
         }
         // Native pre-effect captures: each halving of either send is -12 dB.
-        const float roomSendGain = auxiliaryTaper(settings.room, 12.0f);
-        const float plateSendGain = auxiliaryTaper(settings.reverb, 12.0f);
+        const float roomSendGain = auxiliarySendGain(settings.room);
+        const float plateSendGain = auxiliarySendGain(settings.reverb);
         const auto crusher = crushParameters(settings.crush);
         std::array<bool, voiceCount> finishedSamples {};
         for (std::size_t frame = start; frame < end; ++frame)
@@ -1027,7 +1036,7 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
         constexpr float masterFilterRate = 44100.0f;
         const float frequency = filterCutoffHz(master_.cutoff);
         const float g = std::tan(3.14159265358979323846f * frequency / masterFilterRate);
-        const float inverseQ = 1.0f / (0.1f + 2.4f * master_.resonance);
+        const float inverseQ = 1.0f / filterResonanceQ(master_.resonance);
         const float h = 1.0f / (1.0f + inverseQ * g + g * g);
         const auto lowPass = [g, inverseQ, h](float input, auto& stages) {
             for (auto& state : stages)
