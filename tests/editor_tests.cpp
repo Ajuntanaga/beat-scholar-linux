@@ -5053,6 +5053,42 @@ void testTutorialContinuousZoomAndProportionalScroll(const juce::File& output)
     }
 }
 
+void testManualModifierWheelZoom()
+{
+    // Manual p5: Ctrl + vertical wheel zooms lanes; Ctrl + horizontal
+    // trackpad and Alt + vertical wheel zoom beats. Test axis ownership,
+    // not an original-matched wheel sensitivity constant.
+    for (const int width : { 960, 1280, 1600 })
+        for (int gesture = 0; gesture < 3; ++gesture)
+        {
+            auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+            auto& state = processor->projectState();
+            state.patterns[0].lanes = { bsl::LaneState::make(4), bsl::LaneState::make(4) };
+            state.ui.selectedPad = 15;
+            BeatScholarLinuxEditor editor(*processor);
+            editor.setSize(width, width * 720 / 1280);
+            const float scale = static_cast<float>(width) / 1280.0f;
+            const auto before = bsl::statecodec::encode(state);
+            juce::MouseWheelDetails wheel;
+            if (gesture == 1) wheel.deltaX = std::log(2.0f) / 1.8f;
+            else wheel.deltaY = std::log(2.0f) / 1.8f;
+            const auto modifiers = gesture == 2 ? juce::ModifierKeys::altModifier
+                                               : juce::ModifierKeys::ctrlModifier;
+            editor.mouseWheelMove(visualEvent(editor, juce::Point<float>(100, 300) * scale,
+                                               modifiers), wheel);
+            check(bsl::statecodec::encode(state) == before && !processor->projectEditor().canUndo(),
+                  "manual modifier-wheel zoom preserves project and undo history");
+            const auto click = visualEvent(editor, juce::Point<float>(800, 400) * scale);
+            editor.mouseDown(click); editor.mouseUp(click);
+            const int lane = gesture == 0 ? 0 : 1;
+            const int beat = gesture == 0 ? 2 : 1;
+            check(state.patterns[0].lanes[lane].beats[beat].slices[0].padIndex == 15,
+                  "manual modifier-wheel gesture zooms only its documented axis at every size");
+            check(processor->projectEditor().undo() && bsl::statecodec::encode(state) == before,
+                  "zoomed click remains the only undoable edit");
+        }
+}
+
 void testZoomButtonsAndScrollRails(const juce::File& output)
 {
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
@@ -7508,6 +7544,7 @@ int main(int argc, char** argv)
     testTutorialPatternAddTile(output);
     testArrangementOverflowAndContextActions(output);
     testTutorialContinuousZoomAndProportionalScroll(output);
+    testManualModifierWheelZoom();
     testZoomButtonsAndScrollRails(output);
     testDenseLaneControlsMatchTheirVisibleTargets(output);
     testCommandDragPansBlankGrid(output);
