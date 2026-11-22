@@ -513,6 +513,9 @@ void AudioEngine::process(AudioBlock& output, std::size_t sampleCount) noexcept
 
 void AudioEngine::beginBlock(AudioBlock& output, std::size_t sampleCount) noexcept
 {
+    // Native Aux3 clears tiny recursive filter state between host blocks.
+    // Do this here so MIDI/event splits do not introduce extra cleanup points.
+    distortion_.snapFilterStateToZero();
     padPeaks_.fill(0.0f);
     const auto available = output.empty() ? std::size_t { 0 }
                                           : std::min(sampleCount, output.front().size());

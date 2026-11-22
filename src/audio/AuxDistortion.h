@@ -11,6 +11,8 @@ public:
     void prepare(double sampleRate);
     void setResponse(std::array<std::vector<float>, 2> response);
     void reset() noexcept;
+    // Called once per host callback, never at note/event subrange boundaries.
+    void snapFilterStateToZero() noexcept;
     void process(float* left, float* right, std::size_t frames, float drive) noexcept;
 private:
     struct Biquad

@@ -61,6 +61,15 @@ void AuxDistortion::reset() noexcept
     gainStep_ = 5.75f / static_cast<float>(rampLength_);
 }
 
+void AuxDistortion::snapFilterStateToZero() noexcept
+{
+    for (auto* filter : { &inputHighPass_, &dcHighPass_, &lowPass_ })
+        for (auto& channel : filter->state)
+            for (auto& value : channel)
+                if (std::abs(value) <= 1.0e-8f)
+                    value = 0.0f;
+}
+
 void AuxDistortion::process(float* left, float* right, std::size_t frames, float drive) noexcept
 {
     constexpr float halfPi = 1.57079632679489661923f;

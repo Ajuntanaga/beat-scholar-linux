@@ -3470,6 +3470,20 @@ void testDistortionSendIdleTransitionsAndAutomation()
         }
 }
 
+void testDistortionHostBoundaryCleanup()
+{
+    bsl::AuxDistortion processor;
+    processor.prepare(96000);
+    processor.setResponse({std::vector<float>{1}, std::vector<float>{1}});
+    float left = 1.0e-12f, right = -1.0e-12f;
+    processor.process(&left, &right, 1, 0.5f);
+    check(left != 0 && right != 0, "Aux3 retains tiny signal within a host block");
+    processor.snapFilterStateToZero();
+    left = right = 0;
+    processor.process(&left, &right, 1, 0.5f);
+    check(left == 0 && right == 0, "Aux3 host boundary clears tiny recursive filter tails");
+}
+
 void testDistortionResponseLifecycleAndPartitioning()
 {
     using Stereo = std::array<std::vector<float>, 2>;
@@ -3617,6 +3631,7 @@ int main()
     testRoutingTransitionsDiscardFrozenMasterTail();
     testSharedDistortionBus();
     testDistortionSendIdleTransitionsAndAutomation();
+    testDistortionHostBoundaryCleanup();
     testDistortionResponseLifecycleAndPartitioning();
     testAudioCallbacksDoNotAllocateOnFirstOrLargerBlock();
     if (failures != 0)
