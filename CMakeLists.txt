@@ -74,6 +74,13 @@ if(BSL_BUILD_PLUGIN)
     set(JUCE_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     add_subdirectory(third_party/JUCE EXCLUDE_FROM_ALL)
 
+    juce_add_binary_data(BeatScholarFonts
+        HEADER_NAME BeatScholarFonts.h
+        NAMESPACE BeatScholarFonts
+        SOURCES assets/fonts/Montserrat-SemiBold.ttf
+    )
+    set_target_properties(BeatScholarFonts PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
     juce_add_plugin(BeatScholarLinux
         COMPANY_NAME "Ajuntanaga"
         BUNDLE_ID "com.ajuntanaga.beatscholarlinux"
@@ -104,6 +111,7 @@ if(BSL_BUILD_PLUGIN)
         src/plugin/StateCodec.h
     )
     target_link_libraries(BeatScholarLinux PRIVATE
+        BeatScholarFonts
         beat_scholar_core
         juce::juce_audio_utils
         juce::juce_cryptography

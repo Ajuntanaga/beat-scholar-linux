@@ -1,4 +1,5 @@
 #include "plugin/BeatScholarLookAndFeel.h"
+#include "BeatScholarFonts.h"
 
 #include <algorithm>
 #include <cmath>
@@ -401,7 +402,11 @@ juce::Font BeatScholarLookAndFeel::getLabelFont(juce::Label& label)
 
 juce::Font BeatScholarLookAndFeel::getPopupMenuFont()
 {
-    return font(15.0f, true);
+    // Embed the reference family so menus do not depend on host-installed fonts.
+    static const auto typeface = juce::Typeface::createSystemTypefaceFor(
+        BeatScholarFonts::MontserratSemiBold_ttf,
+        BeatScholarFonts::MontserratSemiBold_ttfSize);
+    return juce::Font(juce::FontOptions(typeface).withHeight(15.0f));
 }
 
 void BeatScholarLookAndFeel::drawTriangle(juce::Graphics& g, juce::Rectangle<float> area,
