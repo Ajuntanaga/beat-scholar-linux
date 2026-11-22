@@ -1261,8 +1261,13 @@ bool importLegacyPresetJson(const juce::String& json, ProjectState& destination)
         if (!readIndex(get(root, "Channel"), 0, 16, channel)) return false;
         candidate.global.midiChannel = static_cast<int>(channel);
     }
-    if (root.hasProperty("Randomize")
-        && !importLegacyRandomizerJson(json, candidate.randomizer))
+    const auto nestedRandomizer = get(get(root, "Seq"), "Randomize");
+    if (root.hasProperty("Randomize"))
+    {
+        if (!importLegacyRandomizerJson(json, candidate.randomizer)) return false;
+    }
+    else if (!nestedRandomizer.isVoid()
+             && !importLegacyRandomizerJson(juce::JSON::toString(nestedRandomizer), candidate.randomizer))
         return false;
     const auto sequencer = get(get(root, "Seq"), "Seq");
     const auto live = get(get(sequencer, "Slots"), "Live");

@@ -697,6 +697,23 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
                   && restored.global.swingPercent == static_cast<float>(amount),
               "fresh original states preserve transport swing when Params is null");
     }
+    {
+        auto savedPreset = juce::JSON::parse(json);
+        auto randomizer = juce::JSON::parse(R"({"Randomize":{"triggerChance":0.25,
+            "possibleSlices":[{"value":3},{"value":5}],"onlyFillEmpty":true}})");
+        savedPreset.getProperty("Seq", {}).getDynamicObject()->setProperty("Randomize", randomizer);
+        auto restored = state;
+        check(bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(savedPreset), restored)
+                  && restored.randomizer.triggerChance == 0.25f
+                  && restored.randomizer.fillEmptyOnly
+                  && restored.randomizer.selectedSubdivisions == std::vector<std::size_t> { 3, 5 },
+              "original preset imports nested sequencer randomizer settings");
+        const auto before = bsl::statecodec::encodePresetJson(restored);
+        randomizer.getProperty("Randomize", {}).getDynamicObject()->setProperty("triggerChance", 2.0);
+        check(!bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(savedPreset), restored)
+                  && bsl::statecodec::encodePresetJson(restored) == before,
+              "invalid nested randomizer rejects without replacing the project");
+    }
     check(state.global.midiChannel == 1, "original presets without Channel default to channel one");
     auto channelPreset = juce::JSON::parse(json);
     auto channelState = state;
