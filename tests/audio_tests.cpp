@@ -2234,6 +2234,40 @@ void testNativePadCrusherMappingAndAutomation()
     check(std::abs(one[2][0] - 0.75f * outputGain) < 1.0e-6f, "returning to sample holding preserves the original hold counter");
 }
 
+void testOverlappingVoicesSharePadPan()
+{
+    // The original's captured overlap matches pan applied to the voice sum.
+    // Compare against an unpanned render so the sampler and velocity path
+    // remain independent of this assertion; varied samples expose rounding.
+    const auto render = [](float pan) {
+        bsl::AudioEngine engine;
+        prepareDryEngine(engine, 48000.0, 64);
+        engine.setRoutingMode(bsl::RoutingMode::multi);
+        auto settings = dryPadSettings();
+        settings.pan = pan;
+        settings.gain = 1.0f;
+        settings.outputTrim = 1.0f;
+        engine.setPadSettings(0, settings);
+        settleMainGain(engine, 48000.0);
+        std::vector<float> samples(64);
+        for (std::size_t i = 0; i < samples.size(); ++i)
+            samples[i] = std::sin(static_cast<float>(i) * 0.371f) * 0.37f;
+        setDspInput(engine, 0, { 48000.0, { samples } });
+        engine.noteOn(36, 0.73f);
+        engine.noteOn(36, 0.41f);
+        auto output = makeBlock(34, 64);
+        engine.process(output, 64);
+        return output[2];
+    };
+    const auto unpanned = render(-1.0f);
+    const auto centred = render(0.0f);
+    const float centre = std::cos(3.14159265358979323846f * 0.25f);
+    bool exact = true;
+    for (std::size_t i = 0; i < centred.size(); ++i)
+        exact = exact && centred[i] == unpanned[i] * centre;
+    check(exact, "overlapping voices receive pad pan after summing, preserving native rounding");
+}
+
 void testNativePadCompressorSteadyStateAndSumming()
 {
     // Native volume sweeps place pad gain after compression.
@@ -3641,6 +3675,7 @@ int main()
     testMeasuredMasterCrushUsesSeventeenFrameHoldAtPointEight();
     testNativeMasterCrusherMappingAndAutomation();
     testNativePadCrusherMappingAndAutomation();
+    testOverlappingVoicesSharePadPan();
     testNativePadCompressorSteadyStateAndSumming();
     testPadCompressorNeutralRangePreservesHeadroom();
     testPadCompressorLifecycleAndAutomation();

@@ -904,13 +904,16 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                     right *= envelope;
                     if (audible)
                     {
-                        // Native isolated captures apply velocity before pan.
-                        // Preserve float rounding here: recursive sends amplify it.
-                        dryLeft += (left * voice.velocity) * leftPan;
-                        dryRight += (right * voice.velocity) * rightPan;
+                        // Native overlapping voices sum before pad pan. Keep
+                        // velocity per voice and preserve float summing order.
+                        dryLeft += left * voice.velocity;
+                        dryRight += right * voice.velocity;
                     }
                     ++voice.elapsedFrames;
             }
+
+            dryLeft *= leftPan;
+            dryRight *= rightPan;
 
             // Pad volume follows the compressor; its detector sees the fixed boost.
             // All sends receive the resulting post-volume, post-compressor signal.
