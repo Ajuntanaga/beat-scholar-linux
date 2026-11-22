@@ -880,8 +880,10 @@ void readLegacyAuxiliaryConfiguration(const juce::var& params, KitState& kit)
     const float distortionDrive = legacyControlAmount(params, "DistDrive", 0.5f);
     for (auto& pad : kit.pads)
     {
-        pad.reverb *= reverbReturn;
-        pad.room *= roomReturn;
+        // Fold native return tapers into the 12 dB/halving send controls.
+        // Original captures measure 18 dB/halving for Room and 24 for Reverb.
+        pad.reverb *= reverbReturn * reverbReturn;
+        pad.room *= std::pow(roomReturn, 1.5f);
         pad.distortionDrive = distortionDrive;
     }
 }

@@ -870,8 +870,8 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
               && std::abs(state.master.cutoff - 0.8118819632f) < 1.0e-6f
               && std::abs(state.master.resonance - 7.0f / 12.0f) < 1.0e-6f,
           "legacy Delay sets the Aux3 return while native Aux4 creates no echo");
-    check(std::abs(state.kit.pads[0].reverb - 0.06f) < 1e-6f
-              && std::abs(state.kit.pads[0].room - 0.16f) < 1e-6f
+    check(std::abs(state.kit.pads[0].reverb - 0.018f) < 1e-6f
+              && std::abs(state.kit.pads[0].room - 0.101192885f) < 1e-6f
               && std::abs(state.kit.pads[0].distortionDrive - 0.2f) < 1e-6f,
           "legacy Aux1 is Room and Aux2 is Reverb, with their respective return levels");
     auto nativeRecall = bsl::ProjectState::makeDefault();
@@ -1143,6 +1143,33 @@ void testLegacyEmbeddedSampleImport()
           "malformed layered audio is rejected atomically");
 }
 
+void testLegacyAmbienceReturnTapers()
+{
+    // Independent original-plugin captures: half return is -18 dB Room,
+    // -24 dB Reverb. Send controls use 12 dB per halving in AudioEngine.
+    const auto sendGain = [](float amount) {
+        return amount <= 0.0f ? 0.0 : std::pow(10.0, 12.0 * std::log2(amount) / 20.0);
+    };
+    for (const float returnLevel : { 0.0f, 0.5f, 1.0f })
+    {
+        auto json = juce::JSON::parse(R"({
+          "Pads":{"Pads":[{"Params":{"Aux":{"Aux1":0.5,"Aux2":0.5}}}]},
+          "Params":{"Room":1.0,"Reverb":1.0}})");
+        auto* params = json.getProperty("Params", {}).getDynamicObject();
+        params->setProperty("Room", returnLevel);
+        params->setProperty("Reverb", returnLevel);
+        bsl::KitState kit;
+        bsl::MasterState master;
+        check(bsl::statecodec::importLegacyKitJson(juce::JSON::toString(json), kit, master),
+              "native ambience return fixture imports");
+        const double expectedRoom = returnLevel == 0.5f ? 0.1258925468 : returnLevel;
+        const double expectedReverb = returnLevel == 0.5f ? 0.0630957307 : returnLevel;
+        check(std::abs(sendGain(kit.pads[0].room) / sendGain(0.5f) - expectedRoom) < 1e-6
+                  && std::abs(sendGain(kit.pads[0].reverb) / sendGain(0.5f) - expectedReverb) < 1e-6,
+              "imported zero, half and full returns match captured original wet gains");
+    }
+}
+
 void testLegacyKitAdapterImportsLayersAndProcessing()
 {
     const juce::String json = R"json({
@@ -1410,6 +1437,7 @@ int main()
     testLegacyHighPassFrequencyAndEnable();
     testLegacyAuxSettingsDoNotProcessUnsentMasterAudio();
     testLegacyEmbeddedSampleImport();
+    testLegacyAmbienceReturnTapers();
     testLegacyKitAdapterImportsLayersAndProcessing();
     testRandomizerIndicesRejectNarrowingAndNonIntegers();
     testRandomizerSelectionsRejectDuplicatesAtomically();
