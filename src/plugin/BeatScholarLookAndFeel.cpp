@@ -406,7 +406,7 @@ juce::Font BeatScholarLookAndFeel::getPopupMenuFont()
     static const auto typeface = juce::Typeface::createSystemTypefaceFor(
         BeatScholarFonts::MontserratSemiBold_ttf,
         BeatScholarFonts::MontserratSemiBold_ttfSize);
-    return juce::Font(juce::FontOptions(typeface).withHeight(15.0f));
+    return juce::Font(juce::FontOptions(typeface).withHeight(17.0f));
 }
 
 void BeatScholarLookAndFeel::drawTriangle(juce::Graphics& g, juce::Rectangle<float> area,
@@ -1120,7 +1120,12 @@ void BeatScholarLookAndFeel::getIdealPopupMenuSectionHeaderSizeWithOptions(
         text, standardHeight, width, height, options);
     // Swing includes its divider here: 33px header + three 23px rows + 4px border.
     if (text == "Swing Ref:")
+    {
+        // The reference menu is 131 px including its two 2 px insets.
+        // Font substitution must not expand the section header beyond it.
+        width = 127;
         height = 33;
+    }
 }
 
 void BeatScholarLookAndFeel::drawPopupMenuSectionHeader(juce::Graphics& g,

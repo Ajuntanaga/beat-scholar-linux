@@ -2433,7 +2433,12 @@ private:
             auto* menu = juce::Component::getCurrentlyModalComponent();
             check(menu != nullptr, "Right clicking Swing opens its reference menu");
             if (menu == nullptr) { finish(); return; }
-            if (selection_ == 0) saveVisual(*menu, output_, "swing-reference-menu.png");
+            if (selection_ == 0)
+            {
+                check(menu->getWidth() == 131 && menu->getHeight() == 106,
+                      "Swing reference menu preserves original 131x106 geometry");
+                saveVisual(*menu, output_, "swing-reference-menu.png");
+            }
             for (int i = 0; i < 3; ++i)
             {
                 auto* action = item(*menu, labels[i]);
