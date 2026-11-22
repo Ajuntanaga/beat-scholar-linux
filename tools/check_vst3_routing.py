@@ -22,6 +22,9 @@ def main():
     write_pcm24(sample, np.column_stack((0.1 * np.sin(2*np.pi*440*t),
                                          0.07 * np.cos(2*np.pi*733*t))), 48000)
     digest = sha256_file(module_path(args.plugin))
+    # Incoming notes use the native fixed map, independently of the editable
+    # output midiNote fields in the restored state.
+    input_notes = (36, 38, 37, 39, 42, 46, 49, 51, 57, 55, 43, 41, 54, 40, 53, 56)
     renders = {}
     for label, multi, gain in [('stereo', False, 1.0), ('multi', True, 1.0),
                                ('multi_master_muted', True, 0.0)]:
@@ -34,8 +37,8 @@ def main():
                    '--state', str(state_path), '--output', str(out / f'{label}.wav'),
                    '--expect-sha256', digest, '--all-outputs', '--sample-rate', '48000',
                    '--block-size', '64', '--active-frames', '32768', '--pre-roll-frames', '4800']
-        for pad in range(16):
-            command += ['--midi', f'{pad*2048}:{state["pads"][pad]["midiNote"]}:127']
+        for pad, note in enumerate(input_notes):
+            command += ['--midi', f'{pad*2048}:{note}:127']
         result = subprocess.run(command, capture_output=True, text=True, timeout=90)
         (out / f'{label}.log').write_text(result.stdout + result.stderr)
         result.check_returncode()
