@@ -681,6 +681,22 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
                   && restored.global.swingReference == entry.second,
               "unsupported original swing reference fails without changing destination");
     }
+    for (const auto amount : { -100, 0, 100 })
+    {
+        auto savedPreset = juce::JSON::parse(json);
+        savedPreset.getDynamicObject()->setProperty("Params", juce::var());
+        auto swing = juce::var(new juce::DynamicObject());
+        swing.getDynamicObject()->setProperty("Value", juce::String(amount) + "%");
+        auto transport = juce::var(new juce::DynamicObject());
+        transport.getDynamicObject()->setProperty("Swing", swing);
+        auto sequencer = juce::var(new juce::DynamicObject());
+        sequencer.getDynamicObject()->setProperty("Transport", transport);
+        savedPreset.getProperty("Seq", {}).getDynamicObject()->setProperty("Seq", sequencer);
+        auto restored = state;
+        check(bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(savedPreset), restored)
+                  && restored.global.swingPercent == static_cast<float>(amount),
+              "fresh original states preserve transport swing when Params is null");
+    }
     check(state.global.midiChannel == 1, "original presets without Channel default to channel one");
     auto channelPreset = juce::JSON::parse(json);
     auto channelState = state;

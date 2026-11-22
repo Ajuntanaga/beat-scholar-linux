@@ -1264,7 +1264,6 @@ bool importLegacyPresetJson(const juce::String& json, ProjectState& destination)
     if (root.hasProperty("Randomize")
         && !importLegacyRandomizerJson(json, candidate.randomizer))
         return false;
-    candidate.global.swingPercent = legacyNumber(get(get(root, "Params"), "Swing"), 0.0f);
     const auto sequencer = get(get(root, "Seq"), "Seq");
     const auto live = get(get(sequencer, "Slots"), "Live");
     if (live.hasProperty("quantize"))
@@ -1283,6 +1282,9 @@ bool importLegacyPresetJson(const juce::String& json, ProjectState& destination)
         candidate.global.quantization = found->second;
     }
     const auto transport = get(sequencer, "Transport");
+    const auto legacySwing = get(get(root, "Params"), "Swing");
+    candidate.global.swingPercent = legacyNumber(legacySwing.isVoid()
+        ? get(get(transport, "Swing"), "Value") : legacySwing, 0.0f);
     const auto swingReference = get(get(transport, "SwingRef"), "Value");
     if (!swingReference.isVoid())
     {
