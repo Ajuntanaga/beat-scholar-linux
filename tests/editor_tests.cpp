@@ -5069,7 +5069,7 @@ void testManualModifierWheelZoom()
             editor.setSize(width, width * 720 / 1280);
             const float scale = static_cast<float>(width) / 1280.0f;
             const auto before = bsl::statecodec::encode(state);
-            juce::MouseWheelDetails wheel;
+            juce::MouseWheelDetails wheel {};
             if (gesture == 1) wheel.deltaX = std::log(2.0f) / 1.8f;
             else wheel.deltaY = std::log(2.0f) / 1.8f;
             const auto modifiers = gesture == 2 ? juce::ModifierKeys::altModifier
@@ -5082,8 +5082,15 @@ void testManualModifierWheelZoom()
             editor.mouseDown(click); editor.mouseUp(click);
             const int lane = gesture == 0 ? 0 : 1;
             const int beat = gesture == 0 ? 2 : 1;
+            juce::String editedCells;
+            for (std::size_t row = 0; row < state.patterns[0].lanes.size(); ++row)
+                for (std::size_t column = 0; column < state.patterns[0].lanes[row].beats.size(); ++column)
+                    if (state.patterns[0].lanes[row].beats[column].slices[0].padIndex == 15)
+                        editedCells += " " + juce::String(static_cast<int>(row)) + ":"
+                                       + juce::String(static_cast<int>(column));
             check(state.patterns[0].lanes[lane].beats[beat].slices[0].padIndex == 15,
-                  "manual modifier-wheel gesture zooms only its documented axis at every size");
+                  "manual modifier-wheel axis: width=" + juce::String(width)
+                      + " gesture=" + juce::String(gesture) + " edited=" + editedCells);
             check(processor->projectEditor().undo() && bsl::statecodec::encode(state) == before,
                   "zoomed click remains the only undoable edit");
         }
