@@ -138,18 +138,29 @@ def main() -> int:
     target['bars'] = [{'numerator': 7, 'denominator': 8}]
     target['lanes'][0]['beats'] = [beat(1) for _ in range(7)]
     arrangement['patterns'].append(target)
-    # Two complete 7/8 cycles at 100 BPM; 98-percent gates end before stop.
-    expected = []
-    for eighth in range(14):
-        start = eighth * 14400
-        expected.extend((note(start, 'note_on', 61, 95),
-                         note(start + 14112, 'note_off', 61, 95)))
+    # Original post-plugin MIDI captures, 48 kHz / 100 BPM, two 7/8 loops.
+    # Preserve measured one-sample gate differences and cycle-entry timing;
+    # idealized sample rounding does not reproduce the reference.
+    captured_samples = {
+        64: [0, 14112, 14400, 28512, 28800, 42912, 43200, 57311, 57600, 71712, 72000, 86112, 86400, 100512, 100800, 114911, 115200, 129311, 129600, 143711, 144000, 158111, 158400, 172512, 172800, 186911, 187200, 201312],
+        257: [0, 14112, 14400, 28512, 28800, 42912, 43200, 57312, 57600, 71712, 71999, 86112, 86400, 100512, 100801, 114912, 115200, 129311, 129599, 143712, 143999, 158111, 158400, 172512, 172800, 186912, 187200, 201312],
+        1024: [0, 14112, 14400, 28512, 28800, 42912, 43200, 57312, 57600, 71712, 72000, 86112, 86400, 100512, 100801, 114911, 115200, 129311, 129600, 143711, 144000, 158111, 158399, 172512, 172800, 186912, 187200, 201312],
+    }
     loaded = copy.deepcopy(arrangement)
     loaded['patterns'].reverse()
     for block in BLOCK_SIZES:
+        expected = [note(sample, 'note_on' if index % 2 == 0 else 'note_off', 61, 95)
+                    for index, sample in enumerate(captured_samples[block])]
         run_case('seven-eighths-loaded-first', loaded, 201600, [], expected, block, tempo=100)
         run_case('seven-eighths-trigger-at-start', arrangement, 201600,
                  [(0, 61, 127), (1200, 61, 0)], expected, block, tempo=100)
+
+    # Longer original capture distinguishes cycle entry from a blanket +1 shift:
+    # onsets at 100801 / 201601 / 302400, with ordinary gates unchanged.
+    four_loop_samples = [0, 14112, 14400, 28512, 28800, 42912, 43200, 57312, 57600, 71712, 71999, 86112, 86400, 100512, 100801, 114912, 115200, 129311, 129599, 143712, 143999, 158111, 158400, 172512, 172800, 186912, 187200, 201312, 201601, 215711, 216000, 230111, 230400, 244511, 244800, 258912, 259199, 273312, 273600, 287712, 287999, 302112, 302400, 316511, 316800, 330911, 331200, 345312, 345600, 359711, 360000, 374112, 374400, 388512, 388800, 402912]
+    expected = [note(sample, 'note_on' if index % 2 == 0 else 'note_off', 61, 95)
+                for index, sample in enumerate(four_loop_samples)]
+    run_case('seven-eighths-four-loops', loaded, 403200, [], expected, 257, tempo=100)
 
     # Odd subdivisions, ghost velocities and a stop during the final long gate.
     subdivisions = (5, 7, 9, 1)

@@ -267,6 +267,9 @@ std::size_t SequencerPlayback::renderSilentBatch(const ProjectState& project,
                 if (timeline(middle) - cycleOrigin <= position) low = middle;
                 else high = middle - 1;
             }
+            // A new cycle cannot emit before its first timeline sample.
+            // Keep native lower-inclusive intervals for subsequent events.
+            if (low < frame.blockSize - 1 && timeline(low) < cycleOrigin) ++low;
             return low;
         };
         const double duration = pattern.durationInQuarterNotes();
@@ -348,6 +351,9 @@ std::size_t SequencerPlayback::renderBatch(const ProjectState& project,
                 if (timeline(middle) - cycleOrigin <= position) low = middle;
                 else high = middle - 1;
             }
+            // A new cycle cannot emit before its first timeline sample.
+            // Keep native lower-inclusive intervals for subsequent events.
+            if (low < frame.blockSize - 1 && timeline(low) < cycleOrigin) ++low;
             return low;
         };
         const double duration = pattern.durationInQuarterNotes();
