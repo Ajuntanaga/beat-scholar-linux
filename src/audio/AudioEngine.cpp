@@ -914,12 +914,12 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
 
             // Pad volume follows the compressor; its detector sees the fixed boost.
             // All sends receive the resulting post-volume, post-compressor signal.
-            const float padOutputGain = padGain.next();
+            // Combine gain and trim before applying them to the audio: native
+            // isolated captures distinguish this rounding from two multiplies.
+            const float padOutputGain = padGain.next() * settings.outputTrim;
             compressor.process(dryLeft, dryRight);
             dryLeft *= padOutputGain;
             dryRight *= padOutputGain;
-            dryLeft *= settings.outputTrim;
-            dryRight *= settings.outputTrim;
 
             const float parallelGain = auxGain.next();
             const float distortionGain = distortionSend.next();
