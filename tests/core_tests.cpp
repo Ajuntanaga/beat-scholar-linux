@@ -287,7 +287,8 @@ void testNativeSwingTripletCurve()
     // Original VST3 MIDI capture: 48 kHz, 100 BPM, quarter reference.
     struct Capture { double swing; int second; int third; };
     for (const auto c : { Capture{-200, 754, 7510}, Capture{-100, 3200, 12800},
-                         Capture{50, 13673, 21877}, Capture{100, 18254, 24339},
+                         Capture{0, 9600, 19200}, Capture{50, 13673, 21877},
+                         Capture{100, 18254, 24339},
                          Capture{150, 21743, 25962}, Capture{200, 24349, 27069} })
     {
         for (const auto reference : { bsl::SwingReference::eighth,
