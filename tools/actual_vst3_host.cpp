@@ -47,6 +47,7 @@ struct Options
     std::int64_t preRollFrames = 0;
     bool playSequencer = false;
     bool floatOutput = false;
+    bool allOutputs = false;
     std::vector<MidiEvent> midi;
 };
 
@@ -124,12 +125,13 @@ Options parseOptions(int argc, char** argv)
         }
         else if (argument == "--play-sequencer") options.playSequencer = true;
         else if (argument == "--float-output") options.floatOutput = true;
+        else if (argument == "--all-outputs") options.allOutputs = true;
         else if (argument == "--help")
         {
             std::cout
                 << "Usage: actual_vst3_host --plugin BUNDLE --state PRESET_OR_BSLX --output WAV\\n"
                 << "       --expect-sha256 HEX --sample-rate HZ --block-size N --active-frames N\\n"
-                << "       [--midi SAMPLE:NOTE:VELOCITY] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--pre-roll-frames N] [--restored-state-output NEW_BSLX]\\n";
+                << "       [--midi SAMPLE:NOTE:VELOCITY] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--all-outputs] [--pre-roll-frames N] [--restored-state-output NEW_BSLX]\\n";
             std::exit(0);
         }
         else fail("unknown option: " + argument);
@@ -313,7 +315,7 @@ void writeWave(const juce::File& output, double sampleRate,
         stream,
         juce::AudioFormatWriter::Options {}
             .withSampleRate(sampleRate)
-            .withNumChannels(2)
+            .withNumChannels(audio.getNumChannels())
             .withBitsPerSample(floatOutput ? 32 : 24)
             .withSampleFormat(floatOutput
                 ? juce::AudioFormatWriterOptions::SampleFormat::floatingPoint
@@ -404,6 +406,19 @@ int run(const Options& options)
             ++reportedPadNames;
         }
 
+    if (options.allOutputs)
+    {
+        auto layout = plugin->getBusesLayout();
+        if (layout.outputBuses.size() != 17)
+            fail("expected Main plus 16 pad output buses");
+        for (auto& bus : layout.outputBuses)
+            bus = juce::AudioChannelSet::stereo();
+        if (!plugin->setBusesLayout(layout))
+            fail("host could not activate all stereo output buses");
+        if (plugin->getTotalNumOutputChannels() != 34)
+            fail("activated output buses did not expose 34 channels");
+    }
+    const int renderChannels = options.allOutputs ? 34 : 2;
     plugin->setRateAndBufferSizeDetails(options.sampleRate, options.blockSize);
     if (options.playSequencer) plugin->setPlayHead(&transport);
     plugin->prepareToPlay(options.sampleRate, options.blockSize);
@@ -422,7 +437,7 @@ int run(const Options& options)
     for (std::int64_t remaining = options.preRollFrames; remaining > 0;)
     {
         const auto frames = static_cast<int>(std::min<std::int64_t>(options.blockSize, remaining));
-        juce::AudioBuffer<float> silence(2, frames);
+        juce::AudioBuffer<float> silence(renderChannels, frames);
         silence.clear();
         juce::MidiBuffer noMidi;
         plugin->processBlock(silence, noMidi);
@@ -436,7 +451,7 @@ int run(const Options& options)
     if (options.activeFrames > std::numeric_limits<int>::max() - tailFrames)
         fail("requested render is too large");
     const auto totalFrames = options.activeFrames + tailFrames;
-    juce::AudioBuffer<float> rendered(2, static_cast<int>(totalFrames));
+    juce::AudioBuffer<float> rendered(renderChannels, static_cast<int>(totalFrames));
     rendered.clear();
     juce::Array<juce::var> outputMidi;
     std::size_t midiIndex = 0;
@@ -447,7 +462,7 @@ int run(const Options& options)
         const auto boundary = cursor < options.activeFrames ? options.activeFrames : totalFrames;
         const auto currentBlock = static_cast<int>(std::min<std::int64_t>(options.blockSize,
                                                                           boundary - cursor));
-        juce::AudioBuffer<float> block(2, currentBlock);
+        juce::AudioBuffer<float> block(renderChannels, currentBlock);
         block.clear();
         juce::MidiBuffer midi;
         while (midiIndex < options.midi.size()
@@ -497,8 +512,8 @@ int run(const Options& options)
             }
             outputMidi.add(juce::var(event.get()));
         }
-        rendered.copyFrom(0, static_cast<int>(cursor), block, 0, 0, currentBlock);
-        rendered.copyFrom(1, static_cast<int>(cursor), block, 1, 0, currentBlock);
+        for (int channel = 0; channel < renderChannels; ++channel)
+            rendered.copyFrom(channel, static_cast<int>(cursor), block, channel, 0, currentBlock);
         cursor += currentBlock;
     }
     plugin->releaseResources();
@@ -508,6 +523,7 @@ int run(const Options& options)
     juce::DynamicObject::Ptr reportObject = new juce::DynamicObject();
     reportObject->setProperty("status", "pass");
     reportObject->setProperty("reported_pad_names", reportedPadNames);
+    reportObject->setProperty("output_channels", renderChannels);
     reportObject->setProperty("plugin_bundle", options.bundle.getFullPathName());
     reportObject->setProperty("module_path", module.getFullPathName());
     reportObject->setProperty("module_sha256", actualSha256);

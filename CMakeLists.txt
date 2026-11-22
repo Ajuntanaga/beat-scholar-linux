@@ -259,7 +259,14 @@ if(BSL_BUILD_PLUGIN)
                 --host $<TARGET_FILE:actual_vst3_host>
                 --artifacts-dir "${CMAKE_BINARY_DIR}/actual-vst3-panic"
         )
-        set_tests_properties(beat_scholar_actual_vst3_smoke beat_scholar_actual_vst3_midi beat_scholar_actual_vst3_panic PROPERTIES
+        add_test(NAME beat_scholar_actual_vst3_routing
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_vst3_routing.py
+                --plugin "${CMAKE_BINARY_DIR}/BeatScholarLinux_artefacts/$<CONFIG>/VST3/Beat Scholar Linux.vst3"
+                --host $<TARGET_FILE:actual_vst3_host>
+                --artifacts-dir "${CMAKE_BINARY_DIR}/actual-vst3-routing"
+        )
+        set_tests_properties(beat_scholar_actual_vst3_smoke beat_scholar_actual_vst3_midi beat_scholar_actual_vst3_panic beat_scholar_actual_vst3_routing PROPERTIES
             ENVIRONMENT "DISPLAY=;WAYLAND_DISPLAY=")
     endif()
 endif()
