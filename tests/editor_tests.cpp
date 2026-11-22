@@ -1081,10 +1081,10 @@ void testMixedMeterGeometry(const juce::File& output)
         start += lengths[beat];
     }
 
-    juce::MouseWheelDetails zoom;
+    juce::MouseWheelDetails zoom {};
     zoom.deltaY = std::log(2.0f) / 1.8f;
     editor->mouseWheelMove(visualEvent(*editor, { 100, 300 }, juce::ModifierKeys::altModifier), zoom);
-    juce::MouseWheelDetails scroll;
+    juce::MouseWheelDetails scroll {};
     scroll.deltaX = -0.8f; // scroll exactly three quarter notes at 2x zoom
     editor->mouseWheelMove(visualEvent(*editor, { 100, 300 }, {}), scroll);
     const auto headerClick = visualEvent(*editor, { 400, 80 });
@@ -1130,11 +1130,11 @@ void testBarHeaderActions(const juce::File& output)
         check(barCount() == 4, "zoomed-out hidden header actions cannot mutate bars");
         if (width == 1280) saveVisual(*editor, output, "tutorial-bar-header-hidden.png");
 
-        juce::MouseWheelDetails zoom;
+        juce::MouseWheelDetails zoom {};
         zoom.deltaY = std::log(2.0f) / 1.8f;
         editor->mouseWheelMove(visualEvent(*editor, { 100.0f * scale, 300.0f * scale },
             juce::ModifierKeys(juce::ModifierKeys::altModifier)), zoom);
-        juce::MouseWheelDetails scroll;
+        juce::MouseWheelDetails scroll {};
         scroll.deltaX = -0.75f; // 6 quarter notes: bar two is partially clipped.
         editor->mouseWheelMove(visualEvent(*editor, { 100.0f * scale, 300.0f * scale }, {}), scroll);
         if (width == 1280) saveVisual(*editor, output, "tutorial-bar-header-scrolled.png");
@@ -4954,7 +4954,7 @@ void testTutorialPatternAddTile(const juce::File& output)
     }
     check(state.patterns.size() == 12 && add->getY() == 456,
           "overflow keeps plus accessible below the clipped cards");
-    juce::MouseWheelDetails wheel; wheel.deltaY = -100.0f;
+    juce::MouseWheelDetails wheel {}; wheel.deltaY = -100.0f;
     editor.mouseWheelMove(visualEvent(editor, {1205, 300}), wheel);
     click(add);
     check(state.patterns.size() == 13 && add->getY() == 456,
@@ -4991,7 +4991,7 @@ void testArrangementOverflowAndContextActions(const juce::File& output)
             check(count() == 12, "right click over arrangement delete opens menu without deletion");
             juce::PopupMenu::dismissAllActiveMenus();
             if (count() != 12) continue; // Keep the remaining checks independent of destructive RED behavior.
-            juce::MouseWheelDetails wheel;
+            juce::MouseWheelDetails wheel {};
             wheel.deltaY = -100.0f;
             editor.mouseWheelMove(visualEvent(editor, juce::Point<float>(1205, 300) * scale), wheel);
             editor.mouseDown(visualEvent(editor, juce::Point<float>(1205, 423) * scale));
