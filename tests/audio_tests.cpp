@@ -3435,6 +3435,7 @@ void testDistortionSendIdleTransitionsAndAutomation()
                             send = --sendRemaining == 0 ? 0.0f : send + sendStep;
                         for (auto& channel : expected) channel[i] *= send;
                     }
+                    reference.snapFilterStateToZero(); // Match the engine's host callback boundary.
                     reference.process(expected[0].data(), expected[1].data(), count,
                                       master.distortionDrive);
                     for (std::size_t i = 0; i < count; ++i)
