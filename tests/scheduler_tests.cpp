@@ -541,33 +541,48 @@ void testCapturedOverlappingLanes()
 
 void testCapturedWholePatternCallbackTiming()
 {
-    for (const auto block : {64, 257, 1024})
-        for (const auto input : {1001, 10001})
+    struct Capture
+    {
+        int block;
+        int input;
+        double bpm;
+        int boundary;
+    };
+    // Original-plugin captures: 140 BPM callback rounding and a delayed MIDI61
+    // at 100 BPM whose first changed PCM frame is exactly 115200 (2.4 seconds).
+    constexpr std::array captures {
+        Capture {64, 1001, 140.0, 82285},
+        Capture {257, 1001, 140.0, 82285},
+        Capture {1024, 1001, 140.0, 82285},
+        Capture {1024, 10001, 140.0, 82285},
+        Capture {64, 48000, 100.0, 115200},
+    };
+    for (const auto& capture : captures)
+    {
+        const auto block = capture.block;
+        const auto input = capture.input;
+        bsl::PatternScheduler scheduler(0);
+        std::array<bsl::PatternRenderSegment, 3> segments {};
+        int switched = -1;
+        for (int cursor = 0; cursor < capture.boundary + block * 2; cursor += block)
         {
-            if (input == 10001 && block != 1024)
-                continue;
-            bsl::PatternScheduler scheduler(0);
-            std::array<bsl::PatternRenderSegment, 3> segments {};
-            int switched = -1;
-            for (int cursor = 0; cursor < 84000; cursor += block)
-            {
-                auto frame = transport(cursor, block,
-                    static_cast<double>(cursor) / 48000.0 * 140.0 / 60.0);
-                frame.bpm = 140.0;
-                const std::array trigger { bsl::PatternTrigger {
-                    input - cursor, 1, bsl::PatternQuantization::whole } };
-                const bool receive = input >= cursor && input < cursor + block;
-                const auto count = scheduler.planBlock(frame,
-                    receive ? std::span<const bsl::PatternTrigger>(trigger)
-                            : std::span<const bsl::PatternTrigger>(), segments);
-                for (std::size_t i = 0; i < count; ++i)
-                    if (switched < 0 && segments[i].patternId == 1)
-                        switched = cursor + segments[i].sampleOffset;
-            }
-            const int expected = input < block ? 0 : (82285 / block) * block;
-            check(switched == expected,
-                  "captured whole-pattern switch uses the containing callback start");
+            auto frame = transport(cursor, block,
+                static_cast<double>(cursor) / 48000.0 * capture.bpm / 60.0);
+            frame.bpm = capture.bpm;
+            const std::array trigger { bsl::PatternTrigger {
+                input - cursor, 1, bsl::PatternQuantization::whole } };
+            const bool receive = input >= cursor && input < cursor + block;
+            const auto count = scheduler.planBlock(frame,
+                receive ? std::span<const bsl::PatternTrigger>(trigger)
+                        : std::span<const bsl::PatternTrigger>(), segments);
+            for (std::size_t i = 0; i < count; ++i)
+                if (switched < 0 && segments[i].patternId == 1)
+                    switched = cursor + segments[i].sampleOffset;
         }
+        const int expected = input < block ? 0 : (capture.boundary / block) * block;
+        check(switched == expected,
+              "captured whole-pattern switch uses the containing callback start");
+    }
 }
 
 void testCapturedQuarterPatternCallbackTiming()
