@@ -52,8 +52,18 @@ struct BeatScholarLinuxEditorTestAccess
     static void tick(BeatScholarLinuxEditor& editor) { editor.timerCallback(); }
     static void dragMapNote(BeatScholarLinuxEditor& editor, int distance)
     {
-        editor.midiMapLabels_[0].beginDrag();
-        editor.midiMapLabels_[0].changeDrag(distance);
+        auto& label = editor.midiMapLabels_[0];
+        const auto start = label.getLocalBounds().toFloat().getCentre();
+        const auto now = juce::Time::getCurrentTime();
+        const auto event = [&](juce::Point<float> point, juce::ModifierKeys modifiers) {
+            return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(),
+                point, modifiers, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &label, &label,
+                now, start, now, 1, point != start);
+        };
+        label.mouseDown(event(start, juce::ModifierKeys::leftButtonModifier));
+        const auto end = start.translated(0.0f, -static_cast<float>(distance));
+        label.mouseDrag(event(end, juce::ModifierKeys::leftButtonModifier));
+        label.mouseUp(event(end, juce::ModifierKeys{}));
     }
 
     static void tickWithActivityCount(BeatScholarLinuxEditor& editor, int count)
@@ -6855,9 +6865,10 @@ void testMidiMap(const juce::File& output)
     map->onClick();
     check(label->isVisible() && map->getToggleState(), "MAP shows inline notes");
     const int original = processor->projectState().kit.pads[0].midiNote;
-    BeatScholarLinuxEditorTestAccess::dragMapNote(*editor, 33);
-    check(processor->projectState().kit.pads[0].midiNote == original + 10,
-          "upward map drag changes actual MIDI assignment");
+    // Original MAP capture: dragging C2 upward 30 px commits A2 (+9 semitones).
+    BeatScholarLinuxEditorTestAccess::dragMapNote(*editor, 30);
+    check(processor->projectState().kit.pads[0].midiNote == original + 9,
+          "MAP drag matches the original 30-pixel nine-semitone reference");
     check(processor->projectEditor().undo()
           && processor->projectState().kit.pads[0].midiNote == original,
           "one undo restores MIDI drag");
