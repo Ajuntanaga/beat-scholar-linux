@@ -704,6 +704,10 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
         savedPreset.getProperty("Seq", {}).getDynamicObject()->setProperty("Randomize", randomizer);
         auto restored = state;
         check(bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(savedPreset), restored)
+                  && restored.randomizer.triggerChance == 0.38f,
+              "root legacy randomizer takes precedence over nested settings");
+        savedPreset.getDynamicObject()->removeProperty("Randomize");
+        check(bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(savedPreset), restored)
                   && restored.randomizer.triggerChance == 0.25f
                   && restored.randomizer.fillEmptyOnly
                   && restored.randomizer.selectedSubdivisions == std::vector<std::size_t> { 3, 5 },
