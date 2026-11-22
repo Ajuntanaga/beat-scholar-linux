@@ -652,7 +652,9 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
         const float lowPassG = std::tan(3.14159265358979323846f * lowPassFrequency
                                         / static_cast<float>(sampleRate_));
         const float lowPassR = 1.0f / (0.1f + 2.4f * settings.resonance);
-        const float lowPassA = 1.0f / (lowPassG * lowPassG + lowPassR * lowPassG + 1.0f);
+        // Native c977f5-c97809 adds r*g + 1 before g*g; float grouping
+        // matters because the resulting coefficient feeds recursive state.
+        const float lowPassA = 1.0f / (lowPassG * lowPassG + (lowPassR * lowPassG + 1.0f));
         const auto lowPass = [=](float input, auto& stages) {
             for (auto& state : stages)
             {
