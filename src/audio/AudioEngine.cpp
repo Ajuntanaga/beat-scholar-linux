@@ -766,16 +766,19 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                         }
                         ++voice.releaseFramesElapsed;
                         const double releaseFrames = settings.releaseSeconds * sampleRate_;
-                        const float remaining = releaseFrames > 0.0
-                            ? std::max(0.0f, 1.0f - static_cast<float>(
-                                static_cast<double>(voice.releaseFramesElapsed) / releaseFrames)) : 0.0f;
+                        // The native output release accumulates float decrements.
+                        // A closed-form ramp diverges during release and the aux
+                        // distortion amplifies that otherwise small difference.
+                        voice.releaseOutputRemaining = releaseFrames > 0.0
+                            ? std::max(0.0f, voice.releaseOutputRemaining
+                                - static_cast<float>(1.0 / releaseFrames)) : 0.0f;
                         // The native sampler has its own 100 ms float release
                         // before the inserts. It keeps advancing after the pad's
                         // output release reaches silence, preserving filter history.
                         voice.releaseInputLevel = std::max(0.0f,
                             voice.releaseInputLevel - voice.releaseInputStep);
                         releaseInputGain = voice.releaseInputLevel;
-                        envelope = voice.releaseStartLevel * remaining;
+                        envelope = voice.releaseStartLevel * voice.releaseOutputRemaining;
                     }
                     // Native updates a float accumulator before rendering each
                     // frame; a closed-form fade loses its rate-dependent rounding.

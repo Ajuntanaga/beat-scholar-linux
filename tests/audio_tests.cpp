@@ -370,9 +370,15 @@ void testNativeReleaseStepPrecision()
             {
                 const auto elapsed = offset + frame + 1;
                 if (elapsed < 4797) continue;
-                const float outputFade = 1.0f - static_cast<float>(
-                    static_cast<double>(elapsed) / (settings.releaseSeconds * 48000.0));
-                check(block[0][frame] == levels[elapsed - 4797] * outputFade,
+                // Fixed checkpoints of the float output-release recurrence.
+                // Capture substitution at 96 kHz distinguishes it from a
+                // closed-form ramp (227x lower release-window RMS error).
+                constexpr std::array<float, 5> outputFades {
+                    0.5002057552337646f, 0.5001015663146973f,
+                    0.49999740719795227f, 0.4998932480812073f,
+                    0.4997890889644623f
+                };
+                check(block[0][frame] == levels[elapsed - 4797] * outputFades[elapsed - 4797],
                       "sampler release tail preserves native step precision across blocks");
             }
         }

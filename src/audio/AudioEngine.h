@@ -151,6 +151,7 @@ private:
         float lengthEnvelope = 1.0f;
         std::size_t releaseFramesElapsed = 0;
         float releaseStartLevel = 1.0f;
+        float releaseOutputRemaining = 1.0f;
         float releaseInputLevel = 1.0f;
         float releaseInputStep = 0.0f;
         bool releasing = false;
