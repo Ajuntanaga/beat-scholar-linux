@@ -63,7 +63,7 @@ struct BeatScholarLinuxEditorTestAccess
         label.mouseDown(event(start, juce::ModifierKeys::leftButtonModifier));
         const auto end = start.translated(0.0f, -static_cast<float>(distance));
         label.mouseDrag(event(end, juce::ModifierKeys::leftButtonModifier));
-        label.mouseUp(event(end, juce::ModifierKeys{}));
+        static_cast<juce::Component&>(label).mouseUp(event(end, juce::ModifierKeys{}));
     }
 
     static void tickWithActivityCount(BeatScholarLinuxEditor& editor, int count)
