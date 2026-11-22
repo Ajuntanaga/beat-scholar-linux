@@ -585,7 +585,9 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
 
     masterGain_.setTarget(master_.gain, static_cast<std::size_t>(sampleRate_ * 0.1));
     ambienceReturn_.setTarget(1.9952623844146729f, static_cast<std::size_t>(sampleRate_ * 0.1));
-    distortionReturn_.setTarget(auxiliaryTaper(master_.distortionReturn, 18.0f),
+    // Smooth the final return gain: scaling a unity ramp afterward changes
+    // startup rounding enough to cross downstream bitcrusher thresholds.
+    distortionReturn_.setTarget(auxiliaryTaper(master_.distortionReturn, 18.0f) * 1.995262315f,
                                 static_cast<std::size_t>(sampleRate_ * 0.1));
     for (auto& send : distortionSends_) std::fill_n(send.begin(), end - start, 0.0f);
     constexpr float halfPi = 1.57079632679489661923f;
@@ -986,7 +988,7 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                         end - start, master_.distortionDrive);
     for (std::size_t frame = start; frame < end; ++frame)
     {
-        const float gain = distortionReturn_.next() * 1.995262315f;
+        const float gain = distortionReturn_.next();
         if (auxEnabled_)
         {
             output[0][frame] += distortionSends_[0][frame - start] * gain;

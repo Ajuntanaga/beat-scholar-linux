@@ -3508,6 +3508,12 @@ void testDistortionSendIdleTransitionsAndAutomation()
             float mainGain = 0.0f;
             const float mainStep = 1.0f / static_cast<float>(rampFrames);
             std::size_t mainRemaining = rampFrames;
+            // The reference return ramps directly to its boosted gain. A unity
+            // ramp multiplied afterward produces different startup rounding.
+            float returnGain = 0.0f;
+            const float returnTarget = 1.995262315f;
+            const float returnStep = returnTarget / static_cast<float>(rampFrames);
+            std::size_t returnRemaining = rampFrames;
             float send = 1.0f;
             float sendStep = 0.0f;
             std::size_t sendRemaining = 0;
@@ -3532,9 +3538,11 @@ void testDistortionSendIdleTransitionsAndAutomation()
                     {
                         if (mainRemaining > 0)
                             mainGain = --mainRemaining == 0 ? 1.0f : mainGain + mainStep;
+                        if (returnRemaining > 0)
+                            returnGain = --returnRemaining == 0 ? returnTarget : returnGain + returnStep;
                         for (std::size_t ch = 0; ch < 2; ++ch)
                         {
-                            const float sample = (expected[ch][i] * (mainGain * 1.995262315f))
+                            const float sample = (expected[ch][i] * returnGain)
                                                    * mainGain;
                             error = std::max(error, std::abs(output[ch][i] - sample));
                             peak = std::max(peak, std::abs(sample));
