@@ -43,15 +43,16 @@ float normalizedPadHighPassCutoff(float frequencyHz) noexcept
 
 float filterCutoffHz(float normalized) noexcept
 {
-    // Native FreqParameter: 10 Hz..20 kHz, with 2 kHz at the centre.
-    constexpr float skew = 0.30044121569325083f;
+    // Native FreqParameter computes its midpoint skew in float precision.
+    // A double-derived constant rounds differently and shifts saved cutoff values.
+    const float skew = std::log(0.5f) / std::log((2000.0f - 10.0f) / 19990.0f);
     const float position = std::clamp(normalized, 0.0f, 1.0f);
     return 10.0f + 19990.0f * (position > 0.0f ? std::exp(std::log(position) / skew) : 0.0f);
 }
 
 float normalizedFilterCutoff(float frequencyHz) noexcept
 {
-    constexpr float skew = 0.30044121569325083f;
+    const float skew = std::log(0.5f) / std::log((2000.0f - 10.0f) / 19990.0f);
     const float position = (std::clamp(frequencyHz, 10.0f, 20000.0f) - 10.0f) / 19990.0f;
     return position > 0.0f ? std::exp(std::log(position) * skew) : 0.0f;
 }
