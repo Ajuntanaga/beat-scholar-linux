@@ -1283,6 +1283,15 @@ bool importLegacyPresetJson(const juce::String& json, ProjectState& destination)
         candidate.global.quantization = found->second;
     }
     const auto transport = get(sequencer, "Transport");
+    const auto swingReference = get(get(transport, "SwingRef"), "Value");
+    if (!swingReference.isVoid())
+    {
+        const auto value = swingReference.toString();
+        if (value == "1/8") candidate.global.swingReference = SwingReference::eighth;
+        else if (value == "1/4") candidate.global.swingReference = SwingReference::quarter;
+        else if (value == "1/2") candidate.global.swingReference = SwingReference::half;
+        else return false;
+    }
     candidate.global.beatsPerMinute = legacyNumber(get(get(transport, "BPM"), "value"), 120.0f);
 
     const auto sequenceRoot = get(get(root, "Seq"), "Patterns");

@@ -663,6 +663,24 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
     auto state = bsl::ProjectState::makeDefault();
     check(bsl::statecodec::importLegacyPresetJson(json, state), "legacy preset JSON imports");
     check(state.isValid(), "legacy preset is validated before publication");
+    for (const auto& entry : { std::pair { "1/8", bsl::SwingReference::eighth },
+                               std::pair { "1/4", bsl::SwingReference::quarter },
+                               std::pair { "1/2", bsl::SwingReference::half } })
+    {
+        auto referencePreset = juce::JSON::parse(json);
+        auto transport = juce::JSON::parse("{\"SwingRef\":{\"Value\":\"" + juce::String(entry.first) + "\"}}");
+        auto sequencer = juce::var(new juce::DynamicObject());
+        sequencer.getDynamicObject()->setProperty("Transport", transport);
+        referencePreset.getProperty("Seq", {}).getDynamicObject()->setProperty("Seq", sequencer);
+        auto restored = state;
+        check(bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(referencePreset), restored)
+                  && restored.global.swingReference == entry.second,
+              "original preset import preserves each captured swing reference");
+        transport.getProperty("SwingRef", {}).getDynamicObject()->setProperty("Value", "1/16");
+        check(!bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(referencePreset), restored)
+                  && restored.global.swingReference == entry.second,
+              "unsupported original swing reference fails without changing destination");
+    }
     check(state.global.midiChannel == 1, "original presets without Channel default to channel one");
     auto channelPreset = juce::JSON::parse(json);
     auto channelState = state;
