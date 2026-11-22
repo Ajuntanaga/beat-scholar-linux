@@ -1,0 +1,34 @@
+--- a/modules/juce_audio_processors/format_types/juce_VST3PluginFormat.cpp
++++ b/modules/juce_audio_processors/format_types/juce_VST3PluginFormat.cpp
+@@ -461 +461 @@
+-            for (const auto& h : eventHandlerMap)
++            for (const auto& h : *eventHandlerMap)
+@@ -471 +471 @@
+-            auto& handlers = eventHandlerMap[fd];
++            auto& handlers = (*eventHandlerMap)[fd];
+@@ -475 +475 @@
+-                LinuxEventLoop::registerFdCallback (fd, [this] (int descriptor)
++                LinuxEventLoop::registerFdCallback (fd, [weak = std::weak_ptr { eventHandlerMap }] (int descriptor)
+@@ -477,2 +477,10 @@
+-                    for (auto* h : eventHandlerMap[descriptor])
+-                        h->onFDIsSet (descriptor);
++                    if (const auto strong = weak.lock())
++                    {
++                        const auto iter = strong->find (descriptor);
++
++                        if (iter == strong->end())
++                            return true;
++
++                        for (auto* h : iter->second)
++                            h->onFDIsSet (descriptor);
++                    }
+@@ -494 +502 @@
+-            for (auto iter = eventHandlerMap.begin(), end = eventHandlerMap.end(); iter != end;)
++            for (auto iter = eventHandlerMap->begin(), end = eventHandlerMap->end(); iter != end;)
+@@ -507 +515 @@
+-                        iter = eventHandlerMap.erase (iter);
++                        iter = eventHandlerMap->erase (iter);
+@@ -540 +548,2 @@
+-        std::unordered_map<Linux::FileDescriptor, std::vector<Linux::IEventHandler*>> eventHandlerMap;
++        using Map = std::unordered_map<Linux::FileDescriptor, std::vector<Linux::IEventHandler*>>;
++        std::shared_ptr<Map> eventHandlerMap = std::make_shared<Map>();

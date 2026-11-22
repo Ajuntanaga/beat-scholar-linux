@@ -54,11 +54,16 @@ jobs:
         run: |
           git clone --depth 1 --branch 8.0.16-security https://github.com/juce-framework/JUCE.git third_party/JUCE
           test "$(git -C third_party/JUCE rev-parse HEAD)" = ea77444750de45e036e0279bb0291144bf8e3688
-          curl --fail --location --retry 3 https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Linux.zip -o /tmp/pluginval.zip
-          echo 'c01c49d8063965c4c2dea8324468336768f5c9139e0b1caebde14c2400b55352  /tmp/pluginval.zip' | sha256sum --check
+          # Backport JUCE 04e167d: queued Linux callbacks must not outlive their map.
+          # https://github.com/Tracktion/pluginval/issues/185
+          git clone --depth 1 --branch v1.0.4 --recurse-submodules --shallow-submodules https://github.com/Tracktion/pluginval.git tools/pluginval-source
+          test "$(git -C tools/pluginval-source rev-parse HEAD^{tree})" = ed19c2c16b57a6d94db391bea3ef4a80b769d5bf
+          test "$(git -C tools/pluginval-source/modules/juce rev-parse HEAD)" = 5179f4e720d8406ebd1b5401c86aea8da6cc83c9
+          git -C tools/pluginval-source/modules/juce apply --unidiff-zero --ignore-space-change "$GITHUB_WORKSPACE/tools/patches/pluginval-juce-runloop-lifetime.patch"
+          cmake -S tools/pluginval-source -B build/pluginval -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/pluginval --target pluginval --parallel 2
           mkdir -p tools/bin
-          unzip -q /tmp/pluginval.zip -d tools/bin
-          chmod +x tools/bin/pluginval
+          cp build/pluginval/pluginval_artefacts/Release/pluginval tools/bin/pluginval
       - name: Configure and build VST3, standalone and tests
         id: build
         run: |
