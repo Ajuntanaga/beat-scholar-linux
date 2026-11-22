@@ -124,6 +124,33 @@ def main() -> int:
                     for sample, kind, pitch, lane in captured]
         run_case(f'midi-channel-{channel}', routed, 57025, [], expected, 64, tempo=100)
 
+    # Controlled original capture: triggering the second 7/8 pattern at frame
+    # zero and loading that pattern first produced identical eight-second PCM.
+    # Use synthetic notes here to isolate selection/phase from sample identity.
+    arrangement = copy.deepcopy(state)
+    arrangement['global']['quantization'] = 'whole'
+    first = arrangement['patterns'][0]
+    first['bars'] = [{'numerator': 7, 'denominator': 8}] * 2
+    first['lanes'][0]['beats'] = [[dict(padIndex=0, velocity=0.5,
+                                     enabled=False, velocityAssigned=True)] for _ in range(14)]
+    target = copy.deepcopy(first)
+    target.update(name='Seven eighths target', triggerNote=61)
+    target['bars'] = [{'numerator': 7, 'denominator': 8}]
+    target['lanes'][0]['beats'] = [beat(1) for _ in range(7)]
+    arrangement['patterns'].append(target)
+    # Two complete 7/8 cycles at 100 BPM; 98-percent gates end before stop.
+    expected = []
+    for eighth in range(14):
+        start = eighth * 14400
+        expected.extend((note(start, 'note_on', 61, 95),
+                         note(start + 14112, 'note_off', 61, 95)))
+    loaded = copy.deepcopy(arrangement)
+    loaded['patterns'].reverse()
+    for block in BLOCK_SIZES:
+        run_case('seven-eighths-loaded-first', loaded, 201600, [], expected, block, tempo=100)
+        run_case('seven-eighths-trigger-at-start', arrangement, 201600,
+                 [(0, 61, 127), (1200, 61, 0)], expected, block, tempo=100)
+
     # Odd subdivisions, ghost velocities and a stop during the final long gate.
     subdivisions = (5, 7, 9, 1)
     odd = copy.deepcopy(state)
