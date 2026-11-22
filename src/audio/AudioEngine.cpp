@@ -28,8 +28,15 @@ float auxiliaryTaper(float amount, float decibelsPerHalving)
 
 float padDriveAmount(float gainDb)
 {
-    return std::clamp(std::pow((std::pow(10.0f, std::clamp(gainDb, 0.0f, 24.0f) / 20.0f) - 1.0f)
-                              / 14.848931925f, 0.431693899f), 0.0f, 1.0f);
+    constexpr float span = 14.848933219909668f;
+    constexpr float skew = 0.4316939115524292f;
+    const float linear = std::pow(10.0f, std::clamp(gainDb, 0.0f, 24.0f) * 0.05f);
+    const float normalized = std::clamp(std::pow((linear - 1.0f) / span, skew), 0.0f, 1.0f);
+    // Native restoration passes through the normalized setter before the DSP
+    // getter. Preserve its exp/log inverse and float rounding on that path.
+    const float restored = normalized > 0.0f
+        ? 1.0f + span * std::exp(std::log(normalized) / skew) : 1.0f;
+    return std::clamp(std::pow((restored - 1.0f) / span, skew), 0.0f, 1.0f);
 }
 
 struct CrushParameters
