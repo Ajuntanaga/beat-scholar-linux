@@ -2959,10 +2959,15 @@ void testNativeDriveGatedRelease()
             engine.noteOff(36);
         auto tail = makeBlock(34, 1600);
         engine.process(tail, 1600);
-        for (const std::size_t frame : { 0u, 360u, 720u, 1080u })
+        constexpr std::array<std::size_t, 4> frames { 0u, 360u, 720u, 1080u };
+        // Fixed checkpoints for the native float-accumulated 30 ms output fade.
+        constexpr std::array<float, 4> remaining {
+            0.9993055462837219f, 0.7493022084236145f,
+            0.4992988705635071f, 0.24929556250572205f
+        };
+        for (std::size_t probe = 0; probe < frames.size(); ++probe)
         {
-            const float remaining = 1.0f - static_cast<float>(frame + 1) / 1440.0f;
-            check(std::abs(tail[0][frame] - 0.2004748935f * remaining) < 2e-6f,
+            check(std::abs(tail[0][frames[probe]] - 0.2004748935f * remaining[probe]) < 2e-6f,
                   "saturated native Drive has a linear gated output release");
         }
         check(tail[0][1440] == 0.0f, "driven gated voice finishes its release");
