@@ -498,6 +498,27 @@ void testNativeVelocityAmplitude()
         }
 }
 
+// Original-plugin isolation identifies velocity-before-pan rounding at MIDI 96.
+void testNativeVelocityPanPrecision()
+{
+    for (const auto rate : { 44100.0, 48000.0, 96000.0 })
+    {
+        bsl::AudioEngine engine;
+        prepareDryEngine(engine, rate, 17);
+        engine.setRoutingMode(bsl::RoutingMode::multi);
+        auto settings = dryPadSettings();
+        settings.pan = 0.0f;
+        engine.setPadSettings(0, settings);
+        engine.setPadSample(0, { rate, { std::vector<float>(17, 0.1f) } });
+        engine.noteOn(36, 12352.0f / 16383.0f);
+        auto block = makeBlock(34, 17);
+        engine.process(block, 17);
+        for (const auto channel : { 2u, 3u })
+            check(block[channel][0] == 0.05418238416314125f,
+                  "native velocity and center pan preserve the measured float order");
+    }
+}
+
 void testMonoRetriggerAndOverlappingNoteOffs()
 {
     bsl::PadState state;
@@ -3583,6 +3604,7 @@ int main()
     testNativeInputReleaseIndependentOfPadRelease();
     testNativeGlobalVoicePoolAndMonoOwnership();
     testNativeVelocityAmplitude();
+    testNativeVelocityPanPrecision();
     testMonoRetriggerAndOverlappingNoteOffs();
     testPadMetersTrackRenderedAudio();
     testStereoPlaybackUsesNormalizedPhaseAtUnity();

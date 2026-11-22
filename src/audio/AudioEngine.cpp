@@ -897,8 +897,10 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                     right *= envelope;
                     if (audible)
                     {
-                        dryLeft += left * leftPan * voice.velocity;
-                        dryRight += right * rightPan * voice.velocity;
+                        // Native isolated captures apply velocity before pan.
+                        // Preserve float rounding here: recursive sends amplify it.
+                        dryLeft += (left * voice.velocity) * leftPan;
+                        dryRight += (right * voice.velocity) * rightPan;
                     }
                     ++voice.elapsedFrames;
             }
