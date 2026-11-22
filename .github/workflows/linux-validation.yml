@@ -57,7 +57,7 @@ jobs:
           # Backport JUCE 04e167d: queued Linux callbacks must not outlive their map.
           # https://github.com/Tracktion/pluginval/issues/185
           git clone --depth 1 --branch v1.0.4 --recurse-submodules --shallow-submodules https://github.com/Tracktion/pluginval.git tools/pluginval-source
-          test "$(git -C tools/pluginval-source rev-parse HEAD^{tree})" = ed19c2c16b57a6d94db391bea3ef4a80b769d5bf
+          test "$(git -C tools/pluginval-source rev-parse HEAD)" = ed19c2c16b57a6d94db391bea3ef4a80b769d5bf
           test "$(git -C tools/pluginval-source/modules/juce rev-parse HEAD)" = 5179f4e720d8406ebd1b5401c86aea8da6cc83c9
           git -C tools/pluginval-source/modules/juce apply --unidiff-zero --ignore-space-change "$GITHUB_WORKSPACE/tools/patches/pluginval-juce-runloop-lifetime.patch"
           cmake -S tools/pluginval-source -B build/pluginval -G Ninja -DCMAKE_BUILD_TYPE=Release
