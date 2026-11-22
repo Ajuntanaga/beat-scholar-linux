@@ -42,6 +42,23 @@ def main():
         rate, audio = read_pcm24(out / f'{label}.wav')
         assert rate == 48000 and audio.shape[1] == 34, 'Expected 34 captured channels'
         renders[label] = audio
+    diagnostics = []
+    for pad in range(16):
+        window = slice(pad*2048, (pad+1)*2048)
+        pair = slice(2+pad*2, 4+pad*2)
+        reference = renders['stereo'][window, :2]
+        for label in ('multi', 'multi_master_muted'):
+            block = renders[label][window]
+            difference = block[:, pair] - reference
+            diagnostics.append({
+                'pad': pad, 'render': label,
+                'channel_peaks': np.max(np.abs(block), axis=0).tolist(),
+                'reference_peaks': np.max(np.abs(reference), axis=0).tolist(),
+                'max_error': float(np.max(np.abs(difference))),
+                'max_error_frame_channel': list(map(int, np.unravel_index(
+                    np.argmax(np.abs(difference)), difference.shape))),
+            })
+    (out / 'diagnostics.json').write_text(json.dumps(diagnostics, indent=2) + '\n')
     results = []
     for pad in range(16):
         window = slice(pad*2048, (pad+1)*2048)

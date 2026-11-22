@@ -160,7 +160,8 @@ jobs:
             build/ci/editor-regression/**/*.json
             build/ci/actual-vst3-smoke/report.json
             build/ci/actual-vst3-midi/report.json
-            build/ci/actual-vst3-routing/results.json
+            build/ci/actual-vst3-routing/*.json
+            build/ci/actual-vst3-routing/*.wav
             build/ci/actual-vst3-routing/*.log
             build/ci/actual-vst3-panic/results.json
             build/ci/actual-vst3-panic/*.log
