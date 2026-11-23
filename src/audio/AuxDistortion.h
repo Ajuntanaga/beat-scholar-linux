@@ -2,12 +2,15 @@
 #include <array>
 #include <cstddef>
 #include <vector>
+#include <memory>
 
 namespace bsl {
 // Shared Aux3 bus. Response preparation and replacement require stopped audio.
 class AuxDistortion
 {
 public:
+    AuxDistortion();
+    ~AuxDistortion();
     void prepare(double sampleRate);
     void setResponse(std::array<std::vector<float>, 2> response);
     void reset() noexcept;
@@ -22,8 +25,10 @@ private:
         float tick(float input, std::size_t channel) noexcept;
     };
     Biquad inputHighPass_, dcHighPass_, lowPass_;
-    std::array<std::vector<float>, 2> response_, history_;
-    std::size_t position_ = 0, gainFrames_ = 0, rampLength_ = 1;
+    struct Convolution;
+    std::unique_ptr<Convolution> convolution_;
+    std::array<std::vector<float>, 2> response_;
+    std::size_t gainFrames_ = 0, rampLength_ = 1;
     float inputGain_ = 0, gainStep_ = 0;
 };
 } // namespace bsl

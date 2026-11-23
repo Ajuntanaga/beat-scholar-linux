@@ -17,6 +17,8 @@ if(BSL_ENABLE_TSAN AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_link_options(beat_scholar_sanitizers INTERFACE -fsanitize=thread)
 endif()
 
+add_subdirectory(third_party/chowdsp_fft)
+
 add_library(beat_scholar_core
     src/content/FactoryResourceScanner.cpp
     src/core/Model.cpp
@@ -35,7 +37,7 @@ set_target_properties(beat_scholar_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_include_directories(beat_scholar_core PUBLIC src)
 target_compile_features(beat_scholar_core PUBLIC cxx_std_20)
-target_link_libraries(beat_scholar_core PUBLIC beat_scholar_sanitizers)
+target_link_libraries(beat_scholar_core PUBLIC beat_scholar_sanitizers PRIVATE bsl_fft)
 target_compile_options(beat_scholar_core PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
 )

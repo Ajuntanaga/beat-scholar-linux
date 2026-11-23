@@ -1,9 +1,67 @@
 #include "AuxDistortion.h"
+#include "chowdsp_fft.h"
 #include <algorithm>
 #include <cmath>
 #include <utility>
 
 namespace bsl {
+
+struct AuxDistortion::Convolution
+{
+    static constexpr std::size_t block = 512, size = 1024;
+    struct alignas(64) Buffer { std::array<float, size> samples {}; };
+    std::array<Buffer, 2> input, spectrum, overlap;
+    Buffer frequency, product, output, scratch;
+    void* setup = chowdsp::fft::fft_new_setup(size, chowdsp::fft::FFT_REAL, true);
+    std::size_t offset = 0;
+    ~Convolution() { if (setup) chowdsp::fft::fft_destroy_setup(setup); }
+    void reset() noexcept { input = {}; overlap = {}; offset = 0; }
+    void setResponse(const std::array<std::vector<float>, 2>& response)
+    {
+        spectrum = {};
+        if (!setup || response[0].empty()) return;
+        for (std::size_t ch = 0; ch < 2; ++ch)
+        {
+            output.samples.fill(0);
+            std::copy(response[ch].begin(), response[ch].end(), output.samples.begin());
+            chowdsp::fft::fft_transform_unordered(setup, output.samples.data(),
+                spectrum[ch].samples.data(), scratch.samples.data(), chowdsp::fft::FFT_FORWARD);
+        }
+    }
+    void process(float* left, float* right, std::size_t frames) noexcept
+    {
+        using namespace chowdsp::fft;
+        std::array<float*, 2> channels {left, right};
+        for (std::size_t start = 0; start < frames;)
+        {
+            const auto count = std::min(block - offset, frames - start);
+            for (std::size_t ch = 0; ch < 2; ++ch)
+            {
+                std::copy_n(channels[ch] + start, count, input[ch].samples.data() + offset);
+                fft_transform_unordered(setup, input[ch].samples.data(), frequency.samples.data(),
+                                        scratch.samples.data(), FFT_FORWARD);
+                product.samples.fill(0);
+                fft_convolve_unordered(setup, frequency.samples.data(), spectrum[ch].samples.data(),
+                                       product.samples.data(), 1.0f / static_cast<float>(size));
+                fft_transform_unordered(setup, product.samples.data(), output.samples.data(),
+                                        scratch.samples.data(), FFT_BACKWARD);
+                for (std::size_t i = 0; i < count; ++i)
+                    channels[ch][start + i] = output.samples[offset + i] + overlap[ch].samples[offset + i];
+                if (offset + count == block)
+                {
+                    std::copy_n(output.samples.data() + block, block, overlap[ch].samples.data());
+                    input[ch].samples.fill(0);
+                }
+            }
+            start += count;
+            offset = (offset + count) % block;
+        }
+    }
+};
+
+AuxDistortion::AuxDistortion() = default;
+AuxDistortion::~AuxDistortion() = default;
+
 float AuxDistortion::Biquad::tick(float input, std::size_t channel) noexcept
 {
     auto& s = state[channel];
@@ -36,7 +94,7 @@ void AuxDistortion::prepare(double sampleRate)
     rampLength_ = std::max<std::size_t>(1, static_cast<std::size_t>(rate * 0.1f));
     // A response resampled for the previous rate must not survive re-prepare.
     response_ = {};
-    history_ = {};
+    convolution_ = std::make_unique<Convolution>();
     reset();
 }
 
@@ -47,15 +105,15 @@ void AuxDistortion::setResponse(std::array<std::vector<float>, 2> response)
         && std::all_of(response[0].begin(), response[0].end(), [](float x) { return std::isfinite(x); })
         && std::all_of(response[1].begin(), response[1].end(), [](float x) { return std::isfinite(x); });
     response_ = valid ? std::move(response) : std::array<std::vector<float>, 2> {};
-    for (auto& channel : history_) channel.assign(response_[0].size(), 0.0f);
+    if (!convolution_) convolution_ = std::make_unique<Convolution>();
+    convolution_->setResponse(response_);
     reset();
 }
 
 void AuxDistortion::reset() noexcept
 {
     inputHighPass_.state = dcHighPass_.state = lowPass_.state = {};
-    for (auto& channel : history_) std::fill(channel.begin(), channel.end(), 0.0f);
-    position_ = 0;
+    if (convolution_) convolution_->reset();
     inputGain_ = 0;
     gainFrames_ = rampLength_;
     gainStep_ = 5.75f / static_cast<float>(rampLength_);
@@ -94,20 +152,12 @@ void AuxDistortion::process(float* left, float* right, std::size_t frames, float
             value = std::clamp(value, -threshold, threshold) / threshold;
             value = 1.5f * value - 0.5f * value * value * value;
             value = lowPass_.tick(value, channel);
-            float output = 0.0f;
-            if (length != 0)
-            {
-                history_[channel][position_] = value;
-                auto tap = position_;
-                for (std::size_t i = 0; i < length; ++i)
-                {
-                    output += response_[channel][i] * history_[channel][tap];
-                    tap = tap == 0 ? length - 1 : tap - 1;
-                }
-            }
-            channels[channel][frame] = output;
+            channels[channel][frame] = value;
         }
-        if (length != 0 && ++position_ == length) position_ = 0;
     }
+    if (length != 0 && convolution_ && convolution_->setup)
+        convolution_->process(left, right, frames);
+    else
+        for (auto* channel : channels) std::fill_n(channel, frames, 0.0f);
 }
 } // namespace bsl

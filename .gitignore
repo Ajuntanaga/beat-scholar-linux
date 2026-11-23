@@ -46,3 +46,7 @@
 !/.github/workflows/
 /.github/workflows/*
 !/.github/workflows/linux-validation.yml
+
+!/third_party/
+/third_party/*
+!/third_party/chowdsp_fft/

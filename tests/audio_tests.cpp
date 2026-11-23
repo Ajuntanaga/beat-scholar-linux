@@ -3684,11 +3684,18 @@ void testDistortionResponseLifecycleAndPartitioning()
         auto data = signal();
         run(processor, data, block);
         if (reference[0].empty()) reference = data;
-        check(data == reference, "Aux3 response and gain ramp are independent of callback partitions");
+        float partitionError = 0;
+        for (std::size_t ch = 0; ch < 2; ++ch)
+            for (std::size_t i = 0; i < data[ch].size(); ++i)
+                partitionError = std::max(partitionError, std::abs(data[ch][i] - reference[ch][i]));
+        // Partial FFT windows have different float rounding; timing and signal
+        // must remain equivalent within the measured transform roundoff bound.
+        check(partitionError < 1e-7f, "Aux3 callback partitions preserve the signal within FFT roundoff");
+        const auto beforeReset = data;
         processor.reset();
         data = signal();
         run(processor, data, block);
-        check(data == reference, "Aux3 reset clears filter, gain and FIR history reproducibly");
+        check(data == beforeReset, "Aux3 reset clears filter, gain and FFT history reproducibly");
         processor.prepare(96000);
         data = signal(); run(processor, data, block);
         check(isSilent(data), "rate changes cannot reuse an IR prepared for the old rate");
