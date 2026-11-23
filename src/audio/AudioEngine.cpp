@@ -20,10 +20,13 @@ float parallelSaturate(float value, float mix, float gain)
     return value + (wet - value) * mix;
 }
 
-float auxiliaryTaper(float amount, float decibelsPerHalving)
+float distortionReturnGain(float amount)
 {
-    return amount > 0.0f
-        ? std::pow(10.0f, decibelsPerHalving * std::log2(amount) / 20.0f) : 0.0f;
+    // Native return range: silence, +6 dB maximum, -12 dB midpoint.
+    // Preserve the float skew and inverse order before downstream quantization.
+    constexpr float maximum = 1.9952623844146729f;
+    constexpr float skew = 0.3344777524471283f;
+    return amount > 0.0f ? maximum * std::exp(std::log(amount) / skew) : 0.0f;
 }
 
 float auxiliarySendGain(float amount)
@@ -612,7 +615,7 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
     ambienceReturn_.setTarget(1.9952623844146729f, static_cast<std::size_t>(sampleRate_ * 0.1));
     // Smooth the final return gain: scaling a unity ramp afterward changes
     // startup rounding enough to cross downstream bitcrusher thresholds.
-    distortionReturn_.setTarget(auxiliaryTaper(master_.distortionReturn, 18.0f) * 1.995262315f,
+    distortionReturn_.setTarget(distortionReturnGain(master_.distortionReturn),
                                 static_cast<std::size_t>(sampleRate_ * 0.1));
     for (auto& send : distortionSends_) std::fill_n(send.begin(), end - start, 0.0f);
     constexpr float halfPi = 1.57079632679489661923f;
