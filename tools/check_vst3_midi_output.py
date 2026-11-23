@@ -115,6 +115,11 @@ def main() -> int:
                   'host_report': str(case_dir / 'host.json'), 'pre_stop_only': pre_stop_only,
                   'timing_contract': ('legacy compatibility: exact trigger/stop, other events within one sample'
                                       if legacy_immediate else 'exact expected event samples')}
+        if ordered_expected is not None:
+            result['ordered_expected'] = ordered_expected
+            result['ordered_actual'] = [
+                (e['sample'], e['type'], e['channel'], e.get('note'), e.get('velocity'))
+                for e in report.get('output_midi_events', [])]
         cases.append(result)
         print(f"{name}/{block}: {'PASS' if not errors else 'FAIL: ' + '; '.join(errors)}", flush=True)
 
