@@ -3594,6 +3594,24 @@ void testSharedEffectsIgnoreVoiceSubdivision()
             split.endBlock(actual);
             check(actual == expected, "shared effects are bit-exact across voice subdivisions and capacity wraps");
         }
+        // A host panic must retain already-rendered audio and silence the rest.
+        auto prefix = makeBlock(2, 73);
+        whole.process(prefix, 73);
+        auto interrupted = makeBlock(2, 777);
+        split.beginBlock(interrupted, 777);
+        split.renderRange(interrupted, 0, 73);
+        split.endBlock(interrupted);
+        split.stopMidiChannel(1, true);
+        split.renderRange(interrupted, 73, 777);
+        split.endBlock(interrupted);
+        for (std::size_t channel = 0; channel < 2; ++channel)
+        {
+            check(std::equal(prefix[channel].begin(), prefix[channel].end(), interrupted[channel].begin()),
+                  "mid-block panic preserves the audio before its sample position");
+            check(std::all_of(interrupted[channel].begin() + 73, interrupted[channel].end(),
+                              [](float sample) { return sample == 0.0f; }),
+                  "mid-block panic clears voices and shared effect tails after its sample position");
+        }
     }
 }
 

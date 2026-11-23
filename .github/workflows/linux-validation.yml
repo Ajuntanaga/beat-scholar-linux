@@ -127,8 +127,10 @@ jobs:
           # Explicit files only: no factory content, reference media or host captures.
           mkdir -p build/ci/licenses
           cp third_party/chowdsp_fft/LICENSE.txt build/ci/licenses/chowdsp_fft.txt
+          cp assets/fonts/OFL.txt build/ci/licenses/Montserrat-OFL.txt
           tar -czf build/ci/source-candidate.tar.gz -C build/ci \
             licenses/chowdsp_fft.txt \
+            licenses/Montserrat-OFL.txt \
             'BeatScholarLinux_artefacts/Release/Standalone/Beat Scholar Linux' \
             'BeatScholarLinux_artefacts/Release/VST3/Beat Scholar Linux.vst3/Contents/x86_64-linux/Beat Scholar Linux.so' \
             'BeatScholarLinux_artefacts/Release/VST3/Beat Scholar Linux.vst3/Contents/Resources/moduleinfo.json' \
