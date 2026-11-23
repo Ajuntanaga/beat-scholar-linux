@@ -1,4 +1,5 @@
 #include "AuxDistortion.h"
+#include "DistortionAtan.h"
 #include "chowdsp_fft.h"
 #include <algorithm>
 #include <cmath>
@@ -147,7 +148,7 @@ void AuxDistortion::process(float* left, float* right, std::size_t frames, float
             float value = inputHighPass_.tick(channels[channel][frame], channel) * inputGain_;
             // Preserve the two native float multiplies: folding the constants
             // changes the DC-filter state enough to alter high-drive clipping.
-            value = std::atan((value * 0.51f) * halfPi) / halfPi;
+            value = detail::distortionAtan((value * 0.51f) * halfPi) / halfPi;
             value = dcHighPass_.tick(value, channel);
             value = std::clamp(value, -threshold, threshold) / threshold;
             value = 1.5f * value - 0.5f * value * value * value;

@@ -1,5 +1,6 @@
 #include "audio/AudioEngine.h"
 #include "audio/CompressorPower.h"
+#include "audio/DistortionAtan.h"
 
 #include <algorithm>
 #include <cmath>
@@ -3752,6 +3753,14 @@ void testAudioCallbacksDoNotAllocateOnFirstOrLargerBlock()
 
 int main()
 {
+    // Native capture: right channel frame 144086. A one-ULP atan error here
+    // becomes a large residual after the DC filter and narrow clip threshold.
+    check(bsl::detail::distortionAtan(-0x1.e13d88p-4f) / 0x1.921fb6p+0f
+              == -0x1.30f80ep-4f,
+          "distortion preserves reference rounding at the captured divergence");
+    check(std::signbit(bsl::detail::distortionAtan(-0.0f)),
+          "distortion atan preserves negative zero");
+
     testNativeNormalizedCubicPlayback();
     testNativeNonzeroSampleEndpoint();
     testCompletedLayerRetiresWhileOtherLayerContinues();
