@@ -1,4 +1,5 @@
 #include "audio/AudioEngine.h"
+#include "audio/CompressorPower.h"
 
 #include <algorithm>
 #include <cmath>
@@ -214,12 +215,8 @@ void AudioEngine::Compressor::process(float& left, float& right) noexcept
         auto& level = envelope[channel];
         const float coefficient = magnitude > level ? attack : release;
         level = magnitude + coefficient * (level - magnitude);
-        // Round the base as float, then evaluate the power in double precision.
-        // Native powf uses double intermediates; float powf can differ by one
-        // ULP here, enough to change the downstream distortion response.
         const float reduction = level < threshold ? 1.0f
-            : static_cast<float>(std::pow(static_cast<double>(level * inverseThreshold),
-                                          static_cast<double>(exponent)));
+            : detail::compressorPower(level * inverseThreshold, exponent);
         return input * reduction * postGain;
     };
     left = compressChannel(left, 0);

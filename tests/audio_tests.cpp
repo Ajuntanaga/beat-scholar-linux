@@ -1,4 +1,5 @@
 #include "audio/AudioEngine.h"
+#include "audio/CompressorPower.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1832,6 +1833,19 @@ void testMainGainRetargeting()
             check(finite && error < 3.0e-4f && nativeError < 1.0e-6f,
                   "main retarget starts a 100 ms slope from current gain across blocks and Master toggles");
         }
+}
+
+void testReferenceCompressorPowerRounding()
+{
+    // Recorded original-plugin pow inputs/outputs where accurate libm differs.
+    check(bsl::detail::compressorPower(1.1772056818008423f, -0.9f) == 0.8634414076805115f,
+          "compressor reduction matches first native sparse sample");
+    check(bsl::detail::compressorPower(1.2193647623062134f, -0.9f) == 0.8365265130996704f,
+          "compressor reduction matches second native sparse sample");
+    check(bsl::detail::compressorPower(1.1491330862045288f, -0.9f) == 0.8824024200439453f,
+          "compressor reduction matches third native sparse sample");
+    check(bsl::detail::compressorPower(1.0f, -0.9f) == 1.0f,
+          "compressor threshold has unity reduction");
 }
 
 void testMasterCompressorNeutralRangePreservesSignal()
@@ -3781,6 +3795,7 @@ int main()
     testAuxGainTaperStartupAndRetrigger();
     testMainGainStartupAndRouting();
     testMainGainRetargeting();
+    testReferenceCompressorPowerRounding();
     testMasterCompressorNeutralRangePreservesSignal();
     testNativeMasterCompressorSteadyState();
     testNativeMasterCompressorDynamicsAndStartup();
