@@ -209,14 +209,20 @@ def main() -> int:
                      ordered_expected=expected[:4] + [
                          note(7001, 'note_off', 36, 95 if reversed_lanes else 64),
                          note(7001, 'note_off', 36, 64 if reversed_lanes else 95)])
-            # Harness smoke coverage only: original restart comparison is pending.
-            run_case(f'incoming-layered-restart-smoke-{int(reversed_lanes)}', layered, 7001,
+            # Original stop-gap-restart captures match both lane orders, including
+            # simultaneous release order and the restarted beat at capture 11097.
+            run_case(f'incoming-layered-restart-{int(reversed_lanes)}', layered, 7001,
                      [(7000, 36, 100), (8000, 36, 0)],
                      expected[:4] + [note(7001, 'note_off', 36, 64),
                                      note(7001, 'note_off', 36, 95),
                                      note(11097, 'note_on', 36, 64),
                                      note(12097, 'note_off', 36, 64)],
-                     block, tempo=120, post_stop_frames=4096, restart_frames=1000)
+                     block, tempo=120, post_stop_frames=4096, restart_frames=1000,
+                     ordered_expected=expected[:4] + [
+                         note(7001, 'note_off', 36, 95 if reversed_lanes else 64),
+                         note(7001, 'note_off', 36, 64 if reversed_lanes else 95),
+                         note(11097, 'note_on', 36, 64),
+                         note(12097, 'note_off', 36, 64)])
             repeated = expected[:4] + [note(7500, 'note_off', 36, 90),
                                        note(7500, 'note_on', 36, 90)] + expected[4:]
             run_case(f'incoming-layered-repeat-{int(reversed_lanes)}', layered, 30000,
