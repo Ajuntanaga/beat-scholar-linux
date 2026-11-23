@@ -28,6 +28,7 @@ struct MidiEvent
     int note = 36;
     int velocity = 127;
     bool controller = false;
+    int channel = 1;
 };
 
 struct Options
@@ -80,15 +81,17 @@ MidiEvent parseMidi(const std::string& value)
     juce::StringArray fields;
     fields.addTokens(value, ":", {});
     fields.trim();
-    if (fields.size() != 3)
-        fail("--midi must be SAMPLE:NOTE:VELOCITY");
+    if (fields.size() != 3 && fields.size() != 4)
+        fail("--midi must be SAMPLE:NOTE:VELOCITY[:CHANNEL]");
     MidiEvent event;
     event.sample = parseInt64(fields[0].toStdString(), "--midi sample");
     event.note = static_cast<int>(parseInt64(fields[1].toStdString(), "--midi note"));
     event.velocity = static_cast<int>(parseInt64(fields[2].toStdString(), "--midi velocity"));
+    if (fields.size() == 4)
+        event.channel = static_cast<int>(parseInt64(fields[3].toStdString(), "--midi channel"));
     if (event.sample < 0 || event.note < 0 || event.note > 127
-        || event.velocity < 0 || event.velocity > 127)
-        fail("--midi values are outside SAMPLE>=0, NOTE=0..127, VELOCITY=0..127");
+        || event.velocity < 0 || event.velocity > 127 || event.channel < 1 || event.channel > 16)
+        fail("--midi values are outside SAMPLE>=0, NOTE=0..127, VELOCITY=0..127, CHANNEL=1..16");
     return event;
 }
 
@@ -133,7 +136,7 @@ Options parseOptions(int argc, char** argv)
             std::cout
                 << "Usage: actual_vst3_host --plugin BUNDLE --state PRESET_OR_BSLX --output WAV\\n"
                 << "       --expect-sha256 HEX --sample-rate HZ --block-size N --active-frames N\\n"
-                << "       [--midi SAMPLE:NOTE:VELOCITY] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--all-outputs] [--pre-roll-frames N] [--restored-state-output NEW_BSLX] [--raw-component-state]\\n";
+                << "       [--midi SAMPLE:NOTE:VELOCITY[:CHANNEL]] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--all-outputs] [--pre-roll-frames N] [--restored-state-output NEW_BSLX] [--raw-component-state]\\n";
             std::exit(0);
         }
         else fail("unknown option: " + argument);
@@ -484,10 +487,10 @@ int run(const Options& options)
             {
                 const auto offset = static_cast<int>(event.sample - cursor);
                 const auto message = event.controller
-                    ? juce::MidiMessage::controllerEvent(1, event.note, event.velocity)
+                    ? juce::MidiMessage::controllerEvent(event.channel, event.note, event.velocity)
                     : event.velocity == 0
-                    ? juce::MidiMessage::noteOff(1, event.note)
-                    : juce::MidiMessage::noteOn(1, event.note,
+                    ? juce::MidiMessage::noteOff(event.channel, event.note)
+                    : juce::MidiMessage::noteOn(event.channel, event.note,
                                                 static_cast<juce::uint8>(event.velocity));
                 midi.addEvent(message, offset);
             }
@@ -562,6 +565,7 @@ int run(const Options& options)
     {
         juce::DynamicObject::Ptr encoded = new juce::DynamicObject();
         encoded->setProperty("sample", static_cast<juce::int64>(event.sample));
+        encoded->setProperty("channel", event.channel);
         encoded->setProperty(event.controller ? "controller" : "note", event.note);
         encoded->setProperty(event.controller ? "value" : "velocity", event.velocity);
         midiEvents.add(juce::var(encoded.get()));

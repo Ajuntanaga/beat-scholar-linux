@@ -104,6 +104,27 @@ def main() -> int:
         cases.append(result)
         print(f"{name}/{block}: {'PASS' if not errors else 'FAIL: ' + '; '.join(errors)}", flush=True)
 
+    # Direct original captures: fixed drum input survives sampler bypass and
+    # editable output remapping. Unmapped notes are not general MIDI thru.
+    fixed_inputs = {36, 38, 37, 39, 42, 46, 49, 51, 57, 55, 43, 41, 54, 40, 53, 56}
+    for channel in (0, 1, 2):
+        forwarded = copy.deepcopy(state)
+        forwarded['global']['midiChannel'] = channel
+        for pattern in forwarded['patterns']:
+            for lane in pattern['lanes']:
+                for slices in lane['beats']:
+                    for segment in slices:
+                        segment['enabled'] = False
+        inputs, expected = [], []
+        for pitch in range(35, 59):
+            frame = 1000 + (pitch - 35) * 200
+            inputs.extend(((frame, pitch, 100), (frame + 80, pitch, 0)))
+            if pitch in fixed_inputs:
+                expected.extend((note(frame, 'note_on', pitch, 100, channel or 1),
+                                 note(frame + 80, 'note_off', pitch, 0, channel or 1)))
+        for block in BLOCK_SIZES:
+            run_case(f'fixed-drum-input-{channel}', forwarded, 6000, inputs, expected, block)
+
     # Owned-original captures, 2026-11-15: 48 kHz, 100 BPM, block 64.
     # Fixed channels route every lane together; Any (0) is one channel per lane.
     for channel in (0, 1, 7, 16):

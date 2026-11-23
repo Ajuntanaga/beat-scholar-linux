@@ -443,9 +443,8 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         }
     }
 
-    // This instrument's MIDI output is its sequencer stream, not MIDI thru.
-    // Input still triggers pads/patterns above, but sharing its notes with
-    // generated gates would give two owners to the same channel/pitch lifetime.
+    // Preserve input separately while rebuilding sequencer and fixed drum-input
+    // output events in timestamp order below.
     incomingMidi_.swapWith(midi);
     midi.clear();
 
@@ -540,6 +539,16 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         {
             const auto metadata = *input++;
             const auto message = metadata.getMessage();
+            if ((message.isNoteOn() || message.isNoteOff())
+                && state.padIndexForInputMidiNote(static_cast<std::uint8_t>(message.getNoteNumber())))
+            {
+                // Native drum input is forwarded even with the sampler bypassed.
+                // Its fixed input note is independent of the editable output map.
+                auto forwarded = message;
+                if (state.global.midiChannel != 0)
+                    forwarded.setChannel(state.global.midiChannel);
+                midi.addEvent(forwarded, metadata.samplePosition);
+            }
             if (!state.global.samplerEnabled)
                 continue;
             if (message.isAllSoundOff() || message.isAllNotesOff())
