@@ -57,7 +57,7 @@ def main() -> int:
     def run_case(name: str, project: dict, active_frames: int, inputs: list[tuple],
                  expected: list[tuple], block: int, tempo: float = TEMPO, *, pre_stop_only: bool = False,
                  legacy_immediate: bool = False, controllers: tuple = (), post_stop_frames: int | None = None,
-                 restart_frames: int = 0) -> None:
+                 restart_frames: int = 0, ordered_expected: list[tuple] | None = None) -> None:
         case_dir = args.artifacts_dir / f'{name}-{block}'
         case_dir.mkdir(exist_ok=True)
         preset = case_dir / 'state.json'
@@ -86,6 +86,11 @@ def main() -> int:
             if restart_frames and (report.get('restart_frames') != restart_frames or
                                    report.get('restart_capture_sample') != active_frames + post_stop_frames):
                 errors.append('restart capture metadata differs from requested transport')
+            if ordered_expected is not None:
+                ordered_actual = [(e['sample'], e['type'], e['channel'], e.get('note'), e.get('velocity'))
+                                  for e in report['output_midi_events']]
+                if ordered_actual != ordered_expected:
+                    errors.append('raw MIDI event order differs from original capture')
             actual = canonical(report['output_midi_events'])
             if pre_stop_only:
                 actual = [event for event in actual if event[0] < active_frames]
@@ -195,7 +200,10 @@ def main() -> int:
                      [(7000, 36, 100), (8000, 36, 0)],
                      expected[:4] + [note(7001, 'note_off', 36, 64),
                                      note(7001, 'note_off', 36, 95)],
-                     block, tempo=120, post_stop_frames=4096)
+                     block, tempo=120, post_stop_frames=4096,
+                     ordered_expected=(expected[:4] + [note(7001, 'note_off', 36, 95),
+                                                        note(7001, 'note_off', 36, 64)]
+                                       if reversed_lanes else None))
             # Harness smoke coverage only: original restart comparison is pending.
             run_case(f'incoming-layered-restart-smoke-{int(reversed_lanes)}', layered, 7001,
                      [(7000, 36, 100), (8000, 36, 0)],
