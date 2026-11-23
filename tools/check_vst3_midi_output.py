@@ -56,7 +56,8 @@ def main() -> int:
 
     def run_case(name: str, project: dict, active_frames: int, inputs: list[tuple],
                  expected: list[tuple], block: int, tempo: float = TEMPO, *, pre_stop_only: bool = False,
-                 legacy_immediate: bool = False, controllers: tuple = (), post_stop_frames: int | None = None) -> None:
+                 legacy_immediate: bool = False, controllers: tuple = (), post_stop_frames: int | None = None,
+                 restart_frames: int = 0) -> None:
         case_dir = args.artifacts_dir / f'{name}-{block}'
         case_dir.mkdir(exist_ok=True)
         preset = case_dir / 'state.json'
@@ -67,6 +68,8 @@ def main() -> int:
                    '--sample-rate', str(SAMPLE_RATE), '--block-size', str(block),
                    '--active-frames', str(active_frames), '--post-stop-frames', str(block if post_stop_frames is None else post_stop_frames),
                    '--play-sequencer', '--tempo', str(tempo)]
+        if restart_frames:
+            command.extend(('--restart-frames', str(restart_frames)))
         for event in inputs:
             command.extend(('--midi', ':'.join(map(str, event))))
         for event in controllers:
@@ -80,6 +83,9 @@ def main() -> int:
             errors.append(f'host exited {proc.returncode}: {proc.stderr[-1000:]}')
         else:
             report = json.loads(proc.stdout)
+            if restart_frames and (report.get('restart_frames') != restart_frames or
+                                   report.get('restart_capture_sample') != active_frames + post_stop_frames):
+                errors.append('restart capture metadata differs from requested transport')
             actual = canonical(report['output_midi_events'])
             if pre_stop_only:
                 actual = [event for event in actual if event[0] < active_frames]
@@ -190,6 +196,14 @@ def main() -> int:
                      expected[:4] + [note(7001, 'note_off', 36, 64),
                                      note(7001, 'note_off', 36, 95)],
                      block, tempo=120, post_stop_frames=4096)
+            # Harness smoke coverage only: original restart comparison is pending.
+            run_case(f'incoming-layered-restart-smoke-{int(reversed_lanes)}', layered, 7001,
+                     [(7000, 36, 100), (8000, 36, 0)],
+                     expected[:4] + [note(7001, 'note_off', 36, 64),
+                                     note(7001, 'note_off', 36, 95),
+                                     note(11097, 'note_on', 36, 64),
+                                     note(12097, 'note_off', 36, 64)],
+                     block, tempo=120, post_stop_frames=4096, restart_frames=1000)
             repeated = expected[:4] + [note(7500, 'note_off', 36, 90),
                                        note(7500, 'note_on', 36, 90)] + expected[4:]
             run_case(f'incoming-layered-repeat-{int(reversed_lanes)}', layered, 30000,

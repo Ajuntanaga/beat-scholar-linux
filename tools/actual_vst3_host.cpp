@@ -47,6 +47,7 @@ struct Options
     std::int64_t activeFrames = 0;
     std::int64_t preRollFrames = 0;
     std::int64_t postStopFrames = 0;
+    std::int64_t restartFrames = 0;
     bool playSequencer = false;
     bool floatOutput = false;
     bool allOutputs = false;
@@ -122,6 +123,7 @@ Options parseOptions(int argc, char** argv)
         else if (argument == "--active-frames") options.activeFrames = parseInt64(next(index, "--active-frames"), "--active-frames");
         else if (argument == "--pre-roll-frames") options.preRollFrames = parseInt64(next(index, "--pre-roll-frames"), "--pre-roll-frames");
         else if (argument == "--post-stop-frames") options.postStopFrames = parseInt64(next(index, "--post-stop-frames"), "--post-stop-frames");
+        else if (argument == "--restart-frames") options.restartFrames = parseInt64(next(index, "--restart-frames"), "--restart-frames");
         else if (argument == "--midi") options.midi.push_back(parseMidi(next(index, "--midi")));
         else if (argument == "--cc")
         {
@@ -138,7 +140,7 @@ Options parseOptions(int argc, char** argv)
             std::cout
                 << "Usage: actual_vst3_host --plugin BUNDLE --state PRESET_OR_BSLX --output WAV\\n"
                 << "       --expect-sha256 HEX --sample-rate HZ --block-size N --active-frames N\\n"
-                << "       [--midi SAMPLE:NOTE:VELOCITY[:CHANNEL]] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--all-outputs] [--pre-roll-frames N] [--post-stop-frames N] [--restored-state-output NEW_BSLX] [--raw-component-state]\\n";
+                << "       [--midi SAMPLE:NOTE:VELOCITY[:CHANNEL]] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--all-outputs] [--pre-roll-frames N] [--post-stop-frames N] [--restart-frames N] [--restored-state-output NEW_BSLX] [--raw-component-state]\\n";
             std::exit(0);
         }
         else fail("unknown option: " + argument);
@@ -157,6 +159,10 @@ Options parseOptions(int argc, char** argv)
         fail("--pre-roll-frames is outside 0..60 seconds");
     if (options.postStopFrames < 0 || options.postStopFrames > static_cast<std::int64_t>(options.sampleRate * 60.0))
         fail("--post-stop-frames is outside 0..60 seconds");
+    if (options.restartFrames < 0 || options.restartFrames > static_cast<std::int64_t>(options.sampleRate * 60.0))
+        fail("--restart-frames is outside 0..60 seconds");
+    if (options.restartFrames > 0 && (!options.playSequencer || options.postStopFrames == 0))
+        fail("--restart-frames requires --play-sequencer and a positive --post-stop-frames gap");
     if (options.activeFrames < 1) fail("--active-frames must be positive");
     if (options.midi.empty() && !options.playSequencer)
         fail("at least one deterministic --midi event or --play-sequencer is required");
@@ -471,9 +477,13 @@ int run(const Options& options)
         fail("plugin declared an invalid tail length");
     const auto tailFrames = std::max(options.postStopFrames,
         static_cast<std::int64_t>(std::ceil(tailSeconds * options.sampleRate)));
-    if (options.activeFrames > std::numeric_limits<int>::max() - tailFrames)
+    const auto restartGap = options.restartFrames > 0 ? options.postStopFrames : 0;
+    const auto extraFrames = restartGap + options.restartFrames + tailFrames;
+    if (options.activeFrames > std::numeric_limits<int>::max() - extraFrames)
         fail("requested render is too large");
-    const auto totalFrames = options.activeFrames + tailFrames;
+    const auto restartStart = options.activeFrames + restartGap;
+    const auto restartEnd = restartStart + options.restartFrames;
+    const auto totalFrames = options.activeFrames + extraFrames;
     juce::AudioBuffer<float> rendered(renderChannels, static_cast<int>(totalFrames));
     rendered.clear();
     juce::Array<juce::var> outputMidi;
@@ -482,7 +492,11 @@ int run(const Options& options)
     while (cursor < totalFrames)
     {
         // Stop at the requested sample even when it falls inside a host block.
-        const auto boundary = cursor < options.activeFrames ? options.activeFrames : totalFrames;
+        const bool restarted = options.restartFrames > 0 && cursor >= restartStart;
+        const bool playing = cursor < options.activeFrames || (restarted && cursor < restartEnd);
+        const auto boundary = cursor < options.activeFrames ? options.activeFrames
+            : options.restartFrames > 0 && cursor < restartStart ? restartStart
+            : restarted && cursor < restartEnd ? restartEnd : totalFrames;
         const auto currentBlock = static_cast<int>(std::min<std::int64_t>(options.blockSize,
                                                                           boundary - cursor));
         juce::AudioBuffer<float> block(processChannels, currentBlock);
@@ -506,12 +520,14 @@ int run(const Options& options)
         }
         if (options.playSequencer)
         {
-            transport.position.setIsPlaying(cursor < options.activeFrames);
+            transport.position.setIsPlaying(playing);
             transport.position.setBpm(options.tempo);
-            transport.position.setTimeInSamples(cursor);
+            // Restart from beat one; capture timestamps remain monotonic.
+            const auto transportSample = restarted ? cursor - restartStart : cursor;
+            transport.position.setTimeInSamples(transportSample);
             // Match the isolated REAPER reference: samples -> seconds -> beats.
             // Reassociation changes boundary placement by one sample.
-            transport.position.setPpqPosition(static_cast<double>(cursor) / options.sampleRate * options.tempo / 60.0);
+            transport.position.setPpqPosition(static_cast<double>(transportSample) / options.sampleRate * options.tempo / 60.0);
         }
         plugin->processBlock(block, midi);
         for (const auto metadata : midi)
@@ -565,6 +581,8 @@ int run(const Options& options)
     reportObject->setProperty("output_midi_events", outputMidi);
     reportObject->setProperty("pre_roll_frames", static_cast<juce::int64>(options.preRollFrames));
     reportObject->setProperty("requested_post_stop_frames", static_cast<juce::int64>(options.postStopFrames));
+    reportObject->setProperty("restart_frames", static_cast<juce::int64>(options.restartFrames));
+    reportObject->setProperty("restart_capture_sample", static_cast<juce::int64>(options.restartFrames > 0 ? restartStart : -1));
     reportObject->setProperty("active_frames", static_cast<juce::int64>(options.activeFrames));
     reportObject->setProperty("play_sequencer", options.playSequencer);
     reportObject->setProperty("declared_tail_seconds", tailSeconds);
