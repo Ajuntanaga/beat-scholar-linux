@@ -484,6 +484,9 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                 && std::abs(frame.quarterNotePosition - midiExpectedPpq_) > 1.0e-4));
     if (resetRequested || midiDiscontinuity || midiPlaying != midiWasPlaying_)
         activityEpoch_.fetch_add(1, std::memory_order_release);
+    const bool midiStopped = midiWasPlaying_ && !midiPlaying;
+    if (midiStopped)
+        inputMidiGates_ = {};
     midiWasPlaying_ = midiPlaying;
     midiExpectedSample_ = frame.absoluteSampleStart + samplesInBlock;
     midiExpectedPpq_ = frame.quarterNotePosition
@@ -635,7 +638,9 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                 auto& midiChannel = sequencerMidiChannels_[sequencerEvents_[index].laneIndex][event.note];
                 if (event.velocity == 0)
                 {
-                    if (midiChannel != 0)
+                    // Forced stop releases every scheduled lane, including
+                    // one whose ordinary off was replaced by incoming MIDI.
+                    if (midiChannel != 0 || !playbackFrame.playing)
                         midi.addEvent(juce::MidiMessage::noteOff(event.channel, event.note,
                             static_cast<juce::uint8>(sequencerEvents_[index].releaseVelocity)), offset);
                     midiChannel = 0;

@@ -56,7 +56,7 @@ def main() -> int:
 
     def run_case(name: str, project: dict, active_frames: int, inputs: list[tuple],
                  expected: list[tuple], block: int, tempo: float = TEMPO, *, pre_stop_only: bool = False,
-                 legacy_immediate: bool = False, controllers: tuple = ()) -> None:
+                 legacy_immediate: bool = False, controllers: tuple = (), post_stop_frames: int | None = None) -> None:
         case_dir = args.artifacts_dir / f'{name}-{block}'
         case_dir.mkdir(exist_ok=True)
         preset = case_dir / 'state.json'
@@ -65,7 +65,7 @@ def main() -> int:
         command = [str(args.host), '--plugin', str(args.plugin), '--state', str(preset),
                    '--output', str(output), '--expect-sha256', digest,
                    '--sample-rate', str(SAMPLE_RATE), '--block-size', str(block),
-                   '--active-frames', str(active_frames), '--post-stop-frames', str(block),
+                   '--active-frames', str(active_frames), '--post-stop-frames', str(block if post_stop_frames is None else post_stop_frames),
                    '--play-sequencer', '--tempo', str(tempo)]
         for event in inputs:
             command.extend(('--midi', ':'.join(map(str, event))))
@@ -183,6 +183,14 @@ def main() -> int:
         for block in BLOCK_SIZES:
             run_case(f'incoming-layered-{int(reversed_lanes)}', layered, 30000,
                      [(7000, 36, 100), (8000, 36, 0)], expected, block, tempo=120)
+            if not reversed_lanes:
+                # Original stopped-block capture releases both scheduled lanes,
+                # including the input-replaced one, and consumes the input gate.
+                run_case('incoming-layered-stop', layered, 7001,
+                         [(7000, 36, 100), (8000, 36, 0)],
+                         expected[:4] + [note(7001, 'note_off', 36, 64),
+                                         note(7001, 'note_off', 36, 95)],
+                         block, tempo=120, post_stop_frames=4096)
             repeated = expected[:4] + [note(7500, 'note_off', 36, 90),
                                        note(7500, 'note_on', 36, 90)] + expected[4:]
             run_case(f'incoming-layered-repeat-{int(reversed_lanes)}', layered, 30000,
