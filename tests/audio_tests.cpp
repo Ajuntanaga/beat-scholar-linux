@@ -385,6 +385,43 @@ void testNativeReleaseStepPrecision()
     }
 }
 
+void testNative44100LayerReleasePrecision()
+{
+    // Fixed outputs from the native layer c93d98 float-division recurrence,
+    // combined with the existing 200 ms output envelope at 44.1 kHz.
+    constexpr std::array<float, 5> levels {
+        0.0003607861290220171f, 0.00024726364063099027f,
+        0.00013379256415646523f, 2.0372914150357246e-05f, 0.0f
+    };
+    for (const std::size_t blockSize : { 1u, 64u })
+    {
+        bsl::AudioEngine engine;
+        prepareDryEngine(engine, 44100.0, blockSize);
+        auto settings = dryPadSettings();
+        settings.oneShot = false;
+        settings.pan = -1.0f;
+        settings.releaseSeconds = 0.2f;
+        engine.setPadSettings(0, settings);
+        engine.setPadSample(0, { 44100.0, { std::vector<float>(24000, 1.0f) } });
+        auto block = makeBlock(34, blockSize);
+        engine.noteOn(36, 1.0f);
+        engine.process(block, blockSize);
+        engine.noteOff(36);
+        for (std::size_t offset = 0; offset < 4411; offset += blockSize)
+        {
+            const auto count = std::min(blockSize, std::size_t { 4411 } - offset);
+            engine.process(block, count);
+            for (std::size_t frame = 0; frame < count; ++frame)
+            {
+                const auto elapsed = offset + frame + 1;
+                if (elapsed < 4407) continue;
+                check(block[0][frame] == levels[elapsed - 4407],
+                      "44.1 kHz layer release preserves sequential float division");
+            }
+        }
+    }
+}
+
 void testNativeGlobalVoicePoolAndMonoOwnership()
 {
     bsl::AudioEngine engine;
@@ -3701,6 +3738,7 @@ int main()
     testNativeHighPassSurvivesVoiceReuseAcrossPads();
     testNativeSilentReleaseAdvancesHighPass();
     testNativeReleaseStepPrecision();
+    testNative44100LayerReleasePrecision();
     testNativeInputReleaseIndependentOfPadRelease();
     testNativeGlobalVoicePoolAndMonoOwnership();
     testNativeVelocityAmplitude();
