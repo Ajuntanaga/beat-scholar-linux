@@ -551,7 +551,9 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                 auto forwarded = message;
                 if (state.global.midiChannel != 0)
                     forwarded.setChannel(state.global.midiChannel);
-                if (message.isNoteOn())
+                auto& inputGate = inputMidiGates_[static_cast<std::size_t>(forwarded.getChannel() - 1)]
+                                                 [static_cast<std::size_t>(message.getNoteNumber())];
+                if (message.isNoteOn() && inputGate != 1)
                     for (auto& lane : sequencerMidiChannels_)
                     {
                         auto& channel = lane[static_cast<std::size_t>(message.getNoteNumber())];
@@ -563,8 +565,6 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                             break; // Native input replaces only the first matching lane.
                         }
                     }
-                auto& inputGate = inputMidiGates_[static_cast<std::size_t>(forwarded.getChannel() - 1)]
-                                                 [static_cast<std::size_t>(message.getNoteNumber())];
                 if (message.isNoteOn() && inputGate == 1)
                     midi.addEvent(juce::MidiMessage::noteOff(forwarded.getChannel(),
                         message.getNoteNumber(), message.getVelocity()), metadata.samplePosition);

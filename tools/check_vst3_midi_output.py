@@ -171,6 +171,11 @@ def main() -> int:
         for block in BLOCK_SIZES:
             run_case(f'incoming-layered-{int(reversed_lanes)}', layered, 30000,
                      [(7000, 36, 100), (8000, 36, 0)], expected, block, tempo=120)
+            repeated = expected[:4] + [note(7500, 'note_off', 36, 90),
+                                       note(7500, 'note_on', 36, 90)] + expected[4:]
+            run_case(f'incoming-layered-repeat-{int(reversed_lanes)}', layered, 30000,
+                     [(7000, 36, 100), (7500, 36, 90), (8000, 36, 0)],
+                     repeated, block, tempo=120)
 
     # Original direct capture: incoming drum retrigger closes the sequencer gate
     # with the incoming velocity, then replaces it (no later scheduled off).
