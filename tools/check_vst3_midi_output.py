@@ -201,9 +201,9 @@ def main() -> int:
                      expected[:4] + [note(7001, 'note_off', 36, 64),
                                      note(7001, 'note_off', 36, 95)],
                      block, tempo=120, post_stop_frames=4096,
-                     ordered_expected=(expected[:4] + [note(7001, 'note_off', 36, 95),
-                                                        note(7001, 'note_off', 36, 64)]
-                                       if reversed_lanes else None))
+                     ordered_expected=expected[:4] + [
+                         note(7001, 'note_off', 36, 95 if reversed_lanes else 64),
+                         note(7001, 'note_off', 36, 64 if reversed_lanes else 95)])
             # Harness smoke coverage only: original restart comparison is pending.
             run_case(f'incoming-layered-restart-smoke-{int(reversed_lanes)}', layered, 7001,
                      [(7000, 36, 100), (8000, 36, 0)],
