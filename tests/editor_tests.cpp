@@ -5366,6 +5366,71 @@ void testDocumentedMp3CustomSampleSupport()
     restored->releaseResources();
 }
 
+void testDocumentedLosslessSamplePortability(const juce::File& output)
+{
+    juce::AudioBuffer<float> waveform(2, 4096);
+    for (int frame = 0; frame < waveform.getNumSamples(); ++frame)
+    {
+        waveform.setSample(0, frame, 0.45f * std::sin(float(frame) * 0.07f));
+        waveform.setSample(1, frame, 0.25f * std::sin(float(frame) * 0.11f));
+    }
+    juce::WavAudioFormat wav;
+    juce::AiffAudioFormat aiff;
+    juce::FlacAudioFormat flac;
+    for (auto* format : std::array<juce::AudioFormat*, 3>{ &wav, &aiff, &flac })
+    {
+        const auto file = output.getChildFile("portable-sample" + format->getFileExtensions()[0]);
+        auto stream = file.createOutputStream();
+        check(stream != nullptr, "create lossless sample fixture");
+        if (!stream) continue;
+        stream->setPosition(0);
+        stream->truncate();
+        auto writer = std::unique_ptr<juce::AudioFormatWriter>(
+            format->createWriterFor(stream.release(), 44100, 2, 24, {}, 0));
+        const bool written = writer && writer->writeFromAudioSampleBuffer(waveform, 0, waveform.getNumSamples());
+        writer.reset();
+        check(written, "write documented lossless format fixture");
+        if (!written) continue;
+        auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+        const bool loaded = processor->loadCustomSample(0, file).wasOk();
+        check(loaded, "documented lossless format loads: " + file.getFileExtension());
+        if (!loaded) continue;
+        processor->projectState().global.sequencerEnabled = false;
+        const auto embedded = processor->projectState().kit.pads[0].customSamples[0].base64.value();
+        check(!embedded.empty(), "custom sample is embedded before saving");
+        juce::MemoryBlock saved;
+        processor->getStateInformation(saved);
+        check(file.deleteFile(), "remove source fixture before state restoration");
+        auto restored = std::make_unique<BeatScholarLinuxProcessor>();
+        restored->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+        const auto& sample = restored->projectState().kit.pads[0].customSamples[0];
+        check(sample.name == file.getFileName().toStdString() && sample.base64.value() == embedded,
+              "restored sample retains name and bytes without source file");
+        const auto render = [](BeatScholarLinuxProcessor& instance) {
+            instance.setRateAndBufferSizeDetails(48000, 257);
+            instance.prepareToPlay(48000, 257);
+            instance.triggerPad(0);
+            std::vector<float> result;
+            juce::AudioBuffer<float> audio(2, 257);
+            for (int block = 0; block < 48; ++block)
+            {
+                juce::MidiBuffer midi;
+                instance.processBlock(audio, midi);
+                for (int channel = 0; channel < 2; ++channel)
+                    result.insert(result.end(), audio.getReadPointer(channel), audio.getReadPointer(channel) + 257);
+            }
+            instance.releaseResources();
+            return result;
+        };
+        const auto before = render(*processor);
+        const auto after = render(*restored);
+        check(before == after, "lossless sample playback survives state restoration exactly");
+        check(std::all_of(after.begin(), after.end(), [](float value) { return std::isfinite(value); })
+                  && std::any_of(after.begin(), after.end(), [](float value) { return std::abs(value) > 0.01f; }),
+              "restored lossless sample renders finite non-silent audio at another sample rate");
+    }
+}
+
 void testDocumentedNumericEntry(const juce::File& output)
 {
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
@@ -7616,6 +7681,7 @@ int main(int argc, char** argv)
     testInvalidEmbeddedAudioDoesNotReplaceStateOrSound(output);
     testDecodedSampleLimitsBeforeAllocation();
     testDocumentedMp3CustomSampleSupport();
+    testDocumentedLosslessSamplePortability(output);
     testDocumentedNumericEntry(output);
     testBarMeterNumericEntry(output);
     testLaneContextMenuDoesNotEdit();
