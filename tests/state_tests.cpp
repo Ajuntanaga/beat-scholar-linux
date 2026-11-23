@@ -890,15 +890,15 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
           "legacy Drive remains enabled independently of a missing Aux3 send");
 
     auto gainRecall = bsl::ProjectState::makeDefault();
-    check(bsl::statecodec::decodePresetJson(
+    check(bsl::statecodec::importLegacyPresetJson(
               json.replace("\"Volume\":\"-6.0206 dB\"", "\"Volume\":\"3.78 dB\""), gainRecall)
               && gainRecall.kit.pads[1].gain == 1.5452543497085571f,
           "legacy pad volume matches captured original normalized restoration exactly");
-    check(bsl::statecodec::decodePresetJson(
+    check(bsl::statecodec::importLegacyPresetJson(
               json.replace("\"Volume\":\"-6.0206 dB\"", "\"Volume\":0"), gainRecall)
               && gainRecall.kit.pads[1].gain == 0.0f,
           "legacy silent pad avoids logarithm of zero");
-    check(bsl::statecodec::decodePresetJson(
+    check(bsl::statecodec::importLegacyPresetJson(
               json.replace("\"Volume\":\"-6.0206 dB\"", "\"Volume\":\"12 dB\""), gainRecall)
               && gainRecall.kit.pads[1].gain == 1.9952623844146729f,
           "legacy pad volume clamps to the original six dB range");
