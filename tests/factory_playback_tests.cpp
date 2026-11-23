@@ -25,24 +25,34 @@ int main(int argc, char** argv)
     const juce::File output(argc > 1 ? argv[1] : "/tmp/beat-scholar-factory-playback");
     if (output.createDirectory().failed()) return 1;
     const juce::String mode = argc > 2 ? argv[2] : "";
-    bool requireAmbience = false, exportStates = false;
+    bool requireAmbience = false, exportStates = false, statesOnly = false;
+    juce::String selectedPreset;
     for (int index = 3; index < argc; ++index)
     {
         const juce::String option(argv[index]);
         if (option == "--require-ambience") requireAmbience = true;
         else if (option == "--export-states") exportStates = true;
+        else if (option == "--states-only") { statesOnly = true; exportStates = true; }
+        else if (option == "--preset" && index + 1 < argc) selectedPreset = argv[++index];
         else { std::cerr << "Unknown option: " << option << '\n'; return 1; }
     }
     const bool allPatterns = mode == "--all-patterns";
     const bool allPresets = allPatterns || mode == "--all";
     const auto presetRoot = factory.getChildFile("Presets");
     juce::Array<juce::File> files;
-    if (allPresets)
+    if (selectedPreset.isNotEmpty())
+    {
+        const auto selected = presetRoot.getChildFile(selectedPreset + ".json");
+        if (!selected.isAChildOf(presetRoot) || !selected.existsAsFile())
+        { std::cerr << "Preset must name an existing file inside Factory/Presets\n"; return 1; }
+        files.add(selected);
+    }
+    else if (allPresets)
         files = presetRoot.findChildFiles(juce::File::findFiles, true, "*.json");
     else
         for (const auto* name : { "Rock/Drummer Soundcheck", "Electronic/SikBit", "TRAP/Trap Hats 3" })
             files.add(presetRoot.getChildFile(juce::String(name) + ".json"));
-    const std::vector<int> rates = allPresets ? std::vector<int>{48000} : std::vector<int>{44100, 48000, 96000};
+    const std::vector<int> rates = (allPresets || statesOnly) ? std::vector<int>{48000} : std::vector<int>{44100, 48000, 96000};
     if (files.isEmpty()) { std::cerr << "No factory presets found\n"; return 1; }
     int failures = 0;
     for (const auto& file : files)
@@ -100,6 +110,12 @@ int main(int argc, char** argv)
                     const auto stateFile = output.getChildFile(stem + "-pattern-"
                         + juce::String(static_cast<int>(patternIndex)) + ".bslx");
                     if (!stateFile.replaceWithData(state.getData(), state.getSize())) return 1;
+                }
+                if (statesOnly)
+                {
+                    std::cout << name << " pattern=" << static_cast<int>(patternIndex)
+                              << " state exported; audio not rendered\n";
+                    continue;
                 }
                 const auto& project = processor->projectState();
                 const auto& pattern = project.patterns[patternIndex];
