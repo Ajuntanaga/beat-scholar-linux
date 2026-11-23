@@ -175,7 +175,7 @@ float AudioEngine::LinearRamp::next() noexcept
 
 void AudioEngine::Compressor::setAmount(float value, double sampleRate) noexcept
 {
-    // Native c794c0 prepares 10 ms amount and 100 ms makeup-gain ramps.
+    // Prepare 10 ms amount and 100 ms makeup-gain ramps.
     // The amount duration is float precision before the double-rate product.
     amount.setTarget(value, static_cast<std::size_t>(sampleRate * static_cast<double>(0.01f)));
     gainFrames = static_cast<std::size_t>(sampleRate * 0.1);
@@ -197,10 +197,12 @@ void AudioEngine::Compressor::process(float& left, float& right) noexcept
     if (compression <= 0.001f)
         return;
 
-    // c79ae0/d45d90: independent peak envelopes, no hard clipping. Bypass
+    // Independent peak envelopes, no hard clipping. Bypass
     // freezes both envelopes and the makeup-gain ramp for pad and master alike.
     const float thresholdDb = 20.0f * std::log10(0.2f + (1.0f - compression) * 0.8f);
     const float threshold = std::pow(10.0f, thresholdDb * 0.05f);
+    // Preserve the native rounded reciprocal before reduction (d5dc60).
+    const float inverseThreshold = 1.0f / threshold;
     const float exponent = 1.0f / (4.0f + compression * 6.0f) - 1.0f;
     gain.setTarget(1.0f + compression * 0.5499999523162842f, gainFrames);
     const float postGain = gain.next();
@@ -210,7 +212,7 @@ void AudioEngine::Compressor::process(float& left, float& right) noexcept
         const float coefficient = magnitude > level ? attack : release;
         level = magnitude + coefficient * (level - magnitude);
         const float reduction = level < threshold ? 1.0f
-            : std::pow(level / threshold, exponent);
+            : std::pow(level * inverseThreshold, exponent);
         return input * reduction * postGain;
     };
     left = compressChannel(left, 0);
