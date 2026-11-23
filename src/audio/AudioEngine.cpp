@@ -1014,15 +1014,6 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
 
     distortion_.process(distortionSends_[0].data(), distortionSends_[1].data(),
                         end - start, master_.distortionDrive);
-    for (std::size_t frame = start; frame < end; ++frame)
-    {
-        const float gain = distortionReturn_.next();
-        if (auxEnabled_)
-        {
-            output[0][frame] += distortionSends_[0][frame - start] * gain;
-            output[1][frame] += distortionSends_[1][frame - start] * gain;
-        }
-    }
     if (ambience_ != nullptr)
         ambience_->process(ambienceSends_[0].data(), ambienceSends_[1].data(),
                            ambienceSends_[2].data(), ambienceSends_[3].data(), end - start);
@@ -1034,13 +1025,21 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
     for (std::size_t frame = start; frame < end; ++frame)
     {
         const float returnGain = ambienceReturn_.next();
-        if (auxEnabled_ && ambience_ != nullptr)
+        const float distortionGain = distortionReturn_.next();
+        const auto offset = frame - start;
+        if (auxEnabled_)
         {
-            const auto offset = frame - start;
-            output[0][frame] += (ambienceSends_[0][offset] * roomEffectGain) * returnGain
-                                + (ambienceSends_[2][offset] * plateEffectGain) * returnGain;
-            output[1][frame] += (ambienceSends_[1][offset] * roomEffectGain) * returnGain
-                                + (ambienceSends_[3][offset] * plateEffectGain) * returnGain;
+            // Native returns are accumulated separately: Room, Plate, Distortion.
+            // Grouping the sums changes rounding before master quantization.
+            if (ambience_ != nullptr)
+            {
+                output[0][frame] += (ambienceSends_[0][offset] * roomEffectGain) * returnGain;
+                output[1][frame] += (ambienceSends_[1][offset] * roomEffectGain) * returnGain;
+                output[0][frame] += (ambienceSends_[2][offset] * plateEffectGain) * returnGain;
+                output[1][frame] += (ambienceSends_[3][offset] * plateEffectGain) * returnGain;
+            }
+            output[0][frame] += distortionSends_[0][offset] * distortionGain;
+            output[1][frame] += distortionSends_[1][offset] * distortionGain;
         }
     }
 
