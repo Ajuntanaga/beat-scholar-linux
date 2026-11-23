@@ -131,6 +131,7 @@ jobs:
             'BeatScholarLinux_artefacts/Release/VST3/Beat Scholar Linux.vst3/Contents/Resources/moduleinfo.json' \
             tools/actual_vst3_host \
             beat_scholar_factory_playback_tests \
+            beat_scholar_ambience_tests \
             editor-regression/tutorial-header-factory-menu-0.png \
             editor-regression/tutorial-header-factory-menu-6.png \
             editor-regression/tutorial-header-factory-menu-12.png \

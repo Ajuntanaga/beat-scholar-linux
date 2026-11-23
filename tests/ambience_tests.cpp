@@ -302,7 +302,17 @@ void testPrivateFactory(const juce::File& directory)
 // Private, local-only parity renderer. Inputs are never part of a cloud build.
 int renderDrive(int argc, char** argv)
 {
-    if (argc != 7) return 2;
+    if (argc != 7 && argc != 8) return 2;
+    // Optional callback size reproduces the hosted processor's state flushing.
+    // Omission retains the historical renderer for existing reference fixtures.
+    int callbackFrames = 128;
+    if (argc == 8)
+    {
+        char* end = nullptr;
+        const long parsed = std::strtol(argv[7], &end, 10);
+        if (end == argv[7] || *end != '\0' || parsed < 1 || parsed > 65536) return 2;
+        callbackFrames = static_cast<int>(parsed);
+    }
     juce::WavAudioFormat format;
     std::unique_ptr<juce::AudioFormatReader> reader(format.createReaderFor(
         new juce::FileInputStream(juce::File(argv[2])), true));
@@ -320,9 +330,12 @@ int renderDrive(int argc, char** argv)
     processor.setResponse(std::move(response));
     const auto drive = std::stof(argv[5]), send = std::stof(argv[6]);
     audio.applyGain(std::pow(send, 12.0f / 6.020599913279624f));
-    for (int i = 0; i < frames; i += 128)
+    for (int i = 0; i < frames; i += callbackFrames)
+    {
         processor.process(audio.getWritePointer(0) + i, audio.getWritePointer(1) + i,
-                          static_cast<std::size_t>(std::min(128, frames - i)), drive);
+                          static_cast<std::size_t>(std::min(callbackFrames, frames - i)), drive);
+        if (argc == 8) processor.snapFilterStateToZero();
+    }
     std::ofstream output(argv[4], std::ios::binary);
     for (int i = 0; i < frames; ++i)
     {
