@@ -63,7 +63,9 @@ float normalizedFilterCutoff(float frequencyHz) noexcept
 {
     const float skew = std::log(0.5f) / std::log((2000.0f - 10.0f) / 19990.0f);
     const float position = (std::clamp(frequencyHz, 10.0f, 20000.0f) - 10.0f) / 19990.0f;
-    return position > 0.0f ? std::exp(std::log(position) * skew) : 0.0f;
+    // Preserve native normalization rounding; exp(log(x) * skew) differs
+    // by one float step for the Intruders snare and changes nonlinear sends.
+    return position > 0.0f ? std::pow(position, skew) : 0.0f;
 }
 
 BeatState BeatState::withSubdivision(std::size_t subdivision,

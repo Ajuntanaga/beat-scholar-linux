@@ -966,6 +966,9 @@ int main()
     // Original plugin parameter 58 for the 12.19 kHz snare fixture.
     check(bsl::normalizedFilterCutoff(12190.0f) == 0.86169862747192383f,
           "cutoff normalization matches native float midpoint skew");
+    check(bsl::normalizedFilterCutoff(9510.0f) == 0.7997065782546997f &&
+              bsl::filterCutoffHz(bsl::normalizedFilterCutoff(9510.0f)) == 9509.9990234375f,
+          "Intruders snare cutoff restores the captured native coefficient input");
     check(bsl::filterCutoffHz(0.0f) == 10.0f && bsl::filterCutoffHz(1.0f) == 20000.0f,
           "cutoff mapping retains native range endpoints");
     testMidiChannelRouting();
