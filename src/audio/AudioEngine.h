@@ -120,7 +120,14 @@ public:
     // Only ungated host notes pair with noteOff; previews opt out.
     void noteOn(std::uint8_t midiNote, float velocity, std::size_t gateFrames = 0,
                 bool followsNoteOff = true, std::uint8_t midiChannel = 1) noexcept;
+    [[nodiscard]] bool acceptsNoteOff(std::uint8_t midiNote, std::uint8_t midiChannel = 1) const noexcept;
     void noteOff(std::uint8_t midiNote, std::uint8_t midiChannel = 1) noexcept;
+    // Original renderer dispatches nearby events at the preceding render cursor.
+    // Cursor zero is non-strict; subsequent subdivisions require 32 samples.
+    [[nodiscard]] static std::size_t eventRenderCursor(std::size_t cursor, std::size_t offset) noexcept
+    {
+        return offset > cursor && offset - cursor >= (cursor == 0 ? 1u : 32u) ? offset : cursor;
+    }
     void sequencerNoteOn(std::uint8_t midiNote, float velocity, std::size_t laneIndex = 0) noexcept;
     void sequencerNoteOff(std::uint8_t midiNote, std::size_t laneIndex = 0) noexcept;
     void stopMidiChannel(std::uint8_t midiChannel, bool allSoundOff) noexcept;

@@ -478,6 +478,14 @@ void AudioEngine::startVoice(std::uint8_t midiNote, float velocity, std::size_t 
     voice.active = true;
 }
 
+bool AudioEngine::acceptsNoteOff(std::uint8_t midiNote, std::uint8_t midiChannel) const noexcept
+{
+    if (midiNote < 36 || midiNote >= 36 + padCount || midiChannel < 1 || midiChannel > 16)
+        return false;
+    const auto index = static_cast<std::size_t>(midiNote - 36) * 16 + midiChannel - 1;
+    return hostNotesReleased_[index] != hostNotesStarted_[index];
+}
+
 void AudioEngine::noteOff(std::uint8_t midiNote, std::uint8_t midiChannel) noexcept
 {
     if (midiNote < 36 || midiNote >= 36 + padCount || midiChannel < 1 || midiChannel > 16)
@@ -555,7 +563,13 @@ void AudioEngine::process(AudioBlock& output, std::size_t sampleCount,
     std::size_t cursor = 0;
     for (const auto& event : events)
     {
-        const auto offset = std::min(event.sampleOffset, available);
+        if (event.sampleOffset >= available)
+            break;
+        const bool isNoteOn = event.noteOn && event.velocity > 0.0f;
+        if (event.note < 36 || event.note >= 36 + padCount
+            || (!isNoteOn && !acceptsNoteOff(event.note)))
+            continue;
+        const auto offset = eventRenderCursor(cursor, event.sampleOffset);
         if (offset > cursor)
             renderRange(output, cursor, offset);
         if (event.noteOn && event.velocity > 0.0f)

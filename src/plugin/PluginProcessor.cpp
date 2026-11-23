@@ -526,8 +526,9 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     audioEngine_.setModuleEnables(state.global.auxEnabled, state.global.masterEnabled);
     audioEngine_.beginBlock(scratch_, static_cast<std::size_t>(samplesInBlock));
     std::size_t audioCursor = 0;
-    const auto advanceAudio = [&](int offset) {
-        const auto target = static_cast<std::size_t>(std::clamp(offset, 0, samplesInBlock));
+    const auto advanceAudio = [&](int offset, bool finishBlock = false) {
+        const auto requested = static_cast<std::size_t>(std::clamp(offset, 0, samplesInBlock));
+        const auto target = finishBlock ? requested : bsl::AudioEngine::eventRenderCursor(audioCursor, requested);
         if (state.global.samplerEnabled && target > audioCursor)
             audioEngine_.renderRange(scratch_, audioCursor, target);
         audioCursor = target;
@@ -552,6 +553,9 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                 continue;
             if (const auto pad = state.padIndexForInputMidiNote(static_cast<std::uint8_t>(message.getNoteNumber())))
             {
+                if (message.isNoteOff() && !audioEngine_.acceptsNoteOff(
+                        static_cast<std::uint8_t>(36 + *pad), static_cast<std::uint8_t>(message.getChannel())))
+                    continue;
                 advanceAudio(metadata.samplePosition);
                 if (message.isNoteOn())
                 {
@@ -666,7 +670,7 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         playSequencerFrame(segmentFrame, patternIndex, segment.sampleOffset);
     }
     consumeInputThrough(samplesInBlock);
-    advanceAudio(samplesInBlock);
+    advanceAudio(samplesInBlock, true);
     audioActivityFrame_ += static_cast<std::uint64_t>(samplesInBlock);
     activityFrame_.store(audioActivityFrame_, std::memory_order_release);
 

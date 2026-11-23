@@ -821,6 +821,40 @@ void testNativeGatedRetriggerRelease()
         }
 }
 
+void testReferenceEventSubdivision()
+{
+    const auto render = [](std::initializer_list<bsl::TimedNoteEvent> events) {
+        bsl::AudioEngine engine;
+        prepareDryEngine(engine, 44100.0);
+        auto settings = dryPadSettings();
+        settings.oneShot = false;
+        for (std::size_t pad = 0; pad < 2; ++pad)
+        {
+            engine.setPadSample(pad, { 44100.0, { std::vector<float>(512, 0.5f) } });
+            engine.setPadSettings(pad, settings);
+        }
+        auto output = makeBlock(34, 160);
+        engine.process(output, 160, { events.begin(), events.size() });
+        return output;
+    };
+    const auto close = render({ {64,36,1,true}, {80,36,0,false} });
+    check(close == render({ {64,36,1,true}, {64,36,0,false} }),
+          "native close event dispatches at preceding render cursor");
+    const auto separated = render({ {64,36,1,true}, {112,36,0,false} });
+    check(separated != close && separated[0][100] > 0 && separated[0][112] == 0,
+          "native separated event retains its offset");
+    check(render({ {64,36,1,true}, {64,37,1,true}, {112,37,0,false}, {128,36,0,false} })
+          == render({ {64,36,1,true}, {64,37,1,true}, {112,37,0,false}, {112,36,0,false} }),
+          "active instruments share the subdivision cursor");
+    check(render({ {64,36,1,true}, {112,37,0,false}, {128,36,0,false} })
+          == render({ {64,36,1,true}, {128,36,0,false} }),
+          "unmatched note-off does not move subdivision cursor");
+    check(bsl::AudioEngine::eventRenderCursor(64,95) == 64
+          && bsl::AudioEngine::eventRenderCursor(64,96) == 96
+          && bsl::AudioEngine::eventRenderCursor(0,2) == 2,
+          "subdivision threshold is 32 with a non-strict first span");
+}
+
 void testGatedPadStopsOnScheduledNoteOff()
 {
     bsl::AudioEngine engine;
@@ -3681,6 +3715,7 @@ int main()
     testScheduledTriggerStartsAtExactSampleOffset();
     testNativeGatedRelease();
     testNativeGatedRetriggerRelease();
+    testReferenceEventSubdivision();
     testGatedPadStopsOnScheduledNoteOff();
     testSequencedGatesArePerVoiceAcrossCallbacks();
     testHostNoteOffReleasesMatchingGatedVoices();
