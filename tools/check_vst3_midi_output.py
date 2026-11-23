@@ -125,6 +125,21 @@ def main() -> int:
         for block in BLOCK_SIZES:
             run_case(f'fixed-drum-input-{channel}', forwarded, 6000, inputs, expected, block)
 
+    # Original direct capture: incoming drum retrigger closes the sequencer gate
+    # with the incoming velocity, then replaces it (no later scheduled off).
+    overlap = copy.deepcopy(forwarded)
+    overlap['global']['midiChannel'] = 1
+    overlap['pads'][0]['midiNote'] = 36
+    first = overlap['patterns'][0]['lanes'][0]['beats'][0]
+    first[:] = [{'padIndex': 0, 'velocity': 0.5, 'enabled': True,
+                 'velocityAssigned': True}]
+    for block in BLOCK_SIZES:
+        run_case('incoming-sequencer-overlap', overlap, 48000,
+                 [(64, 36, 100), (80, 36, 0)],
+                 [note(0, 'note_on', 36, 64), note(64, 'note_off', 36, 100),
+                  note(64, 'note_on', 36, 100), note(80, 'note_off', 36)],
+                 block, tempo=120)
+
     # Owned-original captures, 2026-11-15: 48 kHz, 100 BPM, block 64.
     # Fixed channels route every lane together; Any (0) is one channel per lane.
     for channel in (0, 1, 7, 16):

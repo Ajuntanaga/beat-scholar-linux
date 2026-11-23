@@ -154,6 +154,9 @@ private:
     std::atomic<double> effectiveBpm_ { 120.0 };
     // Audio-thread-only callback lifecycle shared by sequenced MIDI and sampler voices.
     bsl::SequencerPlayback sequencerPlayback_;
+    // MIDI gate ownership is separate from sampler voices and visual activity.
+    // Zero means that an input retrigger already closed this sequencer gate.
+    std::array<std::array<std::uint8_t, 128>, bsl::maximumLaneCount> sequencerMidiChannels_ {};
     std::int64_t midiExpectedSample_ = 0;
     double midiExpectedPpq_ = std::numeric_limits<double>::quiet_NaN();
     bool midiWasPlaying_ = false;

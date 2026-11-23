@@ -149,6 +149,7 @@ BeatScholarLinuxProcessor::BeatScholarLinuxProcessor()
     loadFactoryDefaultsIfAvailable();
     syncParametersFromProject();
     sequencerPlayback_.reset();
+    sequencerMidiChannels_ = {};
     for (std::size_t index = 0; index < stateSnapshots_.size(); ++index)
     {
         stateSnapshots_[index] = projectEditor_.state();
@@ -309,6 +310,7 @@ void BeatScholarLinuxProcessor::prepareToPlay(double sampleRate, int maximumExpe
     for (auto& peak : padPeaks_) peak.store(0.0f, std::memory_order_relaxed);
     for (auto& peak : outputPeaks_) peak.store(0.0f, std::memory_order_relaxed);
     sequencerPlayback_.reset();
+    sequencerMidiChannels_ = {};
     activityEpoch_.fetch_add(1, std::memory_order_release);
     midiWasPlaying_ = false;
     samplerWasEnabled_ = true;
@@ -547,6 +549,17 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                 auto forwarded = message;
                 if (state.global.midiChannel != 0)
                     forwarded.setChannel(state.global.midiChannel);
+                if (message.isNoteOn())
+                    for (auto& lane : sequencerMidiChannels_)
+                    {
+                        auto& channel = lane[static_cast<std::size_t>(message.getNoteNumber())];
+                        if (channel == forwarded.getChannel())
+                        {
+                            midi.addEvent(juce::MidiMessage::noteOff(channel, message.getNoteNumber(),
+                                message.getVelocity()), metadata.samplePosition);
+                            channel = 0;
+                        }
+                    }
                 midi.addEvent(forwarded, metadata.samplePosition);
             }
             if (!state.global.samplerEnabled)
@@ -609,10 +622,13 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                 const int offset = event.sampleOffset + baseOffset;
                 consumeInputThrough(offset);
                 advanceAudio(offset);
+                auto& midiChannel = sequencerMidiChannels_[sequencerEvents_[index].laneIndex][event.note];
                 if (event.velocity == 0)
                 {
-                    midi.addEvent(juce::MidiMessage::noteOff(event.channel, event.note,
-                        static_cast<juce::uint8>(sequencerEvents_[index].releaseVelocity)), offset);
+                    if (midiChannel != 0)
+                        midi.addEvent(juce::MidiMessage::noteOff(event.channel, event.note,
+                            static_cast<juce::uint8>(sequencerEvents_[index].releaseVelocity)), offset);
+                    midiChannel = 0;
                     audioEngine_.sequencerNoteOff(static_cast<std::uint8_t>(36 + event.padIndex),
                                                   sequencerEvents_[index].laneIndex);
                 }
@@ -620,6 +636,7 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                 {
                     midi.addEvent(juce::MidiMessage::noteOn(event.channel, event.note,
                         static_cast<juce::uint8>(event.velocity)), offset);
+                    midiChannel = event.channel;
                     const auto& hit = sequencerEvents_[index];
                     publishPlaybackActivity({ state.patterns[patternIndex].runtimeId,
                         hit.laneIndex, hit.beatIndex, hit.sliceIndex, event.padIndex,
