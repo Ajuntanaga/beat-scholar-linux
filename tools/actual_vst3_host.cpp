@@ -46,6 +46,7 @@ struct Options
     int blockSize = 64;
     std::int64_t activeFrames = 0;
     std::int64_t preRollFrames = 0;
+    std::int64_t postStopFrames = 0;
     bool playSequencer = false;
     bool floatOutput = false;
     bool allOutputs = false;
@@ -120,6 +121,7 @@ Options parseOptions(int argc, char** argv)
         else if (argument == "--block-size") options.blockSize = static_cast<int>(parseInt64(next(index, "--block-size"), "--block-size"));
         else if (argument == "--active-frames") options.activeFrames = parseInt64(next(index, "--active-frames"), "--active-frames");
         else if (argument == "--pre-roll-frames") options.preRollFrames = parseInt64(next(index, "--pre-roll-frames"), "--pre-roll-frames");
+        else if (argument == "--post-stop-frames") options.postStopFrames = parseInt64(next(index, "--post-stop-frames"), "--post-stop-frames");
         else if (argument == "--midi") options.midi.push_back(parseMidi(next(index, "--midi")));
         else if (argument == "--cc")
         {
@@ -136,7 +138,7 @@ Options parseOptions(int argc, char** argv)
             std::cout
                 << "Usage: actual_vst3_host --plugin BUNDLE --state PRESET_OR_BSLX --output WAV\\n"
                 << "       --expect-sha256 HEX --sample-rate HZ --block-size N --active-frames N\\n"
-                << "       [--midi SAMPLE:NOTE:VELOCITY[:CHANNEL]] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--all-outputs] [--pre-roll-frames N] [--restored-state-output NEW_BSLX] [--raw-component-state]\\n";
+                << "       [--midi SAMPLE:NOTE:VELOCITY[:CHANNEL]] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--all-outputs] [--pre-roll-frames N] [--post-stop-frames N] [--restored-state-output NEW_BSLX] [--raw-component-state]\\n";
             std::exit(0);
         }
         else fail("unknown option: " + argument);
@@ -153,6 +155,8 @@ Options parseOptions(int argc, char** argv)
     if (options.blockSize < 1 || options.blockSize > 65536) fail("--block-size is outside 1..65536");
     if (options.preRollFrames < 0 || options.preRollFrames > static_cast<std::int64_t>(options.sampleRate * 60.0))
         fail("--pre-roll-frames is outside 0..60 seconds");
+    if (options.postStopFrames < 0 || options.postStopFrames > static_cast<std::int64_t>(options.sampleRate * 60.0))
+        fail("--post-stop-frames is outside 0..60 seconds");
     if (options.activeFrames < 1) fail("--active-frames must be positive");
     if (options.midi.empty() && !options.playSequencer)
         fail("at least one deterministic --midi event or --play-sequencer is required");
@@ -465,7 +469,8 @@ int run(const Options& options)
     const auto tailSeconds = plugin->getTailLengthSeconds();
     if (!std::isfinite(tailSeconds) || tailSeconds < 0.0 || tailSeconds > 60.0)
         fail("plugin declared an invalid tail length");
-    const auto tailFrames = static_cast<std::int64_t>(std::ceil(tailSeconds * options.sampleRate));
+    const auto tailFrames = std::max(options.postStopFrames,
+        static_cast<std::int64_t>(std::ceil(tailSeconds * options.sampleRate)));
     if (options.activeFrames > std::numeric_limits<int>::max() - tailFrames)
         fail("requested render is too large");
     const auto totalFrames = options.activeFrames + tailFrames;
@@ -559,6 +564,7 @@ int run(const Options& options)
     reportObject->setProperty("tempo", options.tempo);
     reportObject->setProperty("output_midi_events", outputMidi);
     reportObject->setProperty("pre_roll_frames", static_cast<juce::int64>(options.preRollFrames));
+    reportObject->setProperty("requested_post_stop_frames", static_cast<juce::int64>(options.postStopFrames));
     reportObject->setProperty("active_frames", static_cast<juce::int64>(options.activeFrames));
     reportObject->setProperty("play_sequencer", options.playSequencer);
     reportObject->setProperty("declared_tail_seconds", tailSeconds);

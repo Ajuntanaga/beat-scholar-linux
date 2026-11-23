@@ -65,7 +65,8 @@ def main() -> int:
         command = [str(args.host), '--plugin', str(args.plugin), '--state', str(preset),
                    '--output', str(output), '--expect-sha256', digest,
                    '--sample-rate', str(SAMPLE_RATE), '--block-size', str(block),
-                   '--active-frames', str(active_frames), '--play-sequencer', '--tempo', str(tempo)]
+                   '--active-frames', str(active_frames), '--post-stop-frames', str(block),
+                   '--play-sequencer', '--tempo', str(tempo)]
         for event in inputs:
             command.extend(('--midi', ':'.join(map(str, event))))
         for event in controllers:
