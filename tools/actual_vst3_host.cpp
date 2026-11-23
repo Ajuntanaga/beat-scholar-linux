@@ -46,6 +46,7 @@ struct Options
     int blockSize = 64;
     std::int64_t activeFrames = 0;
     std::int64_t preRollFrames = 0;
+    std::int64_t startupWaitMs = 0;
     std::int64_t postStopFrames = 0;
     std::int64_t restartFrames = 0;
     bool playSequencer = false;
@@ -121,6 +122,7 @@ Options parseOptions(int argc, char** argv)
         else if (argument == "--tempo") options.tempo = parseDouble(next(index, "--tempo"), "--tempo");
         else if (argument == "--block-size") options.blockSize = static_cast<int>(parseInt64(next(index, "--block-size"), "--block-size"));
         else if (argument == "--active-frames") options.activeFrames = parseInt64(next(index, "--active-frames"), "--active-frames");
+        else if (argument == "--startup-wait-ms") options.startupWaitMs = parseInt64(next(index, "--startup-wait-ms"), "--startup-wait-ms");
         else if (argument == "--pre-roll-frames") options.preRollFrames = parseInt64(next(index, "--pre-roll-frames"), "--pre-roll-frames");
         else if (argument == "--post-stop-frames") options.postStopFrames = parseInt64(next(index, "--post-stop-frames"), "--post-stop-frames");
         else if (argument == "--restart-frames") options.restartFrames = parseInt64(next(index, "--restart-frames"), "--restart-frames");
@@ -140,7 +142,7 @@ Options parseOptions(int argc, char** argv)
             std::cout
                 << "Usage: actual_vst3_host --plugin BUNDLE --state PRESET_OR_BSLX --output WAV\\n"
                 << "       --expect-sha256 HEX --sample-rate HZ --block-size N --active-frames N\\n"
-                << "       [--midi SAMPLE:NOTE:VELOCITY[:CHANNEL]] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--all-outputs] [--pre-roll-frames N] [--post-stop-frames N] [--restart-frames N] [--restored-state-output NEW_BSLX] [--raw-component-state]\\n";
+                << "       [--midi SAMPLE:NOTE:VELOCITY[:CHANNEL]] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--all-outputs] [--startup-wait-ms N] [--pre-roll-frames N] [--post-stop-frames N] [--restart-frames N] [--restored-state-output NEW_BSLX] [--raw-component-state]\\n";
             std::exit(0);
         }
         else fail("unknown option: " + argument);
@@ -155,6 +157,8 @@ Options parseOptions(int argc, char** argv)
     if (options.sampleRate < 8000.0 || options.sampleRate > 384000.0) fail("--sample-rate is outside 8000..384000");
     if (options.tempo <= 0.0 || options.tempo > 1000.0) fail("--tempo is outside (0,1000]");
     if (options.blockSize < 1 || options.blockSize > 65536) fail("--block-size is outside 1..65536");
+    if (options.startupWaitMs < 0 || options.startupWaitMs > 10000)
+        fail("--startup-wait-ms is outside 0..10000");
     if (options.preRollFrames < 0 || options.preRollFrames > static_cast<std::int64_t>(options.sampleRate * 60.0))
         fail("--pre-roll-frames is outside 0..60 seconds");
     if (options.postStopFrames < 0 || options.postStopFrames > static_cast<std::int64_t>(options.sampleRate * 60.0))
@@ -446,6 +450,11 @@ int run(const Options& options)
     plugin->setRateAndBufferSizeDetails(options.sampleRate, options.blockSize);
     if (options.playSequencer) plugin->setPlayHead(&transport);
     plugin->prepareToPlay(options.sampleRate, options.blockSize);
+    // Optional diagnostic for background sample-loading readiness. This waits
+    // in wall time without advancing DSP or transport; it does not pump GUI events.
+    // Keep the default zero to preserve existing cold-start validation.
+    if (options.startupWaitMs > 0)
+        juce::Thread::sleep(static_cast<int>(options.startupWaitMs));
     if (plugin->getTotalNumOutputChannels() < 2)
         fail("plugin did not expose a main stereo output");
     // The process buffer must cover every active bus, even when the capture
