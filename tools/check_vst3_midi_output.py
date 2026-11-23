@@ -125,6 +125,16 @@ def main() -> int:
         for block in BLOCK_SIZES:
             run_case(f'fixed-drum-input-{channel}', forwarded, 6000, inputs, expected, block)
 
+    # Direct original capture: an input retrigger releases the previous input
+    # with the new velocity; the first off closes it and the second is ignored.
+    retrigger = copy.deepcopy(forwarded)
+    retrigger['global']['midiChannel'] = 1
+    for block in BLOCK_SIZES:
+        run_case('incoming-retrigger', retrigger, 6000,
+                 [(64, 36, 100), (72, 36, 90), (80, 36, 0), (96, 36, 0)],
+                 [note(64, 'note_on', 36, 100), note(72, 'note_off', 36, 90),
+                  note(72, 'note_on', 36, 90), note(80, 'note_off', 36)], block)
+
     # Original direct capture: incoming drum retrigger closes the sequencer gate
     # with the incoming velocity, then replaces it (no later scheduled off).
     overlap = copy.deepcopy(forwarded)

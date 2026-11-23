@@ -564,7 +564,10 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                     }
                 auto& inputGate = inputMidiGates_[static_cast<std::size_t>(forwarded.getChannel() - 1)]
                                                  [static_cast<std::size_t>(message.getNoteNumber())];
-                if (message.isNoteOn() || inputGate != 2)
+                if (message.isNoteOn() && inputGate == 1)
+                    midi.addEvent(juce::MidiMessage::noteOff(forwarded.getChannel(),
+                        message.getNoteNumber(), message.getVelocity()), metadata.samplePosition);
+                if (message.isNoteOn() || inputGate == 1)
                     midi.addEvent(forwarded, metadata.samplePosition);
                 inputGate = message.isNoteOn() ? 1 : 0;
             }
