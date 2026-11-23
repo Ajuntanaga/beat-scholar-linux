@@ -187,6 +187,7 @@ private:
     void clearMasterState() noexcept;
 
     std::array<std::array<SampleData, 2>, padCount> samples_;
+    std::array<bool, padCount> layeredSamples_ {};
     // Native voices form one shared pool, including their retained HPF state.
     static constexpr std::size_t voiceCount = 24;
     std::array<Voice, voiceCount> voices_;

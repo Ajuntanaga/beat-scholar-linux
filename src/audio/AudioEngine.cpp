@@ -288,6 +288,7 @@ void AudioEngine::setPadSample(std::size_t padIndex, SampleData sample)
         return;
     samples_[padIndex][0] = sample.isValid() ? std::move(sample) : SampleData {};
     samples_[padIndex][1] = {};
+    layeredSamples_[padIndex] = false;
     for (auto& voice : voices_)
         if (voice.pad == padIndex)
             voice = {};
@@ -297,6 +298,7 @@ void AudioEngine::setPadLayerSample(std::size_t padIndex, std::size_t layerIndex
 {
     if (padIndex >= padCount || layerIndex >= 2)
         return;
+    layeredSamples_[padIndex] = true;
     samples_[padIndex][layerIndex] = sample.isValid() ? std::move(sample) : SampleData {};
     for (auto& voice : voices_)
         if (voice.pad == padIndex)
@@ -845,7 +847,8 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                     float left = 0.0f;
                     float right = 0.0f;
                     bool anyLayerPlaying = false;
-                    const bool bothLayers = padSamples[0].isValid() && padSamples[1].isValid();
+                    // An empty native layer remains silent; it does not normalize
+                    // the other layer back to unity. Single-sample previews bypass mixing.
                     for (std::size_t layer = 0; layer < 2; ++layer)
                     {
                         const auto& sample = padSamples[layer];
@@ -854,7 +857,7 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                         if (voice.positions[layer] > 1.0
                             || inputEnvelope <= 0.0f)
                             continue;
-                        const float weight = !bothLayers ? 1.0f
+                        const float weight = !layeredSamples_[voice.pad] ? 1.0f
                             : layerWeights[layer];
                         // Native playback maps normalized phase onto the last source frame.
                         // Emit the clamped endpoint once before advancing to the finished sentinel.

@@ -2961,6 +2961,32 @@ void testTwoFactoryLayersMixContinuously()
 }
 
 
+void testEmptyFactoryLayerPreservesCrossfade()
+{
+    for (std::size_t layer = 0; layer < 2; ++layer)
+    {
+        bsl::AudioEngine engine;
+        prepareDryEngine(engine, 48000.0);
+        engine.setPadLayerSample(0, layer, { 48000.0, { { 1.0f } } });
+        auto settings = dryPadSettings();
+        settings.layerMix = 0.5f;
+        engine.setPadSettings(0, settings);
+        engine.noteOn(36, 1.0f);
+        auto output = makeBlock(34, 1);
+        engine.process(output, 1);
+        check(std::abs(output[0][0] - 0.70794577f * 0.7071067811865475f) < 2e-6f,
+              "empty factory layer preserves remaining layer attenuation");
+        engine.setPadSample(0, { 48000.0, { { 1.0f } } });
+        engine.reset();
+        engine.noteOn(36, 1.0f);
+        output = makeBlock(34, 1);
+        engine.process(output, 1);
+        check(std::abs(output[0][0] - 0.7071067811865475f) < 2e-6f,
+              "single sample replacement clears factory crossfade mode");
+    }
+}
+
+
 void testNativeLayerMixGainPrecision()
 {
     // Original snare captures at 0.67 and 0.674 are bit-identical. Matching
@@ -3563,12 +3589,15 @@ void testSharedDistortionBus()
 
 void testSharedEffectsIgnoreVoiceSubdivision()
 {
+    for (const auto routing : { bsl::RoutingMode::stereo, bsl::RoutingMode::multi })
     for (const std::size_t capacity : { 128u, 512u })
     {
+        const std::size_t channels = routing == bsl::RoutingMode::multi ? 34 : 2;
         bsl::AudioEngine whole, split;
         for (auto* engine : { &whole, &split })
         {
             engine->prepare(48000.0, capacity);
+            engine->setRoutingMode(routing);
             auto pad = dryPadSettings();
             pad.independentDistortion = true;
             pad.distortionMix = 1.0f;
@@ -3584,8 +3613,8 @@ void testSharedEffectsIgnoreVoiceSubdivision()
         for (int block = 0; block < 4; ++block)
         {
             // Exceed prepared capacity and split at non-aligned event positions.
-            auto expected = makeBlock(2, 777);
-            auto actual = makeBlock(2, 777);
+            auto expected = makeBlock(channels, 777);
+            auto actual = makeBlock(channels, 777);
             whole.process(expected, 777);
             split.beginBlock(actual, 777);
             split.renderRange(actual, 0, 73);
@@ -3595,16 +3624,16 @@ void testSharedEffectsIgnoreVoiceSubdivision()
             check(actual == expected, "shared effects are bit-exact across voice subdivisions and capacity wraps");
         }
         // A host panic must retain already-rendered audio and silence the rest.
-        auto prefix = makeBlock(2, 73);
+        auto prefix = makeBlock(channels, 73);
         whole.process(prefix, 73);
-        auto interrupted = makeBlock(2, 777);
+        auto interrupted = makeBlock(channels, 777);
         split.beginBlock(interrupted, 777);
         split.renderRange(interrupted, 0, 73);
         split.endBlock(interrupted);
         split.stopMidiChannel(1, true);
         split.renderRange(interrupted, 73, 777);
         split.endBlock(interrupted);
-        for (std::size_t channel = 0; channel < 2; ++channel)
+        for (std::size_t channel = 0; channel < channels; ++channel)
         {
             check(std::equal(prefix[channel].begin(), prefix[channel].end(), interrupted[channel].begin()),
                   "mid-block panic preserves the audio before its sample position");
@@ -3876,6 +3905,7 @@ int main()
     testNativePadHighPassResponse();
     testNativeEnvelopePrecedesHighPass();
     testTwoFactoryLayersMixContinuously();
+    testEmptyFactoryLayerPreservesCrossfade();
     testNativeLayerMixGainPrecision();
     testNativeDriveInsertCurveAndBypass();
     testNativeLengthPrecedesDrive();
