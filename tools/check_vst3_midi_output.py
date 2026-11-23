@@ -135,6 +135,11 @@ def main() -> int:
                  [note(64, 'note_on', 36, 100), note(72, 'note_off', 36, 90),
                   note(72, 'note_on', 36, 90), note(80, 'note_off', 36)], block)
 
+    # Original emits nothing for releases without a held incoming gate.
+    for block in BLOCK_SIZES:
+        run_case('incoming-orphan-release', retrigger, 6000,
+                 [(64, 36, 0), (80, 36, 0)], [], block)
+
     # Original direct capture: incoming drum retrigger closes the sequencer gate
     # with the incoming velocity, then replaces it (no later scheduled off).
     overlap = copy.deepcopy(forwarded)
