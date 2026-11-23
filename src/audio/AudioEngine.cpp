@@ -1020,8 +1020,8 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
     // Room/Plate have +3/+6 dB effect gains followed by a separate +6 dB
     // shared return, ramping from zero over 100 ms after reset. Advance it
     // during silence and AUX bypass as well, independently of master processing.
-    constexpr float roomEffectGain = 1.4125375f;
-    constexpr float plateEffectGain = 1.9952623f;
+    constexpr float roomEffectGain = 1.4125375747680664f;
+    constexpr float plateEffectGain = 1.9952623844146729f;
     for (std::size_t frame = start; frame < end; ++frame)
     {
         const float returnGain = ambienceReturn_.next();
