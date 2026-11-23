@@ -634,6 +634,7 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
             {
                 const auto& event = sequencerEvents_[index].event;
                 const int offset = event.sampleOffset + baseOffset;
+                const auto samplerPad = state.padIndexForInputMidiNote(event.note);
                 consumeInputThrough(offset);
                 advanceAudio(offset);
                 auto& midiChannel = sequencerMidiChannels_[sequencerEvents_[index].laneIndex][event.note];
@@ -645,8 +646,9 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                         midi.addEvent(juce::MidiMessage::noteOff(event.channel, event.note,
                             static_cast<juce::uint8>(sequencerEvents_[index].releaseVelocity)), offset);
                     midiChannel = 0;
-                    audioEngine_.sequencerNoteOff(static_cast<std::uint8_t>(36 + event.padIndex),
-                                                  sequencerEvents_[index].laneIndex);
+                    if (samplerPad)
+                        audioEngine_.sequencerNoteOff(static_cast<std::uint8_t>(36 + *samplerPad),
+                                                      sequencerEvents_[index].laneIndex);
                 }
                 else
                 {
@@ -665,8 +667,8 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                         hit.laneIndex, hit.beatIndex, hit.sliceIndex, event.padIndex,
                         audioActivityFrame_ + static_cast<std::uint64_t>(offset),
                         activityEpoch_.load(std::memory_order_relaxed) });
-                    if (state.global.samplerEnabled && event.padIndex < bsl::padCount)
-                        audioEngine_.sequencerNoteOn(static_cast<std::uint8_t>(36 + event.padIndex),
+                    if (state.global.samplerEnabled && samplerPad)
+                        audioEngine_.sequencerNoteOn(static_cast<std::uint8_t>(36 + *samplerPad),
                                                      samplerVelocity(event.velocity), sequencerEvents_[index].laneIndex);
                 }
             }

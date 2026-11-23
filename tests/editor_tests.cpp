@@ -3530,6 +3530,60 @@ void testSamplerDisableClearsVoicesAndTails()
         }
 }
 
+std::unique_ptr<BeatScholarLinuxProcessor> makeProcessorForWrapper(juce::AudioProcessor::WrapperType wrapper);
+
+void testSequencerMappedSamplerRouting()
+{
+    struct Clock final : juce::AudioPlayHead
+    {
+        PositionInfo info;
+        juce::Optional<PositionInfo> getPosition() const override { return info; }
+    };
+    for (const int mappedNote : {38, 60})
+    {
+        Clock clock;
+        clock.info.setIsPlaying(true);
+        clock.info.setTimeInSamples(0);
+        clock.info.setPpqPosition(0.0);
+        clock.info.setBpm(120.0);
+        auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
+        auto state = makeBypassTestProject(1);
+        state.global.sequencerEnabled = true;
+        state.global.multiOutput = true;
+        state.kit.pads[0].midiNote = static_cast<std::uint8_t>(mappedNote);
+        state.patterns[0].lanes = { bsl::LaneState::make(4) };
+        for (auto& beat : state.patterns[0].lanes[0].beats)
+            beat.slices[0].enabled = false;
+        auto& beat = state.patterns[0].lanes[0].beats[0];
+        beat = bsl::BeatState::withSubdivision(1, 0, 1.0f);
+        beat.slices[0].enabled = true;
+        const auto bytes = bsl::statecodec::encode(state);
+        processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
+        auto layout = processor->getBusesLayout();
+        layout.outputBuses.getReference(1) = juce::AudioChannelSet::stereo();
+        layout.outputBuses.getReference(2) = juce::AudioChannelSet::stereo();
+        check(processor->setBusesLayout(layout), "mapped-note fixture enables both pad buses");
+        processor->setRateAndBufferSizeDetails(48000, 64);
+        processor->prepareToPlay(48000, 64);
+        processor->setPlayHead(&clock);
+        juce::AudioBuffer<float> audio(processor->getTotalNumOutputChannels(), 64);
+        juce::MidiBuffer midi;
+        processor->processBlock(audio, midi);
+        bool emitted = false;
+        for (const auto metadata : midi)
+            if (metadata.getMessage().isNoteOn())
+                emitted |= metadata.getMessage().getNoteNumber() == mappedNote;
+        check(emitted, "sequencer preserves mapped output MIDI note");
+        check(audio.getMagnitude(2, 0, 64) == 0.0f,
+              "sequencer must not play source pad after output-note remapping");
+        check(mappedNote == 38 ? audio.getMagnitude(4, 0, 64) > 0.01f
+                               : audio.getMagnitude(4, 0, 64) == 0.0f,
+              "sequencer resolves fixed sampler input map and ignores unmapped notes");
+        processor->setPlayHead(nullptr);
+        processor->releaseResources();
+    }
+}
+
 void testSparseMultiOutputBusMapping()
 {
     for (const int pad : {0, 7, 15})
@@ -7580,6 +7634,7 @@ int main(int argc, char** argv)
     testDocumentedPadBypassAutomation(output);
     testModuleSwitchesReachEditorAndProcessor(output);
     testSamplerDisableClearsVoicesAndTails();
+    testSequencerMappedSamplerRouting();
     testSparseMultiOutputBusMapping();
     testSectors(output);
     testPartialSliceOutlines(output);
