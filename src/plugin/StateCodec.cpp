@@ -676,6 +676,23 @@ float legacyLinearGain(const juce::var& value, float fallback)
     return std::clamp(gain, 0.0f, 4.0f);
 }
 
+float legacyPadGain(const juce::var& value, float fallback)
+{
+    if (value.isVoid())
+        return fallback;
+
+    // Original pad Volume restores through its skewed parameter range, even
+    // when the preset supplies dB. Preserve that float roundtrip: its rounding
+    // is audible downstream of high-gain auxiliary distortion.
+    constexpr float maximum = 1.9952623844146729f;
+    constexpr float skew = 0.3344777524471283f;
+    const float gain = std::clamp(legacyLinearGain(value, fallback), 0.0f, maximum);
+    if (gain == 0.0f)
+        return 0.0f;
+    const float normalized = std::pow(gain / maximum, skew);
+    return std::exp(std::log(normalized) / skew) * maximum;
+}
+
 float legacyCutoff(const juce::var& value, float fallback)
 {
     if (value.isVoid())
@@ -840,7 +857,7 @@ bool readLegacyPad(const juce::var& sourcePad, PadState& pad)
     pad.attackNormalized = percentOrUnit(get(get(params, "ADSR"), "Attack"), 0.0f);
     pad.attackSeconds = pad.attackNormalized;
     pad.releaseSeconds = legacyNumber(get(get(params, "ADSR"), "Release"), 0.03f);
-    pad.gain = legacyLinearGain(get(params, "Volume"), pad.gain);
+    pad.gain = legacyPadGain(get(params, "Volume"), pad.gain);
     const auto pitch = get(params, "Pitch");
     const auto configuredNote = get(params, "Note").isVoid() ? get(sourcePad, "Note")
                                                                : get(params, "Note");
