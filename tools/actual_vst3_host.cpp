@@ -48,6 +48,7 @@ struct Options
     bool playSequencer = false;
     bool floatOutput = false;
     bool allOutputs = false;
+    bool rawComponentState = false;
     std::vector<MidiEvent> midi;
 };
 
@@ -126,12 +127,13 @@ Options parseOptions(int argc, char** argv)
         else if (argument == "--play-sequencer") options.playSequencer = true;
         else if (argument == "--float-output") options.floatOutput = true;
         else if (argument == "--all-outputs") options.allOutputs = true;
+        else if (argument == "--raw-component-state") options.rawComponentState = true;
         else if (argument == "--help")
         {
             std::cout
                 << "Usage: actual_vst3_host --plugin BUNDLE --state PRESET_OR_BSLX --output WAV\\n"
                 << "       --expect-sha256 HEX --sample-rate HZ --block-size N --active-frames N\\n"
-                << "       [--midi SAMPLE:NOTE:VELOCITY] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--all-outputs] [--pre-roll-frames N] [--restored-state-output NEW_BSLX]\\n";
+                << "       [--midi SAMPLE:NOTE:VELOCITY] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--all-outputs] [--pre-roll-frames N] [--restored-state-output NEW_BSLX] [--raw-component-state]\\n";
             std::exit(0);
         }
         else fail("unknown option: " + argument);
@@ -368,8 +370,17 @@ int run(const Options& options)
     if (plugin == nullptr)
         fail("VST3 instantiation failed: " + creationError.toStdString());
 
-    auto state = loadState(options.state);
-    const auto expectedStateJson = jsonFromState(state);
+    juce::MemoryBlock state;
+    if (options.rawComponentState)
+    {
+        if (!options.state.loadFileAsData(state) || state.getSize() == 0)
+            fail("failed to read raw component state");
+        if (options.restoredStateOutput == juce::File {})
+            fail("--raw-component-state requires --restored-state-output for inspection");
+    }
+    else
+        state = loadState(options.state);
+    const auto expectedStateJson = options.rawComponentState ? juce::var {} : jsonFromState(state);
     // Older v2 states omit this optional field. Compare their restored value
     // against the documented default without changing what the plugin loads.
     if (auto* global = expectedStateJson.getProperty("global", {}).getDynamicObject();
@@ -385,7 +396,7 @@ int run(const Options& options)
     if (options.restoredStateOutput != juce::File {}
         && !options.restoredStateOutput.replaceWithData(restoredComponent.getData(), restoredComponent.getSize()))
         fail("could not save restored component state");
-    if (!equivalentState(jsonFromState(restoredComponent), expectedStateJson))
+    if (!options.rawComponentState && !equivalentState(jsonFromState(restoredComponent), expectedStateJson))
         fail("plugin did not restore the supplied native v2 state exactly");
 
     int reportedPadNames = 0;
@@ -522,6 +533,9 @@ int run(const Options& options)
     const auto outputSha256 = juce::SHA256(options.output).toHexString();
     juce::DynamicObject::Ptr reportObject = new juce::DynamicObject();
     reportObject->setProperty("status", "pass");
+    reportObject->setProperty("state_validation", options.rawComponentState
+        ? "raw-component-capture-only" : "native-v2-semantic-roundtrip");
+    reportObject->setProperty("restored_component_bytes_equal", restoredComponent == state);
     reportObject->setProperty("reported_pad_names", reportedPadNames);
     reportObject->setProperty("output_channels", renderChannels);
     reportObject->setProperty("plugin_bundle", options.bundle.getFullPathName());
