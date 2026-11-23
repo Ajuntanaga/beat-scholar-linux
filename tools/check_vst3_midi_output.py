@@ -110,7 +110,8 @@ def main() -> int:
     # Direct original captures: fixed drum input survives sampler bypass and
     # editable output remapping. Unmapped notes are not general MIDI thru.
     fixed_inputs = {36, 38, 37, 39, 42, 46, 49, 51, 57, 55, 43, 41, 54, 40, 53, 56}
-    for channel in (0, 1, 2):
+    # Any mode also preserves incoming channels 7 and 16 in original captures.
+    for channel, input_channel in ((0, 1), (1, 1), (2, 1), (0, 7), (0, 16)):
         forwarded = copy.deepcopy(state)
         forwarded['global']['midiChannel'] = channel
         for pattern in forwarded['patterns']:
@@ -121,12 +122,13 @@ def main() -> int:
         inputs, expected = [], []
         for pitch in range(35, 59):
             frame = 1000 + (pitch - 35) * 200
-            inputs.extend(((frame, pitch, 100), (frame + 80, pitch, 0)))
+            inputs.extend(((frame, pitch, 100, input_channel),
+                           (frame + 80, pitch, 0, input_channel)))
             if pitch in fixed_inputs:
-                expected.extend((note(frame, 'note_on', pitch, 100, channel or 1),
-                                 note(frame + 80, 'note_off', pitch, 0, channel or 1)))
+                expected.extend((note(frame, 'note_on', pitch, 100, channel or input_channel),
+                                 note(frame + 80, 'note_off', pitch, 0, channel or input_channel)))
         for block in BLOCK_SIZES:
-            run_case(f'fixed-drum-input-{channel}', forwarded, 6000, inputs, expected, block)
+            run_case(f'fixed-drum-input-{channel}-incoming-{input_channel}', forwarded, 6000, inputs, expected, block)
 
     # Direct original capture: an input retrigger releases the previous input
     # with the new velocity; the first off closes it and the second is ignored.
