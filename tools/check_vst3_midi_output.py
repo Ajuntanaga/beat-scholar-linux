@@ -56,7 +56,7 @@ def main() -> int:
 
     def run_case(name: str, project: dict, active_frames: int, inputs: list[tuple],
                  expected: list[tuple], block: int, tempo: float = TEMPO, *, pre_stop_only: bool = False,
-                 legacy_immediate: bool = False) -> None:
+                 legacy_immediate: bool = False, controllers: tuple = ()) -> None:
         case_dir = args.artifacts_dir / f'{name}-{block}'
         case_dir.mkdir(exist_ok=True)
         preset = case_dir / 'state.json'
@@ -68,6 +68,8 @@ def main() -> int:
                    '--active-frames', str(active_frames), '--play-sequencer', '--tempo', str(tempo)]
         for event in inputs:
             command.extend(('--midi', ':'.join(map(str, event))))
+        for event in controllers:
+            command.extend(('--cc', ':'.join(map(str, event))))
         proc = subprocess.run(command, text=True, capture_output=True, timeout=120)
         (case_dir / 'stderr.log').write_text(proc.stderr)
         (case_dir / 'host.json').write_text(proc.stdout)
@@ -139,6 +141,13 @@ def main() -> int:
     for block in BLOCK_SIZES:
         run_case('incoming-orphan-release', retrigger, 6000,
                  [(64, 36, 0), (80, 36, 0)], [], block)
+
+    # Original CC123 is not forwarded and does not consume the held input gate.
+    for block in BLOCK_SIZES:
+        run_case('incoming-all-notes-off', retrigger, 6000,
+                 [(64, 36, 100), (80, 36, 0)],
+                 [note(64, 'note_on', 36, 100), note(80, 'note_off', 36)], block,
+                 controllers=((72, 123, 0),))
 
     # Original direct capture: incoming drum retrigger closes the sequencer gate
     # with the incoming velocity, then replaces it (no later scheduled off).
