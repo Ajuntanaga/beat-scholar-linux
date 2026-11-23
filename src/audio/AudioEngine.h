@@ -160,6 +160,7 @@ private:
         std::uint8_t hostMidiChannel = 1;
         float velocity = 0.0f;
         float lengthEnvelope = 1.0f;
+        float attackLevel = 0.0f;
         std::size_t releaseFramesElapsed = 0;
         float releaseStartLevel = 1.0f;
         float releaseOutputRemaining = 1.0f;

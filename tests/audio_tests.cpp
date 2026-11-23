@@ -2793,11 +2793,13 @@ void testNativePadFilterResponseAndEffectOrder()
         engine.noteOn(36, 1.0f);
         auto output = makeBlock(34, source.size());
         engine.process(output, source.size());
-        const auto attackFrames = static_cast<std::size_t>(settings.attackSeconds * 48000.0);
+        const float attackStep = attack ? static_cast<float>(1.0 / (settings.attackSeconds * 48000.0)) : 1.0f;
+        float attackLevel = 0.0f;
         bool matches = true;
         for (std::size_t i = 0; i < crushedFilterReference.size(); ++i)
         {
-            const float gain = attack ? static_cast<float>(i + 1) / static_cast<float>(attackFrames) : 1.0f;
+            attackLevel = std::min(1.0f, attackLevel + attackStep);
+            const float gain = attackLevel;
             matches = matches && std::abs(output[2][i] - crushedFilterReference[i] * gain * 0.5011872336f) < 2.0e-5f;
         }
         check(matches, "native pad effect order is crusher, low-pass filter, then amplitude envelope");
@@ -3350,13 +3352,49 @@ void testPadFilterEnableAndNormalizedAttack()
         engine.noteOn(36, 1.0f);
         auto output = makeBlock(34, 1);
         engine.process(output, 1);
-        const auto attackFrames = static_cast<std::size_t>(
-            static_cast<double>(settings.attackNormalized) * sampleRate);
-        const float expected = 0.7071067811865475f / static_cast<float>(attackFrames);
+        const float expected = 0.7071067811865475f * static_cast<float>(
+            1.0 / (static_cast<double>(settings.attackNormalized) * sampleRate));
         check(std::abs(output[0][0] - expected) < 1.0e-7f,
               "normalized attack maps consistently at each supported sample rate");
     }
 
+
+    // Native d063c0/d06670: float accumulation, not elapsed/integer frames.
+    // Compare against the same dry voice to retain its independent Length fade.
+    const auto renderAttack = [](float seconds, std::size_t blockSize)
+    {
+        bsl::AudioEngine engine;
+        prepareDryEngine(engine, 48000.0);
+        auto settings = dryPadSettings();
+        settings.attackSeconds = seconds;
+        engine.setPadSettings(0, settings);
+        setDspInput(engine, 0, { 48000.0, { std::vector<float>(8192, 1.0f) } });
+        engine.noteOn(36, 1.0f);
+        std::vector<float> result;
+        for (std::size_t offset = 0; offset < 4096;)
+        {
+            const auto count = std::min(blockSize, std::size_t(4096) - offset);
+            auto block = makeBlock(34, count);
+            engine.process(block, count);
+            result.insert(result.end(), block[0].begin(), block[0].end());
+            offset += count;
+        }
+        return result;
+    };
+    const auto attackWhole = renderAttack(0.08f, 4096);
+    const auto attackSplit = renderAttack(0.08f, 127);
+    const auto attackBypass = renderAttack(0.0f, 4096);
+    float nativeLevel = 0.0f;
+    const float nativeStep = static_cast<float>(1.0 / (double(0.08f) * 48000.0));
+    bool nativeRampMatches = true;
+    for (std::size_t i = 0; i < attackWhole.size(); ++i)
+    {
+        nativeLevel = std::min(1.0f, nativeLevel + nativeStep);
+        nativeRampMatches = nativeRampMatches
+            && std::abs(attackWhole[i] - attackBypass[i] * nativeLevel) < 2.0e-7f;
+    }
+    check(nativeRampMatches, "80 ms attack follows native float accumulation through saturation");
+    check(attackWhole == attackSplit, "native attack preserves its accumulator across callback boundaries");
 
     bsl::AudioEngine secondsEngine;
     prepareDryEngine(secondsEngine, 48000.0);
@@ -3368,9 +3406,9 @@ void testPadFilterEnableAndNormalizedAttack()
     secondsEngine.noteOn(36, 1.0f);
     auto secondsOutput = makeBlock(34, 1);
     secondsEngine.process(secondsOutput, 1);
-    const auto secondsFrames = static_cast<std::size_t>(secondsSettings.attackSeconds * 48000.0);
+    const float secondsStep = static_cast<float>(1.0 / (secondsSettings.attackSeconds * 48000.0));
     check(std::abs(secondsOutput[0][0] - 0.7071067811865475f
-                                           / static_cast<float>(secondsFrames)) < 1.0e-7f,
+                                           * secondsStep) < 1.0e-7f,
           "explicit attack seconds take precedence over the normalized compatibility value");
 }
 

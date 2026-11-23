@@ -684,7 +684,10 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
         const float attackSeconds = settings.attackSeconds > 0.0f
                                         ? settings.attackSeconds
                                         : settings.attackNormalized;
-        const auto attackFrames = static_cast<std::size_t>(attackSeconds * sampleRate_);
+        // Native d063d7-d0640e computes the rate in double, then stores float.
+        const float attackStep = attackSeconds > 0.0f
+            ? static_cast<float>(1.0 / (static_cast<double>(attackSeconds) * sampleRate_))
+            : 1.0f;
         // Native Length fades linearly even at zero. Its full duration follows
         // the longest loaded layer, independent of the layer crossfade position.
         double longestLayerSeconds = 0.0;
@@ -806,16 +809,15 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                 }
                     float envelope = 1.0f;
                     float releaseInputGain = 1.0f;
-                    if (attackFrames > 0)
-                        envelope = std::min(1.0f, static_cast<float>(voice.elapsedFrames + 1)
-                                                       / static_cast<float>(attackFrames));
+                    // Native d0668c accumulates float before rendering each sample.
+                    if (!voice.releasing)
+                        voice.attackLevel = std::min(1.0f, voice.attackLevel + attackStep);
+                    envelope = voice.attackLevel;
                     if (voice.releasing)
                     {
                         if (voice.releaseFramesElapsed == 0)
                         {
-                            voice.releaseStartLevel = attackFrames > 0
-                                ? std::min(1.0f, static_cast<float>(voice.elapsedFrames)
-                                    / static_cast<float>(attackFrames)) : 1.0f;
+                            voice.releaseStartLevel = attackSeconds > 0.0f ? voice.attackLevel : 1.0f;
                             // Native layer note-off (c93d98) uses two float
                             // divisions; combining them changes the 44.1 kHz tail.
                             voice.releaseInputStep = (voice.releaseInputLevel
