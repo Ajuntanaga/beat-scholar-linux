@@ -149,6 +149,29 @@ def main() -> int:
                  [note(64, 'note_on', 36, 100), note(80, 'note_off', 36)], block,
                  controllers=((72, 123, 0),))
 
+    # Incoming input replaces the first matching lane, not all held lanes and
+    # not necessarily the oldest note. Other lanes retain their scheduled off.
+    for reversed_lanes in (False, True):
+        layered = copy.deepcopy(retrigger)
+        layered['pads'][0]['midiNote'] = 36
+        first_lane = layered['patterns'][0]['lanes'][0]
+        second_lane = copy.deepcopy(first_lane)
+        layered['patterns'][0]['lanes'] = [first_lane, second_lane]
+        full = [{'padIndex': 0, 'velocity': 0.5, 'enabled': True,
+                 'velocityAssigned': True}]
+        divided = [{'padIndex': 0, 'velocity': 0.75, 'enabled': i == 1,
+                    'velocityAssigned': True} for i in range(4)]
+        first_lane['beats'][0] = copy.deepcopy(divided if reversed_lanes else full)
+        second_lane['beats'][0] = copy.deepcopy(full if reversed_lanes else divided)
+        expected = [note(0, 'note_on', 36, 64), note(6000, 'note_on', 36, 95),
+                    note(7000, 'note_off', 36, 100), note(7000, 'note_on', 36, 100),
+                    note(8000, 'note_off', 36),
+                    note(23520 if reversed_lanes else 11880, 'note_off', 36,
+                         64 if reversed_lanes else 95)]
+        for block in BLOCK_SIZES:
+            run_case(f'incoming-layered-{int(reversed_lanes)}', layered, 30000,
+                     [(7000, 36, 100), (8000, 36, 0)], expected, block, tempo=120)
+
     # Original direct capture: incoming drum retrigger closes the sequencer gate
     # with the incoming velocity, then replaces it (no later scheduled off).
     overlap = copy.deepcopy(forwarded)

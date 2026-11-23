@@ -560,6 +560,7 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                             midi.addEvent(juce::MidiMessage::noteOff(channel, message.getNoteNumber(),
                                 message.getVelocity()), metadata.samplePosition);
                             channel = 0;
+                            break; // Native input replaces only the first matching lane.
                         }
                     }
                 auto& inputGate = inputMidiGates_[static_cast<std::size_t>(forwarded.getChannel() - 1)]
