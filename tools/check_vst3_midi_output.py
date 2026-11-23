@@ -140,6 +140,17 @@ def main() -> int:
                   note(64, 'note_on', 36, 100), note(80, 'note_off', 36)],
                  block, tempo=120)
 
+    reverse = copy.deepcopy(overlap)
+    beats = reverse['patterns'][0]['lanes'][0]['beats']
+    beats[1] = copy.deepcopy(beats[0])
+    beats[0][0]['enabled'] = False
+    for block in BLOCK_SIZES:
+        run_case('sequencer-incoming-overlap', reverse, 48000,
+                 [(64, 36, 100), (47900, 36, 0)],
+                 [note(64, 'note_on', 36, 100), note(24000, 'note_off', 36, 64),
+                  note(24000, 'note_on', 36, 64), note(47520, 'note_off', 36, 64)],
+                 block, tempo=120)
+
     # Owned-original captures, 2026-11-15: 48 kHz, 100 BPM, block 64.
     # Fixed channels route every lane together; Any (0) is one channel per lane.
     for channel in (0, 1, 7, 16):

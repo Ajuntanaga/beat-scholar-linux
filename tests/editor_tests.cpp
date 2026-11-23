@@ -7200,8 +7200,8 @@ void testSequencerMidiNotesHaveFiniteLifetimes()
         for (int frame = 0; frame < 30000; frame += blockSize)
         {
             juce::MidiBuffer midi;
-            // Incoming performance notes are consumed by the instrument;
-            // they must not share generated outgoing note lifetimes.
+            // Native drum input replaces the sounding sequencer gate and is
+            // forwarded; the replaced gate must not emit a second release.
             if (frame == 0) midi.addEvent(juce::MidiMessage::noteOn(1, 36, 0.9f), 1);
             if (frame == blockSize) midi.addEvent(juce::MidiMessage::noteOff(1, 36), 3);
             processor->processBlock(audio, midi);
@@ -7213,7 +7213,7 @@ void testSequencerMidiNotesHaveFiniteLifetimes()
                 check(held >= 0 && held <= 1, "sequencer balances same-note retriggers");
             }
         }
-        check(ons == 3 && offs == 3 && held == 0,
+        check(ons == 4 && offs == 4 && held == 0,
               "outgoing sequencer MIDI releases every note across callback boundaries");
         processor->releaseResources();
     }

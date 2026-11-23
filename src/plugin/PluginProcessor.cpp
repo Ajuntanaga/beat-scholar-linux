@@ -150,6 +150,7 @@ BeatScholarLinuxProcessor::BeatScholarLinuxProcessor()
     syncParametersFromProject();
     sequencerPlayback_.reset();
     sequencerMidiChannels_ = {};
+    inputMidiGates_ = {};
     for (std::size_t index = 0; index < stateSnapshots_.size(); ++index)
     {
         stateSnapshots_[index] = projectEditor_.state();
@@ -311,6 +312,7 @@ void BeatScholarLinuxProcessor::prepareToPlay(double sampleRate, int maximumExpe
     for (auto& peak : outputPeaks_) peak.store(0.0f, std::memory_order_relaxed);
     sequencerPlayback_.reset();
     sequencerMidiChannels_ = {};
+    inputMidiGates_ = {};
     activityEpoch_.fetch_add(1, std::memory_order_release);
     midiWasPlaying_ = false;
     samplerWasEnabled_ = true;
@@ -560,7 +562,11 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                             channel = 0;
                         }
                     }
-                midi.addEvent(forwarded, metadata.samplePosition);
+                auto& inputGate = inputMidiGates_[static_cast<std::size_t>(forwarded.getChannel() - 1)]
+                                                 [static_cast<std::size_t>(message.getNoteNumber())];
+                if (message.isNoteOn() || inputGate != 2)
+                    midi.addEvent(forwarded, metadata.samplePosition);
+                inputGate = message.isNoteOn() ? 1 : 0;
             }
             if (!state.global.samplerEnabled)
                 continue;
@@ -634,6 +640,13 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                 }
                 else
                 {
+                    auto& inputGate = inputMidiGates_[event.channel - 1][event.note];
+                    if (inputGate == 1)
+                    {
+                        midi.addEvent(juce::MidiMessage::noteOff(event.channel, event.note,
+                            static_cast<juce::uint8>(event.velocity)), offset);
+                        inputGate = 2;
+                    }
                     midi.addEvent(juce::MidiMessage::noteOn(event.channel, event.note,
                         static_cast<juce::uint8>(event.velocity)), offset);
                     midiChannel = event.channel;

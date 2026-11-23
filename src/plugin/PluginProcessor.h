@@ -157,6 +157,8 @@ private:
     // MIDI gate ownership is separate from sampler voices and visual activity.
     // Zero means that an input retrigger already closed this sequencer gate.
     std::array<std::array<std::uint8_t, 128>, bsl::maximumLaneCount> sequencerMidiChannels_ {};
+    // 0: no input gate, 1: held input, 2: replaced by a sequencer hit.
+    std::array<std::array<std::uint8_t, 128>, 16> inputMidiGates_ {};
     std::int64_t midiExpectedSample_ = 0;
     double midiExpectedPpq_ = std::numeric_limits<double>::quiet_NaN();
     bool midiWasPlaying_ = false;
