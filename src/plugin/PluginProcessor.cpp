@@ -580,6 +580,7 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
             if (message.isAllSoundOff() || message.isAllNotesOff())
             {
                 advanceAudio(metadata.samplePosition);
+                if (message.isAllSoundOff()) audioEngine_.endBlock(scratch_);
                 audioEngine_.stopMidiChannel(static_cast<std::uint8_t>(message.getChannel()),
                                              message.isAllSoundOff());
                 continue;
@@ -719,6 +720,7 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     }
     consumeInputThrough(samplesInBlock);
     advanceAudio(samplesInBlock, true);
+    audioEngine_.endBlock(scratch_);
     audioActivityFrame_ += static_cast<std::uint64_t>(samplesInBlock);
     activityFrame_.store(audioActivityFrame_, std::memory_order_release);
 

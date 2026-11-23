@@ -3561,6 +3561,42 @@ void testSharedDistortionBus()
     check(driveDifference > 0.001f, "the global Aux3 Drive changes the shared nonlinear curve");
 }
 
+void testSharedEffectsIgnoreVoiceSubdivision()
+{
+    for (const std::size_t capacity : { 128u, 512u })
+    {
+        bsl::AudioEngine whole, split;
+        for (auto* engine : { &whole, &split })
+        {
+            engine->prepare(48000.0, capacity);
+            auto pad = dryPadSettings();
+            pad.independentDistortion = true;
+            pad.distortionMix = 1.0f;
+            engine->setPadSettings(0, pad);
+            std::vector<float> signal(8192);
+            for (std::size_t i = 0; i < signal.size(); ++i)
+                signal[i] = 0.2f * std::sin(static_cast<float>(i) * 0.11f);
+            setDspInput(*engine, 0, { 48000.0, { signal } });
+            engine->setDistortionResponse({ std::vector<float>{0.125f, 0.02f},
+                                            std::vector<float>{0.1f, -0.01f} });
+            engine->noteOn(36, 1.0f);
+        }
+        for (int block = 0; block < 4; ++block)
+        {
+            // Exceed prepared capacity and split at non-aligned event positions.
+            auto expected = makeBlock(2, 777);
+            auto actual = makeBlock(2, 777);
+            whole.process(expected, 777);
+            split.beginBlock(actual, 777);
+            split.renderRange(actual, 0, 73);
+            split.renderRange(actual, 73, 299);
+            split.renderRange(actual, 299, 777);
+            split.endBlock(actual);
+            check(actual == expected, "shared effects are bit-exact across voice subdivisions and capacity wraps");
+        }
+    }
+}
+
 void testDistortionSendIdleTransitionsAndAutomation()
 {
     // Multi exposes the exact post-pad signal separately from the shared return.
@@ -3835,6 +3871,7 @@ int main()
     testMutedAndNonSoloVoicesDoNotReplayStaleNotes();
     testRoutingTransitionsDiscardFrozenMasterTail();
     testSharedDistortionBus();
+    testSharedEffectsIgnoreVoiceSubdivision();
     testDistortionSendIdleTransitionsAndAutomation();
     testDistortionHostBoundaryCleanup();
     testDistortionResponseLifecycleAndPartitioning();

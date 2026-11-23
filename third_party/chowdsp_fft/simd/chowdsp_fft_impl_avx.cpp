@@ -1340,22 +1340,22 @@ static void pffft_real_preprocess (int Ncvec, const __m256* in, __m256* out, con
     }
 
     uout[0].f[0] = (Xr.f[0] + Xi.f[0]) + 2 * (Xr.f[2] + Xr.f[4] + Xr.f[6]);
-    uout[0].f[1] = (Xr.f[0] - Xi.f[0]) - 2 * Xi.f[4] + 2 * s * (Xr.f[2] - Xi.f[2] - Xr.f[6] - Xi.f[6]);
+    uout[0].f[1] = std::fma (2 * s, (Xr.f[2] - Xi.f[2] - Xr.f[6] - Xi.f[6]), (Xr.f[0] - Xi.f[0]) - 2 * Xi.f[4]);
     uout[0].f[2] = (Xr.f[0] + Xi.f[0]) - 2 * (Xr.f[4] + Xi.f[2] - Xi.f[6]);
-    uout[0].f[3] = (Xr.f[0] - Xi.f[0]) + 2 * Xi.f[4] + 2 * s * (-Xi.f[2] - Xr.f[2] + Xr.f[6] - Xi.f[6]);
+    uout[0].f[3] = std::fma (2 * s, (-Xi.f[2] - Xr.f[2] + Xr.f[6] - Xi.f[6]), (Xr.f[0] - Xi.f[0]) + 2 * Xi.f[4]);
     uout[0].f[4] = (Xr.f[0] + Xi.f[0]) + 2 * (Xr.f[4] - Xr.f[2] - Xr.f[6]);
-    uout[0].f[5] = (Xr.f[0] - Xi.f[0]) - 2 * Xi.f[4] + 2 * s * (Xi.f[2] - Xr.f[2] + Xr.f[6] + Xi.f[6]);
+    uout[0].f[5] = std::fma (2 * s, (Xi.f[2] - Xr.f[2] + Xr.f[6] + Xi.f[6]), (Xr.f[0] - Xi.f[0]) - 2 * Xi.f[4]);
     uout[0].f[6] = (Xr.f[0] + Xi.f[0]) - 2 * (Xr.f[4] - Xi.f[2] + Xi.f[6]);
-    uout[0].f[7] = (Xr.f[0] - Xi.f[0]) + 2 * Xi.f[4] + 2 * s * (Xr.f[2] + Xi.f[2] - Xr.f[6] + Xi.f[6]);
+    uout[0].f[7] = std::fma (2 * s, (Xr.f[2] + Xi.f[2] - Xr.f[6] + Xi.f[6]), (Xr.f[0] - Xi.f[0]) + 2 * Xi.f[4]);
 
     uout[2 * Ncvec - 1].f[0] = 2 * (Xr.f[1] + Xr.f[3] + Xr.f[5] + Xr.f[7]);
-    uout[2 * Ncvec - 1].f[1] = 2 * c8 * (Xr.f[1] - Xi.f[3] - Xi.f[5] - Xr.f[7]) + 2 * s8 * (-Xi.f[1] + Xr.f[3] - Xr.f[5] - Xi.f[7]);
+    uout[2 * Ncvec - 1].f[1] = std::fma (2 * c8, (Xr.f[1] - Xi.f[3] - Xi.f[5] - Xr.f[7]), 2 * s8 * (-Xi.f[1] + Xr.f[3] - Xr.f[5] - Xi.f[7]));
     uout[2 * Ncvec - 1].f[2] = 2 * s * ((Xr.f[1] - Xi.f[1]) - (Xr.f[3] + Xi.f[3]) + (Xi.f[5] - Xr.f[5]) + (Xr.f[7] + Xi.f[7]));
-    uout[2 * Ncvec - 1].f[3] = 2 * s8 * (Xr.f[1] + Xi.f[3] + Xi.f[5] - Xr.f[7]) + 2 * c8 * (-Xi.f[1] - Xr.f[3] + Xr.f[5] - Xi.f[7]);
+    uout[2 * Ncvec - 1].f[3] = std::fma (2 * s8, (Xr.f[1] + Xi.f[3] + Xi.f[5] - Xr.f[7]), 2 * c8 * (-Xi.f[1] - Xr.f[3] + Xr.f[5] - Xi.f[7]));
     uout[2 * Ncvec - 1].f[4] = 2 * (Xi.f[3] - Xi.f[1] - Xi.f[5] + Xi.f[7]);
-    uout[2 * Ncvec - 1].f[5] = 2 * s8 * (-Xr.f[1] + Xi.f[3] + Xi.f[5] + Xr.f[7]) + 2 * c8 * (-Xi.f[1] + Xr.f[3] - Xr.f[5] - Xi.f[7]);
+    uout[2 * Ncvec - 1].f[5] = std::fma (2 * s8, (-Xr.f[1] + Xi.f[3] + Xi.f[5] + Xr.f[7]), 2 * c8 * (-Xi.f[1] + Xr.f[3] - Xr.f[5] - Xi.f[7]));
     uout[2 * Ncvec - 1].f[6] = 2 * s * ((-Xr.f[1] - Xi.f[1]) + (Xr.f[3] - Xi.f[3]) + (Xr.f[5] + Xi.f[5]) - (Xr.f[7] - Xi.f[7]));
-    uout[2 * Ncvec - 1].f[7] = 2 * c8 * (-Xr.f[1] - Xi.f[3] - Xi.f[5] + Xr.f[7]) + 2 * s8 * (-Xi.f[1] - Xr.f[3] + Xr.f[5] - Xi.f[7]);
+    uout[2 * Ncvec - 1].f[7] = std::fma (2 * c8, (-Xr.f[1] - Xi.f[3] - Xi.f[5] + Xr.f[7]), 2 * s8 * (-Xi.f[1] - Xr.f[3] + Xr.f[5] - Xi.f[7]));
 }
 
 //====================================================================

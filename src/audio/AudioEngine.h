@@ -131,8 +131,10 @@ public:
     void sequencerNoteOn(std::uint8_t midiNote, float velocity, std::size_t laneIndex = 0) noexcept;
     void sequencerNoteOff(std::uint8_t midiNote, std::size_t laneIndex = 0) noexcept;
     void stopMidiChannel(std::uint8_t midiChannel, bool allSoundOff) noexcept;
-    // Streaming callers clear once, then render monotonically between note events.
+    // Streaming callers clear once, render contiguous ranges between note events,
+    // then endBlock to flush shared effects. Flush before resetting DSP mid-block.
     void beginBlock(AudioBlock& output, std::size_t sampleCount) noexcept;
+    void endBlock(AudioBlock& output) noexcept;
     void renderRange(AudioBlock& output, std::size_t start, std::size_t end) noexcept;
     void process(AudioBlock& output, std::size_t sampleCount) noexcept;
     void process(AudioBlock& output, std::size_t sampleCount,
@@ -141,6 +143,8 @@ public:
     [[nodiscard]] const std::array<float, padCount>& padPeaks() const noexcept { return padPeaks_; }
 
 private:
+    std::size_t effectsStart_ {}, effectsEnd_ {};
+    void renderEffects(AudioBlock& output, std::size_t start, std::size_t end) noexcept;
     std::array<float, padCount> padPeaks_ {};
     struct Voice
     {

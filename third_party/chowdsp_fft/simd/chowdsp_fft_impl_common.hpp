@@ -46,8 +46,82 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
 SOFTWARE.
 */
 
+/*
+MIT License
+-----------
+
+Copyright (c) 2002-2019 Advanced Micro Devices, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this Software and associated documentaon files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+*/
+#include <cstdint>
+#include <cstring>
 namespace chowdsp::fft::common
 {
+// Adapted from AMD win-libm sinf/cosf (MIT notice above). FFT setup
+// angles are bounded by 2*pi; general-purpose large-angle reduction is unnecessary.
+static inline double coefficient (std::uint64_t bits)
+{
+    double value;
+    std::memcpy (&value, &bits, sizeof (value));
+    return value;
+}
+
+static inline double reducedSine (double x)
+{
+    const double z = x * x;
+    double p = std::fma (z, coefficient (0x3ec71de3a556c734), coefficient (0xbf2a01a01a01a01a));
+    p = std::fma (p, z, coefficient (0x3f81111111111111));
+    p = std::fma (p, z, coefficient (0xbfc5555555555555));
+    return std::fma (p, x * z, x);
+}
+
+static inline double reducedCosine (double x)
+{
+    const double z = x * x;
+    double p = std::fma (z, coefficient (0xbe927e4fb7789f5c), coefficient (0x3efa01a01a01a019));
+    p = std::fma (p, z, coefficient (0xbf56c16c16c16c16));
+    p = std::fma (p, z, coefficient (0x3fa5555555555555));
+    return std::fma (p, z * z, std::fma (-0.5, z, 1.0));
+}
+
+static inline float setupTrig (float angle, bool cosine)
+{
+    const double x = std::abs (static_cast<double> (angle));
+    const int quadrant = static_cast<int> (std::fma (x, coefficient (0x3fe45f306dc9c883), 0.5));
+    const double reduced = std::fma (-static_cast<double> (quadrant), coefficient (0x3ff921fb54400000), x)
+        - static_cast<double> (quadrant) * coefficient (0x3dd0b4611a626331);
+    double value;
+    if (cosine)
+    {
+        value = quadrant % 2 ? reducedSine (reduced) : reducedCosine (reduced);
+        if ((quadrant + 1) & 2) value = -value;
+    }
+    else
+    {
+        value = quadrant % 2 ? reducedCosine (reduced) : reducedSine (reduced);
+        if (quadrant & 2) value = -value;
+        if (std::signbit (angle)) value = -value;
+    }
+    return static_cast<float> (value);
+}
+
 static inline int decompose (int n, int* ifac, const int* ntryh)
 {
     int nl = n, nf = 0, i, j;
@@ -199,8 +273,8 @@ static inline Setup_Type* fft_new_setup (int N, fft_transform_t transform, int S
         for (m = 0; m < M; ++m)
         {
             const auto A = static_cast<float> (-2 * M_PI * (m + 1) * k / N);
-            s->e[(2 * (i * M + m) + 0) * SIMD_SZ + j] = std::cos ((double) A);
-            s->e[(2 * (i * M + m) + 1) * SIMD_SZ + j] = std::sin ((double) A);
+            s->e[(2 * (i * M + m) + 0) * SIMD_SZ + j] = setupTrig (A, true);
+            s->e[(2 * (i * M + m) + 1) * SIMD_SZ + j] = setupTrig (A, false);
         }
     }
 

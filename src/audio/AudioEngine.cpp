@@ -545,6 +545,7 @@ void AudioEngine::process(AudioBlock& output, std::size_t sampleCount) noexcept
 
 void AudioEngine::beginBlock(AudioBlock& output, std::size_t sampleCount) noexcept
 {
+    effectsStart_ = effectsEnd_ = 0;
     // Native Aux3 clears tiny recursive filter state between host blocks.
     // Do this here so MIDI/event splits do not introduce extra cleanup points.
     distortion_.snapFilterStateToZero();
@@ -586,6 +587,7 @@ void AudioEngine::process(AudioBlock& output, std::size_t sampleCount,
     }
     if (cursor < available)
         renderRange(output, cursor, available);
+    endBlock(output);
 }
 
 void AudioEngine::renderRange(AudioBlock& output, std::size_t start, std::size_t end) noexcept
@@ -596,18 +598,28 @@ void AudioEngine::renderRange(AudioBlock& output, std::size_t start, std::size_t
     if (capacity == 0) return;
     while (start < end)
     {
-        const auto next = start + std::min(capacity, end - start);
+        if (effectsStart_ == effectsEnd_) effectsStart_ = effectsEnd_ = start;
+        const auto next = start + std::min(capacity - (effectsEnd_ - effectsStart_), end - start);
         renderPreparedRange(output, start, next);
+        effectsEnd_ = next;
+        if (effectsEnd_ - effectsStart_ == capacity) endBlock(output);
         start = next;
     }
+}
+
+void AudioEngine::endBlock(AudioBlock& output) noexcept
+{
+    if (effectsEnd_ > effectsStart_)
+        renderEffects(output, effectsStart_, effectsEnd_);
+    effectsStart_ = effectsEnd_;
 }
 
 void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std::size_t end) noexcept
 {
     for (auto& send : ambienceSends_)
-        std::fill_n(send.begin(), end - start, 0.0f);
-    std::fill_n(padDelaySendLeft_.begin(), end - start, 0.0f);
-    std::fill_n(padDelaySendRight_.begin(), end - start, 0.0f);
+        std::fill_n(send.begin() + (start - effectsStart_), end - start, 0.0f);
+    std::fill_n(padDelaySendLeft_.begin() + (start - effectsStart_), end - start, 0.0f);
+    std::fill_n(padDelaySendRight_.begin() + (start - effectsStart_), end - start, 0.0f);
     const bool hasSolo = std::any_of(settings_.begin(), settings_.end(), [](const auto& settings) {
         return settings.solo;
     });
@@ -618,7 +630,7 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
     // startup rounding enough to cross downstream bitcrusher thresholds.
     distortionReturn_.setTarget(distortionReturnGain(master_.distortionReturn),
                                 static_cast<std::size_t>(sampleRate_ * 0.1));
-    for (auto& send : distortionSends_) std::fill_n(send.begin(), end - start, 0.0f);
+    for (auto& send : distortionSends_) std::fill_n(send.begin() + (start - effectsStart_), end - start, 0.0f);
     constexpr float halfPi = 1.57079632679489661923f;
     for (std::size_t pad = 0; pad < padCount; ++pad)
     {
@@ -963,8 +975,8 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
             if (audible)
             {
                 // Sum all post-pad sends before the shared nonlinear processor.
-                distortionSends_[0][frame - start] += dryLeft * distortionGain;
-                distortionSends_[1][frame - start] += dryRight * distortionGain;
+                distortionSends_[0][frame - effectsStart_] += dryLeft * distortionGain;
+                distortionSends_[1][frame - effectsStart_] += dryRight * distortionGain;
                 if (auxEnabled_)
                 {
                     output[0][frame] += dryLeft * parallelGain;
@@ -977,15 +989,15 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                     std::max(std::abs(dryLeft), std::abs(dryRight)));
                 output[target][frame] += dryLeft;
                 output[target + 1][frame] += dryRight;
-                ambienceSends_[0][frame - start] += dryLeft * roomSendGain;
-                ambienceSends_[1][frame - start] += dryRight * roomSendGain;
-                ambienceSends_[2][frame - start] += dryLeft * plateSendGain;
-                ambienceSends_[3][frame - start] += dryRight * plateSendGain;
+                ambienceSends_[0][frame - effectsStart_] += dryLeft * roomSendGain;
+                ambienceSends_[1][frame - effectsStart_] += dryRight * roomSendGain;
+                ambienceSends_[2][frame - effectsStart_] += dryLeft * plateSendGain;
+                ambienceSends_[3][frame - effectsStart_] += dryRight * plateSendGain;
             }
             if (routingMode_ == RoutingMode::stereo)
             {
-                padDelaySendLeft_[frame - start] += dryLeft * settings.delay;
-                padDelaySendRight_[frame - start] += dryRight * settings.delay;
+                padDelaySendLeft_[frame - effectsStart_] += dryLeft * settings.delay;
+                padDelaySendRight_[frame - effectsStart_] += dryRight * settings.delay;
             }
         }
         for (auto* voice : padVoices)
@@ -1012,6 +1024,10 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
         }
     }
 
+}
+
+void AudioEngine::renderEffects(AudioBlock& output, std::size_t start, std::size_t end) noexcept
+{
     distortion_.process(distortionSends_[0].data(), distortionSends_[1].data(),
                         end - start, master_.distortionDrive);
     if (ambience_ != nullptr)
