@@ -438,6 +438,10 @@ int run(const Options& options)
     plugin->prepareToPlay(options.sampleRate, options.blockSize);
     if (plugin->getTotalNumOutputChannels() < 2)
         fail("plugin did not expose a main stereo output");
+    // The process buffer must cover every active bus, even when the capture
+    // retains only Main. Some hosted plugins enable auxiliary buses by default.
+    const int processChannels = std::max(plugin->getTotalNumInputChannels(),
+                                         plugin->getTotalNumOutputChannels());
 
     // Settle control ramps before replaying previously rendered references.
     // Default remains zero so cold-start checks retain their original behavior.
@@ -451,7 +455,7 @@ int run(const Options& options)
     for (std::int64_t remaining = options.preRollFrames; remaining > 0;)
     {
         const auto frames = static_cast<int>(std::min<std::int64_t>(options.blockSize, remaining));
-        juce::AudioBuffer<float> silence(renderChannels, frames);
+        juce::AudioBuffer<float> silence(processChannels, frames);
         silence.clear();
         juce::MidiBuffer noMidi;
         plugin->processBlock(silence, noMidi);
@@ -476,7 +480,7 @@ int run(const Options& options)
         const auto boundary = cursor < options.activeFrames ? options.activeFrames : totalFrames;
         const auto currentBlock = static_cast<int>(std::min<std::int64_t>(options.blockSize,
                                                                           boundary - cursor));
-        juce::AudioBuffer<float> block(renderChannels, currentBlock);
+        juce::AudioBuffer<float> block(processChannels, currentBlock);
         block.clear();
         juce::MidiBuffer midi;
         while (midiIndex < options.midi.size()
@@ -541,6 +545,7 @@ int run(const Options& options)
     reportObject->setProperty("restored_component_bytes_equal", restoredComponent == state);
     reportObject->setProperty("reported_pad_names", reportedPadNames);
     reportObject->setProperty("output_channels", renderChannels);
+    reportObject->setProperty("process_channels", processChannels);
     reportObject->setProperty("plugin_bundle", options.bundle.getFullPathName());
     reportObject->setProperty("module_path", module.getFullPathName());
     reportObject->setProperty("module_sha256", actualSha256);
