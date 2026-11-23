@@ -7067,8 +7067,12 @@ void testDenseOfflineBlockKeepsEveryHit()
     auto state = makeBypassTestProject(0);
     state.global.sequencerEnabled = true;
     state.global.beatsPerMinute = 300.0;
-    for (auto& pad : state.kit.pads)
+    for (std::size_t index = 0; index < state.kit.pads.size(); ++index)
     {
+        auto& pad = state.kit.pads[index];
+        // Match the replay input map: sequencer output notes also select the
+        // native fixed-map sampler, rather than directly addressing a pad.
+        pad.midiNote = static_cast<std::uint8_t>(inputNotes[index]);
         pad.customSamples[0] = state.kit.pads[0].customSamples[0];
         pad.oneShot = true;
     }
