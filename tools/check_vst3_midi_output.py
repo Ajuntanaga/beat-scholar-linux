@@ -183,14 +183,13 @@ def main() -> int:
         for block in BLOCK_SIZES:
             run_case(f'incoming-layered-{int(reversed_lanes)}', layered, 30000,
                      [(7000, 36, 100), (8000, 36, 0)], expected, block, tempo=120)
-            if not reversed_lanes:
-                # Original stopped-block capture releases both scheduled lanes,
-                # including the input-replaced one, and consumes the input gate.
-                run_case('incoming-layered-stop', layered, 7001,
-                         [(7000, 36, 100), (8000, 36, 0)],
-                         expected[:4] + [note(7001, 'note_off', 36, 64),
-                                         note(7001, 'note_off', 36, 95)],
-                         block, tempo=120, post_stop_frames=4096)
+            # Original captures in both lane orders release every scheduled lane,
+            # including the input-replaced one, and consume the input gate.
+            run_case(f'incoming-layered-stop-{int(reversed_lanes)}', layered, 7001,
+                     [(7000, 36, 100), (8000, 36, 0)],
+                     expected[:4] + [note(7001, 'note_off', 36, 64),
+                                     note(7001, 'note_off', 36, 95)],
+                     block, tempo=120, post_stop_frames=4096)
             repeated = expected[:4] + [note(7500, 'note_off', 36, 90),
                                        note(7500, 'note_on', 36, 90)] + expected[4:]
             run_case(f'incoming-layered-repeat-{int(reversed_lanes)}', layered, 30000,
