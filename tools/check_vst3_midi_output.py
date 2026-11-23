@@ -130,6 +130,15 @@ def main() -> int:
         for block in BLOCK_SIZES:
             run_case(f'fixed-drum-input-{channel}-incoming-{input_channel}', forwarded, 6000, inputs, expected, block)
 
+    # Original fixed channel 2 remaps input channel 7 rather than filtering it.
+    remapped_input = copy.deepcopy(forwarded)
+    remapped_input['global']['midiChannel'] = 2
+    for block in BLOCK_SIZES:
+        run_case('incoming-fixed-channel-remap', remapped_input, 6000,
+                 [(64, 36, 100, 7), (80, 36, 0, 7)],
+                 [note(64, 'note_on', 36, 100, 2),
+                  note(80, 'note_off', 36, 0, 2)], block)
+
     # Direct original capture: an input retrigger releases the previous input
     # with the new velocity; the first off closes it and the second is ignored.
     retrigger = copy.deepcopy(forwarded)
