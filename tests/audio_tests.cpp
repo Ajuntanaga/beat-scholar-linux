@@ -2961,6 +2961,24 @@ void testTwoFactoryLayersMixContinuously()
 }
 
 
+void testSingleLayerFactoryPadsKeepUnityGain()
+{
+    for (std::size_t pad = 2; pad < bsl::padCount; ++pad)
+    {
+        bsl::AudioEngine engine;
+        prepareDryEngine(engine, 48000.0);
+        engine.setPadLayerSample(pad, 0, {48000.0, {{1.0f}}});
+        auto settings = dryPadSettings();
+        settings.layerMix = 0.5f;
+        engine.setPadSettings(pad, settings);
+        engine.noteOn(static_cast<std::uint8_t>(36 + pad), 1.0f);
+        auto output = makeBlock(34, 1);
+        engine.process(output, 1);
+        check(std::abs(output[0][0] - 0.7071067811865475f) < 2e-6f,
+              "single-layer factory pad does not apply kick/snare crossfade");
+    }
+}
+
 void testEmptyFactoryLayerPreservesCrossfade()
 {
     for (std::size_t layer = 0; layer < 2; ++layer)
@@ -3905,6 +3923,7 @@ int main()
     testNativePadHighPassResponse();
     testNativeEnvelopePrecedesHighPass();
     testTwoFactoryLayersMixContinuously();
+    testSingleLayerFactoryPadsKeepUnityGain();
     testEmptyFactoryLayerPreservesCrossfade();
     testNativeLayerMixGainPrecision();
     testNativeDriveInsertCurveAndBypass();

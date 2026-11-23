@@ -298,8 +298,10 @@ void AudioEngine::setPadLayerSample(std::size_t padIndex, std::size_t layerIndex
 {
     if (padIndex >= padCount || layerIndex >= 2)
         return;
-    layeredSamples_[padIndex] = true;
     samples_[padIndex][layerIndex] = sample.isValid() ? std::move(sample) : SampleData {};
+    // Only kick and snare have a native two-slot mixer when a slot is empty.
+    layeredSamples_[padIndex] = padIndex < 2
+        || (samples_[padIndex][0].isValid() && samples_[padIndex][1].isValid());
     for (auto& voice : voices_)
         if (voice.pad == padIndex)
             voice = {};
