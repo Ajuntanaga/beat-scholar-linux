@@ -1458,6 +1458,39 @@ void testUnavailableAmbienceDoesNotInventEchoes()
           "missing responses never substitute feedback echoes for native convolution");
 }
 
+void testMultiAmbienceReceivesMasterCompression()
+{
+    const auto render = [](bsl::RoutingMode routing, bool enabled) {
+        DelayedAmbience ambience;
+        bsl::AudioEngine engine;
+        engine.setAmbienceProcessor(&ambience);
+        engine.prepare(48000.0, 512);
+        engine.setRoutingMode(routing);
+        engine.setModuleEnables(true, enabled);
+        bsl::MasterPlaybackSettings master;
+        master.filterEnabled = false;
+        master.compression = 0.48f;
+        engine.setMasterSettings(master);
+        settleMainGain(engine, 48000.0);
+        bsl::PadPlaybackSettings pad;
+        pad.room = 1.0f;
+        engine.setPadSettings(0, pad);
+        engine.setPadSample(0, { 48000.0, { { 0.01f } } });
+        engine.noteOn(36, 1.0f);
+        auto output = makeBlock(34, 32);
+        engine.process(output, 32);
+        return output;
+    };
+    const auto stereo = render(bsl::RoutingMode::stereo, true);
+    const auto multi = render(bsl::RoutingMode::multi, true);
+    const auto bypass = render(bsl::RoutingMode::multi, false);
+    check(multi[0][7] != 0.0f && multi[0][7] > bypass[0][7],
+          "multi shared ambience return receives master compressor gain");
+    check(std::abs(multi[0][7] - stereo[0][7]) < 1e-6f,
+          "multi and stereo ambience use the same master compressor");
+    check(multi[2] == bypass[2], "master compression leaves individual pad buses unchanged");
+}
+
 void testMasterProcessingAffectsStereoButIsBypassedInMultiMode()
 {
     bsl::MasterPlaybackSettings master;
@@ -3937,6 +3970,7 @@ int main()
     testNativePadPitchUsesEqualTemperament();
     testPadLowPassAndCompressionChangeDrySignal();
     testUnavailableAmbienceDoesNotInventEchoes();
+    testMultiAmbienceReceivesMasterCompression();
     testMasterProcessingAffectsStereoButIsBypassedInMultiMode();
     testModuleBypassesPreserveVolumeAndRouting();
     testAuxiliaryReturnsPreserveDryAndAmbienceSends();

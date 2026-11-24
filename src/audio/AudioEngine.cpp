@@ -1150,10 +1150,14 @@ void AudioEngine::renderEffects(AudioBlock& output, std::size_t start, std::size
     }
     else
     {
-        // The native master-DSP bypass still applies master volume to main.
-        // Individual Multi pad outputs bypass this gain.
+        // Multi pad buses bypass the master, but the shared effects return on
+        // main still receives master compression and volume.
+        if (masterEnabled_)
+            masterCompressor_.setAmount(master_.compression, sampleRate_);
         for (std::size_t frame = start; frame < end; ++frame)
         {
+            if (masterEnabled_)
+                masterCompressor_.process(output[0][frame], output[1][frame]);
             const float gain = masterGain_.next();
             output[0][frame] *= gain;
             output[1][frame] *= gain;
