@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <chrono>
+#include <thread>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
@@ -49,6 +51,7 @@ struct Options
     std::int64_t startupWaitMs = 0;
     std::int64_t postStopFrames = 0;
     std::int64_t restartFrames = 0;
+    bool realtimePacing = false;
     bool playSequencer = false;
     bool floatOutput = false;
     bool allOutputs = false;
@@ -133,6 +136,7 @@ Options parseOptions(int argc, char** argv)
             event.controller = true;
             options.midi.push_back(event);
         }
+        else if (argument == "--realtime-pacing") options.realtimePacing = true;
         else if (argument == "--play-sequencer") options.playSequencer = true;
         else if (argument == "--float-output") options.floatOutput = true;
         else if (argument == "--all-outputs") options.allOutputs = true;
@@ -142,7 +146,7 @@ Options parseOptions(int argc, char** argv)
             std::cout
                 << "Usage: actual_vst3_host --plugin BUNDLE --state PRESET_OR_BSLX --output WAV\\n"
                 << "       --expect-sha256 HEX --sample-rate HZ --block-size N --active-frames N\\n"
-                << "       [--midi SAMPLE:NOTE:VELOCITY[:CHANNEL]] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--all-outputs] [--startup-wait-ms N] [--pre-roll-frames N] [--post-stop-frames N] [--restart-frames N] [--restored-state-output NEW_BSLX] [--raw-component-state]\\n";
+                << "       [--midi SAMPLE:NOTE:VELOCITY[:CHANNEL]] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--all-outputs] [--realtime-pacing] [--startup-wait-ms N] [--pre-roll-frames N] [--post-stop-frames N] [--restart-frames N] [--restored-state-output NEW_BSLX] [--raw-component-state]\\n";
             std::exit(0);
         }
         else fail("unknown option: " + argument);
@@ -471,6 +475,16 @@ int run(const Options& options)
         transport.position.setTimeInSamples(0);
         transport.position.setPpqPosition(0.0);
     }
+    // Diagnostic wall-clock pacing only: preserve sample positions and plugin
+    // processing mode while allowing background work between audio callbacks.
+    const auto pacingStart = std::chrono::steady_clock::now();
+    std::int64_t pacedFrames = 0;
+    const auto pace = [&](int frames) {
+        if (!options.realtimePacing) return;
+        pacedFrames += frames;
+        std::this_thread::sleep_until(pacingStart + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double>(static_cast<double>(pacedFrames) / options.sampleRate)));
+    };
     for (std::int64_t remaining = options.preRollFrames; remaining > 0;)
     {
         const auto frames = static_cast<int>(std::min<std::int64_t>(options.blockSize, remaining));
@@ -478,6 +492,7 @@ int run(const Options& options)
         silence.clear();
         juce::MidiBuffer noMidi;
         plugin->processBlock(silence, noMidi);
+        pace(frames);
         remaining -= frames;
     }
 
@@ -563,6 +578,7 @@ int run(const Options& options)
         for (int channel = 0; channel < renderChannels; ++channel)
             rendered.copyFrom(channel, static_cast<int>(cursor), block, channel, 0, currentBlock);
         cursor += currentBlock;
+        pace(currentBlock);
     }
     plugin->releaseResources();
     writeWave(options.output, options.sampleRate, rendered, options.floatOutput);
@@ -588,6 +604,8 @@ int run(const Options& options)
     reportObject->setProperty("block_size", options.blockSize);
     reportObject->setProperty("tempo", options.tempo);
     reportObject->setProperty("output_midi_events", outputMidi);
+    reportObject->setProperty("realtime_pacing", options.realtimePacing);
+    reportObject->setProperty("startup_wait_ms", static_cast<juce::int64>(options.startupWaitMs));
     reportObject->setProperty("pre_roll_frames", static_cast<juce::int64>(options.preRollFrames));
     reportObject->setProperty("requested_post_stop_frames", static_cast<juce::int64>(options.postStopFrames));
     reportObject->setProperty("restart_frames", static_cast<juce::int64>(options.restartFrames));
