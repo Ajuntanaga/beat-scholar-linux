@@ -762,7 +762,7 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     randomFillEmpty_.setTooltip("Randomize only empty slices");
 
     configureSlider(soundControls_[0], 0.0, 2.0, 0.001, " s");
-    configureSlider(soundControls_[1], 0.0, 1.0, 0.001, "");
+    configureSlider(soundControls_[1], 0.0, 1.0, 0.01, "");
     configureSlider(soundControls_[2], -12.0, 12.0, 1.0, " st");
     configureSlider(soundControls_[3], -100.0, 100.0, 0.1, " ct");
     configureSlider(soundControls_[4], 0.0, 1.0, 0.001, "");
@@ -3230,7 +3230,7 @@ void BeatScholarLinuxEditor::configureModuleControls()
         defaults = { 0, 0, 0, 0, 0, 1, 0, 1, 0 };
         labels = { "Attack", "Damp", "Pitch", "Fine", "Mix", "Level", "L             R", "One Shot", "" };
         suffixes = { " s", "", " st", " ct", "", "", "", "", "" };
-        ranges = {{{ 0, 2, 0.001 }, { 0, 1, 0.001 }, { -12, 12, 1.0 }, { -100, 100, 0.1 },
+        ranges = {{{ 0, 2, 0.001 }, { 0, 1, 0.01 }, { -12, 12, 1.0 }, { -100, 100, 0.1 },
                    { 0, 1, 0.001 }, { 0, 2, 0.001 }, { -1, 1, 0.001 }, { 0, 1, 1 },
                    { 0, 1, 0.001 }}};
         visible = 7;
@@ -3473,7 +3473,9 @@ void BeatScholarLinuxEditor::applyModuleControls(juce::Slider& changedControl)
             pad.attackSeconds = static_cast<float>(soundControls_[0].getValue());
             pad.attackNormalized = std::clamp(pad.attackSeconds, 0.0f, 1.0f);
         }
-        applyValue(soundControls_[1], pad.damp);
+        if (&changedControl == &soundControls_[1])
+            pad.damp = std::clamp(std::floor(static_cast<float>(soundControls_[1].getValue())
+                                             / 0.01f + 0.5f) * 0.01f, 0.0f, 1.0f);
         applyValue(soundControls_[2], pad.pitchSemitones);
         applyValue(soundControls_[3], pad.fineCents);
         applyValue(soundControls_[4], pad.layerMix);

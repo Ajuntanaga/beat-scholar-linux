@@ -358,6 +358,16 @@ void testSoundControlEditsPreserveOtherValues()
     pitch->setValue(3.4, juce::sendNotificationSync);
     check(pad.pitchSemitones == 3.0f && pad.fineCents == before.fineCents,
           "Pitch edit selects an integer semitone without changing Fine");
+    auto* damp = dynamic_cast<juce::Slider*>(editor->findChildWithID("sound.1"));
+    check(damp != nullptr, "find Damp control for native Length step editing");
+    if (damp == nullptr) return;
+    check(damp->getInterval() == 0.01, "Damp uses the native Length step interval");
+    damp->setValue(0.864, juce::sendNotificationSync);
+    check(pad.damp == 0.859999954700469970703125f,
+          "Damp edit reproduces the original float step value");
+    damp->setValue(0.866, juce::sendNotificationSync);
+    check(pad.damp == 87.0f * 0.01f && pad.pitchSemitones == 3.0f,
+          "Damp rounds across a step without changing Pitch");
 }
 
 void appendLe16(std::vector<std::uint8_t>& bytes, std::uint16_t value)
