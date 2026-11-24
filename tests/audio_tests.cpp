@@ -1472,10 +1472,10 @@ void testMultiAmbienceReceivesMasterCompression()
         master.compression = 0.48f;
         engine.setMasterSettings(master);
         settleMainGain(engine, 48000.0);
-        bsl::PadPlaybackSettings pad;
+        auto pad = dryPadSettings();
         pad.room = 1.0f;
         engine.setPadSettings(0, pad);
-        engine.setPadSample(0, { 48000.0, { { 0.01f } } });
+        setDspInput(engine, 0, { 48000.0, { { 0.01f } } });
         engine.noteOn(36, 1.0f);
         auto output = makeBlock(34, 32);
         engine.process(output, 32);
@@ -1507,10 +1507,10 @@ void testMultiAmbienceReceivesMasterFilterAndCrush()
         master.crush = crush ? 0.65f : 0.0f;
         engine.setMasterSettings(master);
         settleMainGain(engine, 48000.0);
-        bsl::PadPlaybackSettings pad;
+        auto pad = dryPadSettings();
         pad.room = 1.0f;
         engine.setPadSettings(0, pad);
-        engine.setPadSample(0, { 48000.0, { { 0.01f } } });
+        setDspInput(engine, 0, { 48000.0, { { 0.01f } } });
         engine.noteOn(36, 1.0f);
         auto output = makeBlock(34, 32);
         engine.process(output, 32);
@@ -1607,8 +1607,12 @@ void testModuleBypassesPreserveVolumeAndRouting()
             check(std::abs(master[0][0] - dry[0][0]) > 0.01f,
                   "enabled Master processes audio with AUX disabled");
         else
-            check(master == dry && both == aux,
-                  "Multi pad outputs bypass Master regardless of its switch");
+            {
+            check(master == dry,
+                  "Multi main output stays silent with AUX disabled");
+            check(both[0] != aux[0] && both[1] != aux[1],
+                  "Master processes the shared AUX return in Multi mode");
+        }
     }
 }
 
