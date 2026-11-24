@@ -6129,6 +6129,8 @@ void testHostedTransportRemainsHostControlled(const juce::File& output)
     clock.info.setBpm(120.0);
     clock.info.setIsPlaying(false);
     auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
+    check(processor->getTailLengthSeconds() == 0.0,
+          "hosted tail metadata matches the original VST3 zero-second declaration");
     auto state = makeBypassTestProject(0);
     state.global.sequencerEnabled = true;
     state.patterns[0].lanes = { bsl::LaneState::make(4) };
