@@ -1184,6 +1184,27 @@ void testLegacyAmbienceReturnTapers()
     }
 }
 
+void testLegacyLengthUsesNativeStep()
+{
+    for (const auto text : { "0.86", "0.864", "86%" })
+    {
+        bsl::KitState kit;
+        bsl::MasterState master;
+        const auto json = juce::String(R"({"Pads":{"Pads":[{"Params":{"Length":")")
+            + text + R"("}}]}})";
+        check(bsl::statecodec::importLegacyKitJson(json, kit, master),
+              "legacy Length step fixture imports");
+        check(kit.pads[0].damp == 0.859999954700469970703125f,
+              "legacy Length matches native captured float step, including rounding down");
+    }
+    bsl::KitState kit;
+    bsl::MasterState master;
+    check(bsl::statecodec::importLegacyKitJson(
+              R"({"Pads":{"Pads":[{"Params":{"Length":0.866}}]}})", kit, master)
+              && kit.pads[0].damp == 87.0f * 0.01f,
+          "legacy Length rounds upward across its next step boundary");
+}
+
 void testLegacyKitAdapterImportsLayersAndProcessing()
 {
     const juce::String json = R"json({
@@ -1452,6 +1473,7 @@ int main()
     testLegacyAuxSettingsDoNotProcessUnsentMasterAudio();
     testLegacyEmbeddedSampleImport();
     testLegacyAmbienceReturnTapers();
+    testLegacyLengthUsesNativeStep();
     testLegacyKitAdapterImportsLayersAndProcessing();
     testRandomizerIndicesRejectNarrowingAndNonIntegers();
     testRandomizerSelectionsRejectDuplicatesAtomically();

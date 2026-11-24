@@ -853,7 +853,10 @@ bool readLegacyPad(const juce::var& sourcePad, PadState& pad)
     pad.oneShot = legacyEnabled(get(params, "OneShot"), pad.oneShot);
     pad.mono = legacyEnabled(get(params, "Mono"), false);
     pad.pan = std::clamp(readFloat(params, "Pan", 0.5f) * 2.0f - 1.0f, -1.0f, 1.0f);
-    pad.damp = percentOrUnit(get(params, "Length"), 0.0f);
+    // The original Length parameter snaps to its float 0.01 interval on restore.
+    // Preserve the multiply after rounding: 86 * 0.01f differs from 0.86f.
+    const float length = percentOrUnit(get(params, "Length"), 0.0f);
+    pad.damp = std::clamp(std::floor(length / 0.01f + 0.5f) * 0.01f, 0.0f, 1.0f);
     pad.attackNormalized = percentOrUnit(get(get(params, "ADSR"), "Attack"), 0.0f);
     pad.attackSeconds = pad.attackNormalized;
     pad.releaseSeconds = legacyNumber(get(get(params, "ADSR"), "Release"), 0.03f);
