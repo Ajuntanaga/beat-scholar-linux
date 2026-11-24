@@ -1066,102 +1066,94 @@ void AudioEngine::renderEffects(AudioBlock& output, std::size_t start, std::size
         }
     }
 
-    if (routingMode_ == RoutingMode::stereo)
-    {
-        const auto crusher = crushParameters(master_.crush);
-        if (masterEnabled_)
-            masterCompressor_.setAmount(master_.compression, sampleRate_);
-        // Native master LPF: two serial TPT stages, Q 0.1..2.5. Original-plugin
-        // captures at 48 and 96 kHz retain a 44.1 kHz coefficient rate, including
-        // after a cutoff retune. Preserve that response independently of the host.
-        constexpr float masterFilterRate = 44100.0f;
-        const float frequency = filterCutoffHz(master_.cutoff);
-        const float g = std::tan(3.14159265358979323846f * frequency / masterFilterRate);
-        const float inverseQ = 1.0f / filterResonanceQ(master_.resonance);
-        const float h = 1.0f / (1.0f + inverseQ * g + g * g);
-        const auto lowPass = [g, inverseQ, h](float input, auto& stages) {
-            for (auto& state : stages)
-            {
-                const float high = (input - (g + inverseQ) * state[0] - state[1]) * h;
-                const float band = g * high + state[0];
-                const float low = g * band + state[1];
-                state[0] = 2.0f * band - state[0];
-                state[1] = 2.0f * low - state[1];
-                input = low;
-            }
-            return input;
-        };
-        for (std::size_t frame = start; frame < end; ++frame)
+    const auto crusher = crushParameters(master_.crush);
+    if (masterEnabled_)
+        masterCompressor_.setAmount(master_.compression, sampleRate_);
+    // Native master LPF: two serial TPT stages, Q 0.1..2.5. Original-plugin
+    // captures at 48 and 96 kHz retain a 44.1 kHz coefficient rate, including
+    // after a cutoff retune. Preserve that response independently of the host.
+    constexpr float masterFilterRate = 44100.0f;
+    const float frequency = filterCutoffHz(master_.cutoff);
+    const float g = std::tan(3.14159265358979323846f * frequency / masterFilterRate);
+    const float inverseQ = 1.0f / filterResonanceQ(master_.resonance);
+    const float h = 1.0f / (1.0f + inverseQ * g + g * g);
+    const auto lowPass = [g, inverseQ, h](float input, auto& stages) {
+        for (auto& state : stages)
         {
-            float left = output[0][frame];
-            float right = output[1][frame];
-            if (masterEnabled_)
+            const float high = (input - (g + inverseQ) * state[0] - state[1]) * h;
+            const float band = g * high + state[0];
+            const float low = g * band + state[1];
+            state[0] = 2.0f * band - state[0];
+            state[1] = 2.0f * low - state[1];
+            input = low;
+        }
+        return input;
+    };
+    for (std::size_t frame = start; frame < end; ++frame)
+    {
+        float left = output[0][frame];
+        float right = output[1][frame];
+        if (masterEnabled_)
+        {
+            masterCompressor_.process(left, right);
+            if (crusher.holdFrames >= 2)
             {
-                masterCompressor_.process(left, right);
-                if (crusher.holdFrames >= 2)
+                if (masterCrushFramesElapsed_ >= crusher.holdFrames)
+                    masterCrushFramesElapsed_ = 0;
+                if (masterCrushFramesElapsed_ == 0)
                 {
-                    if (masterCrushFramesElapsed_ >= crusher.holdFrames)
-                        masterCrushFramesElapsed_ = 0;
-                    if (masterCrushFramesElapsed_ == 0)
-                    {
-                        masterCrushLeft_ = left;
-                        masterCrushRight_ = right;
-                    }
-                    left = masterCrushLeft_;
-                    right = masterCrushRight_;
-                    ++masterCrushFramesElapsed_;
+                    masterCrushLeft_ = left;
+                    masterCrushRight_ = right;
                 }
-                // Both native crusher instances hold the raw signal and apply the
-                // current depth afterward; a one-frame hold freezes the saved phase.
-                left = crushQuantize(left, crusher.quantizationDivisor);
-                right = crushQuantize(right, crusher.quantizationDivisor);
-                // Native bypass freezes both filter stages until re-enabled.
-                if (master_.filterEnabled && master_.cutoff < 0.9999f)
-                {
-                    left = lowPass(left, masterLowPassLeft_);
-                    right = lowPass(right, masterLowPassRight_);
-                }
-                if (master_.distortion > 0.0f)
-                {
-                    const float gain = 1.0f + master_.distortion * 15.0f;
-                    left = parallelSaturate(left, master_.distortion, gain);
-                    right = parallelSaturate(right, master_.distortion, gain);
-                }
+                left = masterCrushLeft_;
+                right = masterCrushRight_;
+                ++masterCrushFramesElapsed_;
             }
+            // Both native crusher instances hold the raw signal and apply the
+            // current depth afterward; a one-frame hold freezes the saved phase.
+            left = crushQuantize(left, crusher.quantizationDivisor);
+            right = crushQuantize(right, crusher.quantizationDivisor);
+            // Native bypass freezes both filter stages until re-enabled.
+            if (master_.filterEnabled && master_.cutoff < 0.9999f)
+            {
+                left = lowPass(left, masterLowPassLeft_);
+                right = lowPass(right, masterLowPassRight_);
+            }
+            if (routingMode_ == RoutingMode::stereo && master_.distortion > 0.0f)
+            {
+                const float gain = 1.0f + master_.distortion * 15.0f;
+                left = parallelSaturate(left, master_.distortion, gain);
+                right = parallelSaturate(right, master_.distortion, gain);
+            }
+        }
 
-            const auto echoPosition = masterEchoPosition_;
-            const auto delayFrames = std::min(masterEchoLeft_.size() - 1,
-                                              static_cast<std::size_t>(sampleRate_ * 0.25));
-            const auto echoTap = (echoPosition + masterEchoLeft_.size() - delayFrames)
-                                 % masterEchoLeft_.size();
-            const float delayedLeft = masterEchoLeft_[echoTap];
-            const float delayedRight = masterEchoRight_[echoTap];
-            const float wetLeft = auxEnabled_ ? delayedLeft * master_.delay * 0.65f : 0.0f;
-            const float wetRight = auxEnabled_ ? delayedRight * master_.delay * 0.65f : 0.0f;
-            masterEchoLeft_[echoPosition] = padDelaySendLeft_[frame - start]
-                                             + delayedLeft * master_.delay * 0.38f;
-            masterEchoRight_[echoPosition] = padDelaySendRight_[frame - start]
-                                              + delayedRight * master_.delay * 0.38f;
-            masterEchoPosition_ = (echoPosition + 1) % masterEchoLeft_.size();
-            const float gain = masterGain_.next();
-            output[0][frame] = (left + wetLeft) * gain;
-            output[1][frame] = (right + wetRight) * gain;
-        }
-    }
-    else
-    {
-        // Multi pad buses bypass the master, but the shared effects return on
-        // main still receives master compression and volume.
-        if (masterEnabled_)
-            masterCompressor_.setAmount(master_.compression, sampleRate_);
-        for (std::size_t frame = start; frame < end; ++frame)
+        // Individual pad buses already bypass this chain. The shared main
+        // return receives master compression, crush and filtering in both modes.
+        if (routingMode_ != RoutingMode::stereo)
         {
-            if (masterEnabled_)
-                masterCompressor_.process(output[0][frame], output[1][frame]);
             const float gain = masterGain_.next();
-            output[0][frame] *= gain;
-            output[1][frame] *= gain;
+            output[0][frame] = left * gain;
+            output[1][frame] = right * gain;
+            continue;
         }
+
+        const auto echoPosition = masterEchoPosition_;
+        const auto delayFrames = std::min(masterEchoLeft_.size() - 1,
+                                          static_cast<std::size_t>(sampleRate_ * 0.25));
+        const auto echoTap = (echoPosition + masterEchoLeft_.size() - delayFrames)
+                             % masterEchoLeft_.size();
+        const float delayedLeft = masterEchoLeft_[echoTap];
+        const float delayedRight = masterEchoRight_[echoTap];
+        const float wetLeft = auxEnabled_ ? delayedLeft * master_.delay * 0.65f : 0.0f;
+        const float wetRight = auxEnabled_ ? delayedRight * master_.delay * 0.65f : 0.0f;
+        masterEchoLeft_[echoPosition] = padDelaySendLeft_[frame - start]
+                                         + delayedLeft * master_.delay * 0.38f;
+        masterEchoRight_[echoPosition] = padDelaySendRight_[frame - start]
+                                          + delayedRight * master_.delay * 0.38f;
+        masterEchoPosition_ = (echoPosition + 1) % masterEchoLeft_.size();
+        const float gain = masterGain_.next();
+        output[0][frame] = (left + wetLeft) * gain;
+        output[1][frame] = (right + wetRight) * gain;
     }
 }
 
