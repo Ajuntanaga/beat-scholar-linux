@@ -1303,6 +1303,39 @@ void testNativeLengthFloatAccumulation()
         }
 }
 
+void testNativeLengthFloatDuration()
+{
+    // Native c936b3/c9371c-c93770 float instructions evaluated for this
+    // synthetic 12017-frame sample and Length .86 (not a factory sample).
+    constexpr float nativeDuration = 0.02612479031085968f;
+    const float decrement = static_cast<float>(1.0 / (44100.0 * nativeDuration));
+    for (const std::size_t blockSize : { 17u, 128u })
+    {
+        bsl::AudioEngine engine;
+        prepareDryEngine(engine, 44100.0);
+        engine.setPadSample(0, { 96000.0, { std::vector<float>(12017, 0.25f) } });
+        auto pad = dryPadSettings();
+        pad.lengthEnvelopeEnabled = true;
+        pad.damp = 0.86f;
+        engine.setPadSettings(0, pad);
+        engine.noteOn(36, 1.0f);
+        float envelope = 1.0f;
+        for (std::size_t offset = 0; offset < 1160; offset += blockSize)
+        {
+            const auto count = std::min(blockSize, std::size_t{1160} - offset);
+            auto output = makeBlock(34, count);
+            engine.process(output, count);
+            for (std::size_t frame = 0; frame < count; ++frame)
+            {
+                envelope = std::max(0.0f, envelope - decrement);
+                if (offset + frame >= 1140)
+                    check(std::abs(output[0][frame] - 0.25f * envelope * std::sqrt(0.5f)) < 1.0e-11f,
+                          "native float Length duration matches final audible samples");
+            }
+        }
+    }
+}
+
 void testNativeLengthTailPrecision()
 {
     // Private native hi-hat input capture: 14275 source frames at 96 kHz,
@@ -4006,6 +4039,7 @@ int main()
     testPitchAndDampAlterPlaybackWithoutAllocationContractChanges();
     testNativeLengthUsesLoadedSampleDuration();
     testNativeLengthFloatAccumulation();
+    testNativeLengthFloatDuration();
     testNativeLengthTailPrecision();
     testGatedPlaybackDoesNotUseOneShotLength();
     testNativePadPitchUsesEqualTemperament();

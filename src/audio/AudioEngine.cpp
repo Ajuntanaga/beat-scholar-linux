@@ -690,15 +690,17 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
             : 1.0f;
         // Native Length fades linearly even at zero. Its full duration follows
         // the longest loaded layer, independent of the layer crossfade position.
-        double longestLayerSeconds = 0.0;
+        float longestLayerSeconds = 0.0f;
         for (const auto& sample : padSamples)
             if (sample.isValid())
                 longestLayerSeconds = std::max(longestLayerSeconds,
-                    static_cast<double>(sample.length()) / sample.sampleRate);
-        // Native subtracts the normalized Length in float before promoting
-        // to double; the last fade samples seed the next voice's filter state.
-        const double lengthFrames = sampleRate_
-            * (0.01 + (longestLayerSeconds - 0.01) * (1.0f - settings.damp));
+                    static_cast<float>(static_cast<double>(sample.length()) / sample.sampleRate));
+        // Native c936b3/c9371c-c93770 rounds the duration and affine
+        // Length calculation in float before the envelope rate uses double.
+        // The final fade samples seed the next voice's retained filter state.
+        const float lengthSeconds = (1.0f - settings.damp)
+            * (longestLayerSeconds - 0.01f) + 0.01f;
+        const double lengthFrames = sampleRate_ * static_cast<double>(lengthSeconds);
         const float lowPassFrequency = std::min(filterCutoffHz(settings.cutoff),
                                                 static_cast<float>(sampleRate_ * 0.499));
         const float lowPassG = std::tan(3.14159265358979323846f * lowPassFrequency
