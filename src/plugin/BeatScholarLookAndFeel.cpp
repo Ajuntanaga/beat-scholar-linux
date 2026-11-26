@@ -129,6 +129,36 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         g.drawLine({point(502.0f,625.0f),point(506.0f,624.2f)},0.65f*unit);
         return;
     }
+    if (!kitTile && pad == 15)
+    {
+        // Original 1.6.2 large FX drawing: two outlined stars, a hollow top
+        // glint and five smaller marks, independently placed from the kit tile.
+        const float unit = std::min(icon.getWidth(), icon.getHeight()) / 42.0f;
+        const auto point = [&icon, unit](float x, float y) {
+            return icon.getCentre() + juce::Point<float>(x - 487.0f, y - 628.0f) * unit;
+        };
+        g.setColour(juce::Colour(0xffd7dbf6).withAlpha(0.80f));
+        const float marks[][4] = {
+            {483.8f,623.3f,2.0f,4}, {495.5f,629.0f,1.5f,0},
+            {473.5f,634.8f,3.1f,5}, {485.5f,636.5f,1.3f,0},
+            {495.5f,638.8f,3.3f,5}, {504.3f,633.0f,0.9f,0},
+            {479.8f,647.5f,2.0f,0}, {494.5f,647.0f,1.3f,0}
+        };
+        for (const auto& mark : marks)
+        {
+            const int points = static_cast<int>(mark[3]);
+            juce::Path star;
+            star.addStar(point(mark[0],mark[1]),points == 5 ? 5 : 4,
+                         mark[2] * (points == 4 ? 0.65f : points == 5 ? 0.45f : 0.38f) * unit,
+                         mark[2] * unit);
+            if (points != 0)
+                g.strokePath(star,juce::PathStrokeType(0.65f*unit,
+                             juce::PathStrokeType::curved,juce::PathStrokeType::rounded));
+            else
+                g.fillPath(star);
+        }
+        return;
+    }
     // Large sample drawings have their own proportions and baseline. Measured
     // from original 1.6.2 at both 1280 and 960; kit tile transforms stay separate.
     if (!kitTile && pad != 0)
@@ -140,9 +170,7 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         {
             case 12: size = 0.96f; dx = 0.8f; dy = 6.6f; break;
             case 13: size = 0.90f; dx = 0.2f; dy = 9.0f; stroke = 1.20f * unit; break;
-            case 14: size = 0.78f; dx = 2.5f; dy = 8.5f; stroke = 1.20f * unit; break;
-            case 15: size = 0.88f; dx = 0.3f; dy = 9.0f; stroke = 1.35f * unit;
-                     tint = tint.withAlpha(0.80f); break;
+            case 14: size = 0.78f; dx = 1.5f; dy = 7.5f; stroke = 1.20f * unit; break;
             default: break;
         }
         icon = icon.withSizeKeepingCentre(icon.getWidth() * size, icon.getHeight() * size)
@@ -651,25 +679,30 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
                 const auto centre = juce::Point<float>(icon.getCentreX() + side * icon.getWidth() * 0.28f,
                                                        icon.getY() + icon.getHeight() * (side < 0 ? 0.22f : 0.43f));
                 const auto rotation = juce::AffineTransform::rotation(side * 0.48f, centre.x, centre.y);
-                const auto head = juce::Rectangle<float>(icon.getWidth() * 0.25f,
-                                                         icon.getHeight() * 0.35f).withCentre(centre);
+                const auto handleHead = juce::Rectangle<float>(icon.getWidth() * 0.25f,
+                                                               icon.getHeight() * 0.35f).withCentre(centre);
+                const auto head = kitTile ? handleHead
+                    : handleHead.withSizeKeepingCentre(icon.getWidth() * (side < 0 ? 0.26f : 0.27f),
+                                                       icon.getHeight() * 0.39f)
+                                .translated(side < 0 ? 0.0f : -icon.getWidth()*0.01f,
+                                            icon.getHeight()*(side < 0 ? -0.0075f : 0.0075f));
                 juce::Path upper, handle;
                 upper.addEllipse(head);
                 // Clip the two halves separately so the stripe stays transparent.
                 {
                     juce::Graphics::ScopedSaveState saved(g);
                     g.addTransform(rotation);
-                    g.reduceClipRegion(head.withHeight(head.getHeight() * (kitTile ? 0.47f : 0.64f)).toNearestInt());
+                    g.reduceClipRegion(head.withHeight(head.getHeight() * (kitTile ? 0.47f : 0.55f)).toNearestInt());
                     g.fillPath(upper);
                 }
                 {
                     juce::Graphics::ScopedSaveState saved(g);
                     g.addTransform(rotation);
-                    g.reduceClipRegion(head.withTrimmedTop(head.getHeight() * (kitTile ? 0.57f : 0.77f)).toNearestInt());
+                    g.reduceClipRegion(head.withTrimmedTop(head.getHeight() * (kitTile ? 0.57f : 0.66f)).toNearestInt());
                     g.fillPath(upper);
                 }
                 handle.addRoundedRectangle(centre.x - icon.getWidth() * 0.026f,
-                                           head.getBottom() + icon.getHeight() * 0.03f,
+                                           handleHead.getBottom() + icon.getHeight() * 0.03f,
                                            icon.getWidth() * 0.052f, icon.getHeight() * 0.37f,
                                            icon.getWidth() * 0.026f);
                 g.fillPath(handle, rotation);
@@ -685,19 +718,21 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
             };
             // The reference triangle has an open lower-right corner and a beater.
             juce::Path triangle;
-            triangle.startNewSubPath(point(0.81f, 0.85f));
-            triangle.lineTo(point(0.12f, 0.85f));
+            const float baseline = kitTile ? 0.85f : 0.838f;
+            triangle.startNewSubPath(point(0.81f, baseline));
+            triangle.lineTo(point(0.12f, baseline));
             triangle.lineTo(point(0.51f, 0.17f));
-            triangle.lineTo(point(0.87f, 0.77f));
+            triangle.lineTo(point(kitTile ? 0.87f : 0.85f, kitTile ? 0.77f : 0.74f));
             g.strokePath(triangle, juce::PathStrokeType(stroke * 0.85f,
                          juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             g.drawEllipse(juce::Rectangle<float>(width * 0.08f, width * 0.08f)
                               .withCentre(point(0.51f, 0.12f)), stroke * 0.55f);
             g.setColour(tint.withMultipliedAlpha(0.6f));
-            g.drawLine({ point(0.55f, 0.55f), point(0.94f, 0.27f) }, stroke * 0.65f);
+            const auto beaterHead = point(kitTile ? 0.55f : 0.52f, 0.55f);
+            g.drawLine({ beaterHead, point(0.94f, 0.27f) }, stroke * 0.65f);
             g.setColour(tint);
             g.fillEllipse(juce::Rectangle<float>(width * 0.09f, width * 0.09f)
-                              .withCentre(point(0.55f, 0.55f)));
+                              .withCentre(beaterHead));
             break;
         }
         case 14:
@@ -708,7 +743,7 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
                 // Original 1.6.2 kit captures retain the faint outer contour;
                 // the three inner contours sit about one pixel farther in.
                 const float inset = ring > 0 ? 0.08f : 0.0f;
-                constexpr float largeDiameter[] { 0.82f, 0.66f, 0.42f, 0.16f };
+                constexpr float largeDiameter[] { 0.794f, 0.580f, 0.366f, 0.153f };
                 const float diameter = width * (kitTile ? 0.82f - ring * 0.20f - inset
                                                         : largeDiameter[ring]);
                 g.setColour(tint.withMultipliedAlpha(0.18f + ring * 0.27f));
