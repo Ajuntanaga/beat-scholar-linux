@@ -1,0 +1,15 @@
+{
+  "revision": "ea77444750de45e036e0279bb0291144bf8e3688",
+  "files": [
+    {
+      "file": "juce_audio_processors_headless/utilities/juce_AudioPluginExtensions.h",
+      "sha256": "f981437e8ec0bbad405635f068b7d4e4e21899bba104524251931d247920f18d",
+      "matches_vendored": true
+    },
+    {
+      "file": "juce_audio_processors_headless/format_types/juce_VST3PluginFormatImpl.h",
+      "sha256": "55766ebcffe577d4133eb0a7ec05c6feb142adb5cbbdb3ecb0ff2eb6e27bf406",
+      "matches_vendored": true
+    }
+  ]
+}

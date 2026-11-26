@@ -1,0 +1,70 @@
+--- a/modules/juce_audio_processors_headless/utilities/juce_AudioPluginExtensions.h
++++ b/modules/juce_audio_processors_headless/utilities/juce_AudioPluginExtensions.h
+@@ -90,6 +90,10 @@
+         virtual Steinberg::Vst::IComponent* getIComponentPtr() const noexcept = 0;
+         virtual MemoryBlock getPreset() const = 0;
+         virtual bool setPreset (const MemoryBlock&) = 0;
++        // Recovery diagnostic only: raw processor input, no controller mutation.
++        virtual bool hasRawParameterID (uint32) const = 0;
++        virtual bool queueRawParameter (uint32, float, int) = 0;
++        virtual int getRawParameterCount() const = 0;
+     };
+ 
+     /** Can be used to retrieve information about an AudioUnit that is wrapped by an AudioProcessor. */
+--- a/modules/juce_audio_processors_headless/format_types/juce_VST3PluginFormatImpl.h
++++ b/modules/juce_audio_processors_headless/format_types/juce_VST3PluginFormatImpl.h
+@@ -2247,6 +2247,27 @@
+     }
+    #endif
+ 
++    struct RawDiagnosticPoint { uint32 id; float value; int offset; };
++    std::vector<RawDiagnosticPoint> rawDiagnosticPoints;
++    int rawDiagnosticCount = 0;
++
++    bool hasRawParameterID (uint32 id) const override
++    {
++        return getParameterForID (id) != nullptr;
++    }
++
++    bool queueRawParameter (uint32 id, float value, int offset) override
++    {
++        if (! hasRawParameterID (id) || ! std::isfinite (value)
++            || value < 0.0f || value > 1.0f || offset < 0)
++            return false;
++        const SpinLock::ScopedLockType processLock (processMutex);
++        rawDiagnosticPoints.push_back ({ id, value, offset });
++        return true;
++    }
++
++    int getRawParameterCount() const override { return rawDiagnosticCount; }
++
+     void updateMidiMappings()
+     {
+         // MIDI mappings will always be updated on the main thread, but we need to ensure
+@@ -2484,6 +2505,26 @@
+             inputParameterChanges->set (cachedParamValues.getParamID (index), value, 0);
+         });
+ 
++        for (const auto& point : rawDiagnosticPoints)
++        {
++            if (point.offset >= numSamples)
++                throw std::runtime_error ("raw parameter offset outside block");
++            Steinberg::int32 index = 0;
++            auto* queue = inputParameterChanges->addParameterData (point.id, index);
++            if (queue == nullptr)
++                throw std::runtime_error ("raw parameter ID absent from processor queue");
++            if (queue->getPointCount() > 0)
++            {
++                Steinberg::int32 lastOffset = 0;
++                Vst::ParamValue lastValue = 0;
++                queue->getPoint (queue->getPointCount() - 1, lastOffset, lastValue);
++                if (lastOffset > point.offset)
++                    throw std::runtime_error ("raw parameter conflicts with later existing point");
++            }
++            inputParameterChanges->set (point.id, point.value, point.offset);
++            ++rawDiagnosticCount;
++        }
++        rawDiagnosticPoints.clear();
+         processor->process (data);
+ 
+         outputParameterChanges->forEach ([&] (Steinberg::int32 vstParamIndex, Vst::ParamID id, float value)
