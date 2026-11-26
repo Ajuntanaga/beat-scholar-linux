@@ -13,13 +13,14 @@
 
 class BeatScholarLinuxEditor final : public juce::AudioProcessorEditor,
                                      public juce::FileDragAndDropTarget,
-                                     private juce::Timer
+                                     private juce::MultiTimer
 {
 public:
     explicit BeatScholarLinuxEditor(BeatScholarLinuxProcessor&);
     ~BeatScholarLinuxEditor() override;
 
     void paint(juce::Graphics&) override;
+    void paintOverChildren(juce::Graphics&) override;
     void resized() override;
     bool keyPressed(const juce::KeyPress&) override;
     bool keyStateChanged(bool isKeyDown) override;
@@ -54,6 +55,47 @@ private:
     {
         bsl::BarState meter;
         std::vector<std::vector<bsl::BeatState>> lanes;
+    };
+
+    class SampleSelector final : public juce::TextButton
+    {
+    public:
+        std::function<void(int)> step;
+        void mouseDown(const juce::MouseEvent& event) override
+        {
+            pressedArrow = isEnabled() && event.mods.isLeftButtonDown() ? arrowAt(event.position) : 0;
+            if (pressedArrow == 0)
+                juce::TextButton::mouseDown(event);
+            else
+                // Focus is acquired before mouseDown and can arm Button.
+                setState(juce::Button::buttonOver);
+        }
+        void mouseDrag(const juce::MouseEvent& event) override
+        {
+            // An arrow press never armed the button, so dragging must not.
+            if (pressedArrow == 0)
+                juce::TextButton::mouseDrag(event);
+        }
+        void mouseUp(const juce::MouseEvent& event) override
+        {
+            const auto direction = std::exchange(pressedArrow, 0);
+            if (direction == 0)
+                juce::TextButton::mouseUp(event);
+            else
+            {
+                setState(isMouseOver() ? juce::Button::buttonOver : juce::Button::buttonNormal);
+                if (isEnabled() && arrowAt(event.position) == direction && step)
+                    step(direction);
+            }
+        }
+    private:
+        int arrowAt(juce::Point<float> point) const
+        {
+            if (getComponentID() != "sample.layer" || !getLocalBounds().toFloat().contains(point))
+                return 0;
+            return point.x < getHeight() ? -1 : point.x >= getWidth() - getHeight() ? 1 : 0;
+        }
+        int pressedArrow = 0;
     };
 
     class MidiMapLabel final : public juce::Label
@@ -112,7 +154,8 @@ private:
         bool resetting_ = false;
     };
 
-    void timerCallback() override;
+    void timerCallback(int timerId) override;
+    void updatePadGlow();
     void updateDisplay(int activityCount);
     void updateMomentaryBrush();
     void resetOrToggle(bool& value, bool defaultValue, const juce::ModifierKeys&);
@@ -134,6 +177,7 @@ private:
     void savePresetAs();
     void showKitPresetMenu();
     void showRandomizerPresetMenu();
+    void showRandomizerSaveToMenu();
     void saveKitAs();
     void showLaneMenu(std::size_t lane);
     void copyBar(std::size_t bar);
@@ -145,6 +189,8 @@ private:
     void showPatternMenu(std::size_t pattern);
     void showPadMenu(std::size_t pad);
     void chooseCustomSample(std::size_t pad);
+    std::vector<juce::File> factorySampleFiles(std::size_t pad, std::size_t layer) const;
+    void stepFactorySample(std::size_t pad, std::size_t layer, int direction);
     void showFactorySampleMenu(std::size_t pad, std::size_t layer);
     void showRandomizerSelectionMenu();
     void showSubdivisionMenu();
@@ -172,6 +218,7 @@ private:
     [[nodiscard]] float maximumArrangementScroll() const;
     [[nodiscard]] int arrangementActionAt(juce::Point<int>, std::size_t) const;
     void clampView();
+    void setViewZoom(int axis, float value);
     [[nodiscard]] juce::Rectangle<float> scrollRailBounds(int axis) const;
     [[nodiscard]] juce::Rectangle<float> scrollThumbBounds(int axis) const;
     [[nodiscard]] juce::Rectangle<float> zoomRailBounds(int axis) const;
@@ -190,6 +237,7 @@ private:
 
     BeatScholarLinuxProcessor& processor_;
     bsl::ui::BeatScholarLookAndFeel lookAndFeel_;
+    bsl::ui::BeatScholarLookAndFeel factorySampleLookAndFeel_ { true };
     std::array<juce::TextButton, bsl::padCount> pads_;
     std::array<MidiMapLabel, bsl::padCount> midiMapLabels_;
     bool midiMapVisible_ = false;
@@ -234,8 +282,8 @@ private:
     juce::TextButton randomizerNext_;
     juce::TextButton loadSample_;
     juce::TextButton clearSample_;
-    juce::TextButton layerOne_;
-    juce::TextButton layerTwo_;
+    SampleSelector layerOne_;
+    SampleSelector layerTwo_;
     juce::TextButton padSolo_;
     juce::TextButton padMute_;
     juce::TextButton oneShot_;
@@ -261,6 +309,8 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> bpmAttachment_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> routingAttachment_;
     std::unique_ptr<juce::FileChooser> chooser_;
+    class RandomizerSaveOverlay;
+    std::unique_ptr<RandomizerSaveOverlay> randomizerSave_;
     juce::TextEditor numericEntry_;
     juce::Component::SafePointer<juce::Slider> numericEntryControl_;
     std::optional<BarMeterEntry> numericEntryBar_;
@@ -276,10 +326,13 @@ private:
     bool updatingControls_ = false;
     std::array<float, bsl::padCount> padMeterLevels_ {};
     std::array<float, 2> outputMeterLevels_ {};
-    std::map<std::tuple<std::size_t, std::size_t, std::size_t>, float> sliceFlashes_;
+    std::map<std::tuple<std::size_t, std::size_t, std::size_t>, std::uint64_t> sliceFlashes_;
     std::array<float, bsl::padCount> padFlashes_ {};
+    std::array<float, bsl::padCount> nextPadGlowLevels_ {};
     bsl::PatternId flashPattern_ = 0;
     std::uint64_t flashEpoch_ = 0;
+    std::uint64_t lastDisplayFrame_ = 0;
+    juce::RangedAudioParameter* padControlGesture_ = nullptr;
     bool masterGainGesture_ = false;
     bool moduleControlGesture_ = false;
     bool moduleControlCheckpointed_ = false;
@@ -293,6 +346,7 @@ private:
     int dragStartY_ = 0;
     float dragStartVelocity_ = 0.8f;
     std::size_t dragStartSubdivision_ = 1;
+    float dragSubdivisionHeight_ = 1.0f;
     float horizontalZoom_ = 1.0f;
     float verticalZoom_ = 1.0f;
     float horizontalScroll_ = 0.0f;
@@ -301,6 +355,8 @@ private:
     int draggingScrollRail_ = 0;
     float scrollRailGrabOffset_ = 0.0f;
     int draggingZoomRail_ = 0;
+    int zoomDragStartX_ = 0;
+    float zoomDragStartValue_ = 1.0f;
     bool draggingGrid_ = false;
     juce::Point<int> gridDragStart_;
     float gridDragStartHorizontal_ = 0.0f;

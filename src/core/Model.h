@@ -178,11 +178,15 @@ struct PadState
     // Native layered states instead combine each embedded/factory source.
     bool customSampleLayered = false;
     std::uint8_t midiNote = 36;
+    // Internal sampler route is independent of the editable MIDI output map.
+    std::uint8_t samplerNote = 36;
     std::uint8_t rootNote = 60;
     float layerMix = 0.0f;
     float gain = 1.0f;
     float pan = 0.0f;
     float attackSeconds = 0.0f;
+    float decaySeconds = 1.0f;
+    float sustainLevel = 1.0f;
     float releaseSeconds = 0.03f;
     float attackNormalized = 0.0f;
     float damp = 0.0f;
@@ -226,6 +230,8 @@ struct MasterState
     float resonance = defaultFilterResonance;
     float delay = 0.0f; // Older own-format echo return.
     float distortionReturn = 1.0f;
+    float roomReturn = 1.0f; // Independent native return; old states keep folded sends.
+    float reverbReturn = 1.0f; // Independent native return; old states keep folded sends.
     float distortion = 0.0f;
     float reverb = 0.0f;
     float room = 0.0f;

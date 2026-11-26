@@ -33,6 +33,13 @@ struct MidiEvent
     int channel = 1;
 };
 
+struct ParameterEvent
+{
+    std::int64_t sample;
+    int index;
+    float value;
+};
+
 struct Options
 {
     juce::File bundle;
@@ -49,6 +56,7 @@ struct Options
     std::int64_t activeFrames = 0;
     std::int64_t preRollFrames = 0;
     std::int64_t startupWaitMs = 0;
+    std::int64_t parameterSettleMs = 0;
     std::int64_t postStopFrames = 0;
     std::int64_t restartFrames = 0;
     bool realtimePacing = false;
@@ -57,6 +65,7 @@ struct Options
     bool allOutputs = false;
     bool rawComponentState = false;
     std::vector<MidiEvent> midi;
+    std::vector<ParameterEvent> parameters;
 };
 
 [[noreturn]] void fail(const std::string& message)
@@ -101,6 +110,21 @@ MidiEvent parseMidi(const std::string& value)
     return event;
 }
 
+ParameterEvent parseParameter(const std::string& value)
+{
+    juce::StringArray fields;
+    fields.addTokens(value, ":", {});
+    if (fields.size() != 3)
+        fail("--parameter must be SAMPLE:INDEX:NORMALIZED_VALUE");
+    const auto sample = parseInt64(fields[0].toStdString(), "--parameter sample");
+    const auto index = parseInt64(fields[1].toStdString(), "--parameter index");
+    const auto normalized = parseDouble(fields[2].toStdString(), "--parameter value");
+    if (sample < 0 || index < 0 || index > std::numeric_limits<int>::max()
+        || normalized < 0.0 || normalized > 1.0)
+        fail("--parameter requires nonnegative sample/index and value in 0..1");
+    return { sample, static_cast<int>(index), static_cast<float>(normalized) };
+}
+
 Options parseOptions(int argc, char** argv)
 {
     Options options;
@@ -125,10 +149,12 @@ Options parseOptions(int argc, char** argv)
         else if (argument == "--tempo") options.tempo = parseDouble(next(index, "--tempo"), "--tempo");
         else if (argument == "--block-size") options.blockSize = static_cast<int>(parseInt64(next(index, "--block-size"), "--block-size"));
         else if (argument == "--active-frames") options.activeFrames = parseInt64(next(index, "--active-frames"), "--active-frames");
+        else if (argument == "--parameter-settle-ms") options.parameterSettleMs = parseInt64(next(index, "--parameter-settle-ms"), "--parameter-settle-ms");
         else if (argument == "--startup-wait-ms") options.startupWaitMs = parseInt64(next(index, "--startup-wait-ms"), "--startup-wait-ms");
         else if (argument == "--pre-roll-frames") options.preRollFrames = parseInt64(next(index, "--pre-roll-frames"), "--pre-roll-frames");
         else if (argument == "--post-stop-frames") options.postStopFrames = parseInt64(next(index, "--post-stop-frames"), "--post-stop-frames");
         else if (argument == "--restart-frames") options.restartFrames = parseInt64(next(index, "--restart-frames"), "--restart-frames");
+        else if (argument == "--parameter") options.parameters.push_back(parseParameter(next(index, "--parameter")));
         else if (argument == "--midi") options.midi.push_back(parseMidi(next(index, "--midi")));
         else if (argument == "--cc")
         {
@@ -146,7 +172,7 @@ Options parseOptions(int argc, char** argv)
             std::cout
                 << "Usage: actual_vst3_host --plugin BUNDLE --state PRESET_OR_BSLX --output WAV\\n"
                 << "       --expect-sha256 HEX --sample-rate HZ --block-size N --active-frames N\\n"
-                << "       [--midi SAMPLE:NOTE:VELOCITY[:CHANNEL]] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--all-outputs] [--realtime-pacing] [--startup-wait-ms N] [--pre-roll-frames N] [--post-stop-frames N] [--restart-frames N] [--restored-state-output NEW_BSLX] [--raw-component-state]\\n";
+                << "       [--parameter SAMPLE:INDEX:NORMALIZED_VALUE] [--midi SAMPLE:NOTE:VELOCITY[:CHANNEL]] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--all-outputs] [--realtime-pacing] [--startup-wait-ms N] [--parameter-settle-ms N] [--pre-roll-frames N] [--post-stop-frames N] [--restart-frames N] [--restored-state-output NEW_BSLX] [--raw-component-state]\\n";
             std::exit(0);
         }
         else fail("unknown option: " + argument);
@@ -160,6 +186,8 @@ Options parseOptions(int argc, char** argv)
     if (options.expectedSha256.length() != 64) fail("--expect-sha256 must be a 64-character digest");
     if (options.sampleRate < 8000.0 || options.sampleRate > 384000.0) fail("--sample-rate is outside 8000..384000");
     if (options.tempo <= 0.0 || options.tempo > 1000.0) fail("--tempo is outside (0,1000]");
+    if (options.parameterSettleMs < 0 || options.parameterSettleMs > 1000)
+        fail("--parameter-settle-ms is outside 0..1000");
     if (options.blockSize < 1 || options.blockSize > 65536) fail("--block-size is outside 1..65536");
     if (options.startupWaitMs < 0 || options.startupWaitMs > 10000)
         fail("--startup-wait-ms is outside 0..10000");
@@ -176,6 +204,12 @@ Options parseOptions(int argc, char** argv)
         fail("at least one deterministic --midi event or --play-sequencer is required");
     std::stable_sort(options.midi.begin(), options.midi.end(), [](const auto& left, const auto& right) {
         return left.sample < right.sample;
+    });
+    for (const auto& event : options.parameters)
+        if (event.sample >= options.activeFrames || event.sample % options.blockSize != 0)
+            fail("--parameter sample must be block-aligned and inside active frames");
+    std::stable_sort(options.parameters.begin(), options.parameters.end(), [](const auto& a, const auto& b) {
+        return a.sample < b.sample;
     });
     return options;
 }
@@ -407,6 +441,26 @@ int run(const Options& options)
     if (auto* global = expectedStateJson.getProperty("global", {}).getDynamicObject();
         global != nullptr && !global->hasProperty("midiChannel"))
         global->setProperty("midiChannel", 1);
+    if (auto* master = expectedStateJson.getProperty("master", {}).getDynamicObject();
+        master != nullptr && !master->hasProperty("roomReturn"))
+        master->setProperty("roomReturn", 1.0);
+    if (auto* master = expectedStateJson.getProperty("master", {}).getDynamicObject();
+        master != nullptr && !master->hasProperty("reverbReturn"))
+        master->setProperty("reverbReturn", 1.0);
+    if (auto* pads = expectedStateJson.getProperty("pads", {}).getArray())
+        for (auto& value : *pads)
+            if (auto* pad = value.getDynamicObject())
+            {
+                // Native v2 predates independent sampler routing and ADSR
+                // decay/sustain. Check their migration defaults explicitly;
+                // supplied values must still survive the strict comparison.
+                if (!pad->hasProperty("samplerNote"))
+                    pad->setProperty("samplerNote", pad->getProperty("midiNote"));
+                if (!pad->hasProperty("decaySeconds"))
+                    pad->setProperty("decaySeconds", 1.0);
+                if (!pad->hasProperty("sustainLevel"))
+                    pad->setProperty("sustainLevel", 1.0);
+            }
     const auto wrappedState = wrapVst3State(state);
     plugin->setStateInformation(wrappedState.getData(), static_cast<int>(wrappedState.getSize()));
     juce::MemoryBlock restored;
@@ -477,7 +531,7 @@ int run(const Options& options)
     }
     // Diagnostic wall-clock pacing only: preserve sample positions and plugin
     // processing mode while allowing background work between audio callbacks.
-    const auto pacingStart = std::chrono::steady_clock::now();
+    auto pacingStart = std::chrono::steady_clock::now();
     std::int64_t pacedFrames = 0;
     const auto pace = [&](int frames) {
         if (!options.realtimePacing) return;
@@ -511,10 +565,40 @@ int run(const Options& options)
     juce::AudioBuffer<float> rendered(renderChannels, static_cast<int>(totalFrames));
     rendered.clear();
     juce::Array<juce::var> outputMidi;
+    juce::Array<juce::var> appliedParameters;
+    for (const auto& event : options.parameters)
+        if (event.index >= plugin->getParameters().size())
+            fail("--parameter index outside plugin parameter list");
+    std::size_t parameterIndex = 0;
     std::size_t midiIndex = 0;
     std::int64_t cursor = 0;
     while (cursor < totalFrames)
     {
+        const auto previousParameterIndex = parameterIndex;
+        while (parameterIndex < options.parameters.size()
+               && options.parameters[parameterIndex].sample == cursor)
+        {
+            const auto& event = options.parameters[parameterIndex++];
+            auto* parameter = plugin->getParameters()[event.index];
+            parameter->setValueNotifyingHost(event.value);
+            juce::DynamicObject::Ptr encoded = new juce::DynamicObject();
+            encoded->setProperty("sample", static_cast<juce::int64>(cursor));
+            encoded->setProperty("index", event.index);
+            encoded->setProperty("name", parameter->getName(256));
+            encoded->setProperty("requested", event.value);
+            encoded->setProperty("readback", parameter->getValue());
+            encoded->setProperty("injected_on_message_thread",
+                juce::MessageManager::getInstance()->isThisTheMessageThread());
+            appliedParameters.add(juce::var(encoded.get()));
+        }
+        // Diagnostic only: allow asynchronous controller/bridge delivery without
+        // advancing musical time. Exclude this pause from realtime catch-up.
+        if (parameterIndex != previousParameterIndex && options.parameterSettleMs > 0)
+        {
+            const auto pauseStart = std::chrono::steady_clock::now();
+            std::this_thread::sleep_for(std::chrono::milliseconds(options.parameterSettleMs));
+            pacingStart += std::chrono::steady_clock::now() - pauseStart;
+        }
         // Stop at the requested sample even when it falls inside a host block.
         const bool restarted = options.restartFrames > 0 && cursor >= restartStart;
         const bool playing = cursor < options.activeFrames || (restarted && cursor < restartEnd);
@@ -605,6 +689,7 @@ int run(const Options& options)
     reportObject->setProperty("tempo", options.tempo);
     reportObject->setProperty("output_midi_events", outputMidi);
     reportObject->setProperty("realtime_pacing", options.realtimePacing);
+    reportObject->setProperty("parameter_settle_ms", static_cast<juce::int64>(options.parameterSettleMs));
     reportObject->setProperty("startup_wait_ms", static_cast<juce::int64>(options.startupWaitMs));
     reportObject->setProperty("pre_roll_frames", static_cast<juce::int64>(options.preRollFrames));
     reportObject->setProperty("requested_post_stop_frames", static_cast<juce::int64>(options.postStopFrames));
@@ -615,6 +700,7 @@ int run(const Options& options)
     reportObject->setProperty("declared_tail_seconds", tailSeconds);
     reportObject->setProperty("tail_frames", static_cast<juce::int64>(tailFrames));
     reportObject->setProperty("total_frames", static_cast<juce::int64>(totalFrames));
+    reportObject->setProperty("parameter_events", appliedParameters);
     reportObject->setProperty("midi_event_count", static_cast<int>(options.midi.size()));
     juce::Array<juce::var> midiEvents;
     for (const auto& event : options.midi)

@@ -6,6 +6,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 # Never inject keys or start a test window manager on the user's desktop.
@@ -28,8 +29,21 @@ with subprocess.Popen(["openbox"], stdout=subprocess.DEVNULL,
         window_manager.wait(timeout=5)
         # Full audio/editor fixtures can approach 90 seconds under host load.
         # Individual input and menu readiness deadlines remain bounded in C++.
-        result = subprocess.run(sys.argv[1:], timeout=180,
-                                env={**os.environ, "BSL_ISOLATED_GUI_TESTS": "1"})
+        # Geometry fixtures require default state, not an installed startup
+        # preset. Factory-loading tests create their own explicit XDG fixtures.
+        with tempfile.TemporaryDirectory(prefix="beat-scholar-editor-data-") as data_home:
+            # Exercise the built-in chooser on workstations with zenity/kdialog
+            # installed too. JUCE discovers them via `which`; scope this shim
+            # to the test process so real plugin file pickers stay native.
+            test_bin = Path(data_home) / "bin"
+            test_bin.mkdir()
+            which = test_bin / "which"
+            which.write_text('#!/bin/sh\ncase "$1" in zenity|kdialog) exit 1;; esac\nexec /usr/bin/which "$@"\n')
+            which.chmod(0o755)
+            result = subprocess.run(sys.argv[1:], timeout=180,
+                                    env={**os.environ, "BSL_ISOLATED_GUI_TESTS": "1",
+                                         "PATH": str(test_bin) + os.pathsep + os.environ.get("PATH", ""),
+                                         "XDG_DATA_HOME": data_home})
     finally:
         if window_manager.poll() is None:
             window_manager.terminate()

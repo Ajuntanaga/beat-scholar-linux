@@ -30,4 +30,4 @@ shows the iPad AUv3 version in Logic Pro. The context menu at 8:35 supplies a
 useful shared-workflow reference: Copy, Paste, Clear, Fill, Mirror, Shift Right,
 Shift Left and grouped subdivisions. Desktop keeps the manual's 45-slice limit;
 the video shows 42. Its touch-only toolbar and host chrome are platform-specific.
-The batch-55 audit records timestamped comparisons and validation separately.
+The timestamped comparisons and validation are recorded in [STATUS.md](STATUS.md).

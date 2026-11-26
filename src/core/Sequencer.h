@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <limits>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -21,6 +22,8 @@ struct TransportFrame
     double swingPercent = std::numeric_limits<double>::quiet_NaN();
     double quarterNotePosition = std::numeric_limits<double>::quiet_NaN();
     double patternPhaseQuarterNotes = std::numeric_limits<double>::quiet_NaN();
+    // Host automation overrides the immutable project snapshot for this block.
+    std::optional<SwingReference> swingReference;
 };
 
 struct MidiEvent

@@ -8,7 +8,7 @@
 
 namespace bsl {
 
-enum class HistoryParameters { none, masterGain, kit };
+enum class HistoryParameters { none, masterGain, kit, padGain, padPan, padPitch, padFine, padHighPass, padCutoff, padResonance, padCompression, padCrush, padDrive, padAuxGain, padRoom, padReverb, padAux3, masterCrush, masterCompression, masterCutoff, masterResonance, masterDistortionDrive, padLength, padAttack, padDecay, padSustain, padRelease, swingReference, padOneShot };
 
 class ProjectEditor
 {
@@ -38,7 +38,8 @@ public:
     [[nodiscard]] bool canUndo() const noexcept { return !undo_.empty(); }
     [[nodiscard]] bool canRedo() const noexcept { return !redo_.empty(); }
     [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
-    void checkpoint(HistoryParameters = HistoryParameters::none);
+    void checkpoint(HistoryParameters = HistoryParameters::none, std::size_t pad = 0);
+    [[nodiscard]] std::size_t restoredPad() const noexcept { return restoredPad_; }
     [[nodiscard]] HistoryParameters restoredParameters() const noexcept { return restoredParameters_; }
     bool undo();
     bool redo();
@@ -49,10 +50,11 @@ private:
     static BeatState emptyBeat(std::uint8_t padIndex);
 
     ProjectState state_;
-    struct HistoryEntry { ProjectState state; HistoryParameters parameters; };
+    struct HistoryEntry { ProjectState state; HistoryParameters parameters; std::size_t pad = 0; };
     std::vector<HistoryEntry> undo_;
     std::vector<HistoryEntry> redo_;
     HistoryParameters restoredParameters_ = HistoryParameters::none;
+    std::size_t restoredPad_ = 0;
     std::uint64_t revision_ = 0;
 };
 

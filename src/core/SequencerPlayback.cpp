@@ -180,9 +180,9 @@ std::vector<PatternPlaybackPlan> SequencerPlayback::prepareProject(const Project
     return plans;
 }
 
-PatternSilentSlicePlan SequencerPlayback::prepareSilentPattern(const PatternState& pattern)
+PatternVisualSlicePlan SequencerPlayback::prepareVisualPattern(const PatternState& pattern)
 {
-    PatternSilentSlicePlan steps;
+    PatternVisualSlicePlan steps;
     const bool hasSolo = std::any_of(pattern.lanes.begin(), pattern.lanes.end(),
         [](const LaneState& lane) { return lane.solo; });
     for (std::size_t laneIndex = 0; laneIndex < pattern.lanes.size(); ++laneIndex)
@@ -199,10 +199,10 @@ PatternSilentSlicePlan SequencerPlayback::prepareSilentPattern(const PatternStat
                 const auto& slices = lane.beats[beatIndex].slices;
                 for (std::size_t index = 0; index < slices.size(); ++index)
                 {
-                    if (slices[index].enabled) continue;
                     const double start = beatStart
                         + static_cast<double>(index) / static_cast<double>(slices.size()) * beatLength;
-                    steps.push_back({ start, laneIndex, beatIndex, index });
+                    steps.push_back({ start, start + beatLength / static_cast<double>(slices.size()),
+                                      laneIndex, beatIndex, index });
                 }
             }
         }
@@ -210,23 +210,23 @@ PatternSilentSlicePlan SequencerPlayback::prepareSilentPattern(const PatternStat
     return steps;
 }
 
-std::vector<PatternSilentSlicePlan> SequencerPlayback::prepareSilentProject(const ProjectState& project)
+std::vector<PatternVisualSlicePlan> SequencerPlayback::prepareVisualProject(const ProjectState& project)
 {
-    std::vector<PatternSilentSlicePlan> plans;
+    std::vector<PatternVisualSlicePlan> plans;
     plans.reserve(project.patterns.size());
-    for (const auto& pattern : project.patterns) plans.push_back(prepareSilentPattern(pattern));
+    for (const auto& pattern : project.patterns) plans.push_back(prepareVisualPattern(pattern));
     return plans;
 }
 
-std::size_t SequencerPlayback::renderSilentBatch(const ProjectState& project,
+std::size_t SequencerPlayback::renderVisualBatch(const ProjectState& project,
     const TransportFrame& frame, std::size_t patternIndex,
-    std::span<const SilentSliceStep> steps, std::span<SilentSliceEvent> destination,
-    SilentSliceCursor& cursor) noexcept
+    std::span<const VisualSliceStep> steps, std::span<VisualSliceEvent> destination,
+    VisualSliceCursor& cursor) noexcept
 {
     if (cursor.exhausted || destination.empty()) return 0;
     std::size_t count = 0, ordinal = 0, remaining = 0;
-    const auto emit = [&](int offset, const SilentSliceStep& step) {
-        SilentSliceEvent candidate { offset, ordinal++, step.laneIndex,
+    const auto emit = [&](int offset, std::int64_t endOffset, const VisualSliceStep& step) {
+        VisualSliceEvent candidate { offset, endOffset, ordinal++, step.laneIndex,
                                      step.beatIndex, step.sliceIndex };
         if (cursor.started && candidate <= cursor.after) return;
         ++remaining;
@@ -276,7 +276,7 @@ std::size_t SequencerPlayback::renderSilentBatch(const ProjectState& project,
         const double swing = std::isfinite(frame.swingPercent)
             ? frame.swingPercent : project.global.swingPercent;
         const auto warp = [&](double position) {
-            return Sequencer::applySwing(position, swing, project.global.swingReference);
+            return Sequencer::applySwing(position, swing, frame.swingReference.value_or(project.global.swingReference));
         };
         const bool hasSolo = std::any_of(pattern.lanes.begin(), pattern.lanes.end(),
             [](const LaneState& lane) { return lane.solo; });
@@ -290,8 +290,13 @@ std::size_t SequencerPlayback::renderSilentBatch(const ProjectState& project,
                 const auto& lane = pattern.lanes[step.laneIndex];
                 if (lane.muted || (hasSolo && !lane.solo)) continue;
                 const double start = cycleStart + warp(step.start);
-                if (start < 0 || start < first || last <= start) continue;
-                emit(offset(warp(step.start), cycleStart), step);
+                const double end = cycleStart + warp(step.end);
+                if (start < 0 || end <= first || last < start) continue;
+                // Publish the interval intersecting this callback, even on a
+                // mid-slice seek or after a suspended/reopened editor. Repeated
+                // intervals also refresh their endpoint on live tempo/swing edits.
+                const auto endOffset = static_cast<std::int64_t>(std::ceil((end - first) / increment));
+                emit(start < first ? 0 : offset(warp(step.start), cycleStart), endOffset, step);
             }
         }
     }
@@ -359,7 +364,7 @@ std::size_t SequencerPlayback::renderBatch(const ProjectState& project,
         const double duration = pattern.durationInQuarterNotes();
         const double swing = std::isfinite(frame.swingPercent) ? frame.swingPercent : project.global.swingPercent;
         const auto warp = [&](double position) {
-            return Sequencer::applySwing(position, swing, project.global.swingReference);
+            return Sequencer::applySwing(position, swing, frame.swingReference.value_or(project.global.swingReference));
         };
         const bool hasSolo = std::any_of(pattern.lanes.begin(), pattern.lanes.end(),
             [](const LaneState& lane) { return lane.solo; });

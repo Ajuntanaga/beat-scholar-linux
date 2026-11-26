@@ -109,6 +109,8 @@ PadPlaybackSettings makePadPlaybackSettings(const PadState& state) noexcept
     settings.outputTrim = 0.3f;
     settings.pan = state.pan;
     settings.attackSeconds = state.attackSeconds;
+    settings.decaySeconds = state.decaySeconds;
+    settings.sustainLevel = state.sustainLevel;
     settings.releaseSeconds = state.releaseSeconds;
     settings.attackNormalized = state.attackNormalized;
     settings.damp = state.damp;
@@ -146,6 +148,8 @@ MasterPlaybackSettings makeMasterPlaybackSettings(const MasterState& state, floa
     settings.resonance = state.resonance;
     settings.delay = state.delay;
     settings.distortionReturn = state.distortionReturn;
+    settings.roomReturn = state.roomReturn;
+    settings.reverbReturn = state.reverbReturn;
     settings.distortion = state.distortion;
     settings.reverb = state.reverb;
     settings.room = state.room;
@@ -245,6 +249,8 @@ void AudioEngine::prepare(double newSampleRate, std::size_t maximumBlockSize)
 void AudioEngine::reset()
 {
     padPeaks_.fill(0.0f);
+    padGlowEnergy_.fill(0.0f);
+    padGlowFrames_ = 0;
     hostNotesStarted_.fill(0);
     hostNotesReleased_.fill(0);
     voices_.fill({});
@@ -253,10 +259,14 @@ void AudioEngine::reset()
         ambience_->reset();
     padCompressors_.fill({});
     padGains_.fill({});
+    padPans_.fill({ 0.5f, 0.5f });
     padAuxGains_.fill({});
     padDistortionSends_.fill({});
+    padRoomSends_.fill({});
+    padReverbSends_.fill({});
     distortionReturn_ = {};
     ambienceReturn_ = {};
+    roomReturn_ = {};
     distortion_.reset();
     padDspResetPending_.fill(false);
     clearMasterState();
@@ -325,6 +335,10 @@ void AudioEngine::setPadSettings(std::size_t padIndex, PadPlaybackSettings setti
     settings.gain = std::clamp(settings.gain, 0.0f, 4.0f);
     settings.pan = std::clamp(settings.pan, -1.0f, 1.0f);
     settings.attackSeconds = std::clamp(settings.attackSeconds, 0.0f, 10.0f);
+    settings.decaySeconds = std::isfinite(settings.decaySeconds)
+        ? std::clamp(settings.decaySeconds, 0.0f, 10.0f) : 1.0f;
+    settings.sustainLevel = std::isfinite(settings.sustainLevel)
+        ? std::clamp(settings.sustainLevel, 0.0f, 1.0f) : 1.0f;
     settings.releaseSeconds = std::isfinite(settings.releaseSeconds)
         ? std::clamp(settings.releaseSeconds, 0.0f, 10.0f) : 0.03f;
     settings.attackNormalized = std::clamp(settings.attackNormalized, 0.0f, 1.0f);
@@ -355,6 +369,8 @@ void AudioEngine::setMasterSettings(MasterPlaybackSettings settings) noexcept
     settings.resonance = std::clamp(settings.resonance, 0.0f, 1.0f);
     settings.delay = std::clamp(settings.delay, 0.0f, 1.0f);
     settings.distortionReturn = std::clamp(settings.distortionReturn, 0.0f, 1.0f);
+    settings.roomReturn = std::clamp(settings.roomReturn, 0.0f, 1.0f);
+    settings.reverbReturn = std::clamp(settings.reverbReturn, 0.0f, 1.0f);
     settings.distortion = std::clamp(settings.distortion, 0.0f, 1.0f);
     settings.reverb = std::clamp(settings.reverb, 0.0f, 1.0f);
     settings.room = std::clamp(settings.room, 0.0f, 1.0f);
@@ -472,6 +488,9 @@ void AudioEngine::startVoice(std::uint8_t midiNote, float velocity, std::size_t 
     voice.crushFramesElapsed = crushFramesElapsed;
     voice.pad = pad;
     voice.noteOnOrder = ++nextVoiceOrder_;
+    voice.highPassCurrent = voice.highPassTarget = std::min(
+        std::max(10.0f, padHighPassCutoffHz(settings_[pad].highPass)),
+        static_cast<float>(sampleRate_ * 0.499));
     // A new native voice starts at the current Drive gain, even while bypassed.
     const float driveGain = 0.4f + 0.6f * (1.0f - padDriveAmount(settings_[pad].driveGainDb));
     voice.driveGainCurrent = driveGain;
@@ -481,6 +500,8 @@ void AudioEngine::startVoice(std::uint8_t midiNote, float velocity, std::size_t 
     const float normalizedVelocity = std::isfinite(velocity) ? std::clamp(velocity, 0.0f, 1.0f) : 0.0f;
     voice.velocity = normalizedVelocity > 0.0f ? 0.05f + 0.95f * normalizedVelocity : 0.0f;
     voice.gateFrames = gateFrames;
+    // Original live One Shot captures retain the Length mode of existing voices.
+    voice.oneShotEnvelope = settings_[pad].oneShot;
     voice.sequencerOwned = sequencerOwned;
     voice.sequencerLane = sequencerLane;
     voice.hostNoteId = hostNoteId;
@@ -539,7 +560,17 @@ void AudioEngine::stopMidiChannel(std::uint8_t midiChannel, bool allSoundOff) no
     // Shared effects cannot be separated by MIDI channel. Clear residual tails
     // when the last voice is silenced, without resetting other channels' voices.
     if (allSoundOff && !anyActive)
+    {
+        // Earlier frames remain audible in this block after the panic. Keep
+        // their UI energy and the whole-block denominator across the DSP reset.
+        const auto glowEnergy = padGlowEnergy_;
+        const auto glowFrames = padGlowFrames_;
+        const auto peaks = padPeaks_;
         reset();
+        padGlowEnergy_ = glowEnergy;
+        padGlowFrames_ = glowFrames;
+        padPeaks_ = peaks;
+    }
 }
 
 void AudioEngine::process(AudioBlock& output, std::size_t sampleCount) noexcept
@@ -556,9 +587,17 @@ void AudioEngine::beginBlock(AudioBlock& output, std::size_t sampleCount) noexce
     padPeaks_.fill(0.0f);
     const auto available = output.empty() ? std::size_t { 0 }
                                           : std::min(sampleCount, output.front().size());
+    padGlowEnergy_.fill(0.0f);
+    padGlowFrames_ = available;
     for (auto& channel : output)
         std::fill_n(channel.begin(), std::min(available, channel.size()), 0.0f);
 
+}
+
+float AudioEngine::padGlowRms(std::size_t pad) const noexcept
+{
+    return padGlowFrames_ > 0
+        ? std::sqrt(padGlowEnergy_[pad] / static_cast<float>(padGlowFrames_)) : 0.0f;
 }
 
 void AudioEngine::process(AudioBlock& output, std::size_t sampleCount,
@@ -629,7 +668,9 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
     });
 
     masterGain_.setTarget(master_.gain, static_cast<std::size_t>(sampleRate_ * 0.1));
-    ambienceReturn_.setTarget(1.9952623844146729f, static_cast<std::size_t>(sampleRate_ * 0.1));
+    ambienceReturn_.setTarget(1.9952623844146729f * auxiliarySendGain(master_.reverbReturn * master_.reverbReturn), static_cast<std::size_t>(sampleRate_ * 0.1));
+    roomReturn_.setTarget(1.9952623844146729f * auxiliarySendGain(std::pow(master_.roomReturn, 1.5f)),
+                          static_cast<std::size_t>(sampleRate_ * 0.1));
     // Smooth the final return gain: scaling a unity ramp afterward changes
     // startup rounding enough to cross downstream bitcrusher thresholds.
     distortionReturn_.setTarget(distortionReturnGain(master_.distortionReturn),
@@ -649,11 +690,17 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
         distortionSend.setTarget(settings.independentDistortion
                                      ? auxiliarySendGain(settings.distortionMix) : 0.0f,
                                  static_cast<std::size_t>(sampleRate_ * 0.1));
+        // Original changing-send captures require a 100 ms gain ramp;
+        // fixed sends retain the measured -12 dB per halving taper.
+        auto& roomSend = padRoomSends_[pad];
+        auto& reverbSend = padReverbSends_[pad];
+        roomSend.setTarget(auxiliarySendGain(settings.room), static_cast<std::size_t>(sampleRate_ * 0.1));
+        reverbSend.setTarget(auxiliarySendGain(settings.reverb), static_cast<std::size_t>(sampleRate_ * 0.1));
         const std::size_t target = routingMode_ == RoutingMode::stereo ? 0 : 2 + pad * 2;
         if (target + 1 >= output.size())
         {
             for (std::size_t frame = start; frame < end; ++frame)
-            { auxGain.next(); distortionSend.next(); }
+            { auxGain.next(); distortionSend.next(); roomSend.next(); reverbSend.next(); }
             continue;
         }
 
@@ -675,8 +722,11 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
         const float layerWeights[] {
             layerWeight(std::sin(layerAngle)), layerWeight(std::cos(layerAngle))
         };
-        const float leftPan = std::cos((settings.pan + 1.0f) * 0.5f * halfPi);
-        const float rightPan = std::sin((settings.pan + 1.0f) * 0.5f * halfPi);
+        // Original captures snap the initial pan, then ramp normalized pan
+        // over 50 ms before converting it to equal-power channel gains.
+        auto& pan = padPans_[pad];
+        const float normalizedPan = (settings.pan + 1.0f) * 0.5f;
+        pan.setTarget(normalizedPan, static_cast<std::size_t>(sampleRate_ * 0.05));
 
         const double semitones = static_cast<double>(settings.pitchSemitones)
                                  + static_cast<double>(settings.fineCents) / 100.0;
@@ -730,12 +780,28 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
         const float highPassB1 = -2.0f * highPassB0;
         const float highPassA1 = 2.0f * (highPassT * highPassT - 1.0f) * highPassB0;
         const float highPassA2 = (1.0f - 2.0f * highPassT + highPassT * highPassT) * highPassB0;
-        const auto highPass = [=](float input, auto& state) {
-            const float result = input * highPassB0 + state[0];
-            state[0] = (input * highPassB1 - highPassA1 * result) + state[1];
-            state[1] = input * highPassB0 - highPassA2 * result;
+        const auto highPass = [](float input, auto& state, float b0, float b1, float a1, float a2) {
+            const float result = input * b0 + state[0];
+            state[0] = (input * b1 - a1 * result) + state[1];
+            state[1] = input * b0 - a2 * result;
             return result;
         };
+        // Original coefficient traces show a linear 100 ms frequency ramp
+        // on active voices; note start snaps the frequency but retains history.
+        for (auto* current : padVoices)
+        {
+            auto& voice = *current;
+            if (voice.active && voice.highPassTarget != highPassFrequency)
+            {
+                voice.highPassTarget = highPassFrequency;
+                voice.highPassRampRemaining = static_cast<std::size_t>(sampleRate_ * 0.1);
+                if (voice.highPassRampRemaining == 0)
+                    voice.highPassCurrent = highPassFrequency;
+                else
+                    voice.highPassStep = (highPassFrequency - voice.highPassCurrent)
+                        / static_cast<float>(voice.highPassRampRemaining);
+            }
+        }
         // Native Drive uses the gain parameter's normalized position to
         // shape the insert. It is independent of the Aux3 distortion send.
         const bool nativeDriveActive = settings.nativeDriveInsert && settings.driveEnabled
@@ -779,14 +845,14 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
             // Native c7f800/c7a000 snaps only on idle-to-active transitions.
             compressor.snap(settings.compression);
             padGain = { settings.gain, settings.gain };
+            pan = { normalizedPan, normalizedPan };
             // Native c921ac snaps send smoothers on this transition too;
             // c929cb still ramps parameter changes while the pad is active.
             distortionSend = { distortionSend.target, distortionSend.target };
+            roomSend = { roomSend.target, roomSend.target };
+            reverbSend = { reverbSend.target, reverbSend.target };
             padDspResetPending_[pad] = false;
         }
-        // Native pre-effect captures: each halving of either send is -12 dB.
-        const float roomSendGain = auxiliarySendGain(settings.room);
-        const float plateSendGain = auxiliarySendGain(settings.reverb);
         const auto crusher = crushParameters(settings.crush);
         std::array<bool, voiceCount> finishedSamples {};
         for (std::size_t frame = start; frame < end; ++frame)
@@ -812,42 +878,75 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                     float envelope = 1.0f;
                     float releaseInputGain = 1.0f;
                     // Native d0668c accumulates float before rendering each sample.
+                    if (voice.attackStep < 0.0f)
+                    {
+                        voice.attackStep = attackStep;
+                        voice.sustainLevel = settings.sustainLevel;
+                        // The original captures Release with the voice, before
+                        // note-off; automation only changes subsequent voices.
+                        voice.releaseDurationFrames = settings.releaseSeconds * sampleRate_;
+                        // Native d06420 subtracts in float, divides in double,
+                        // then stores a float decrement for the voice.
+                        voice.decayStep = settings.decaySeconds > 0.0f
+                            ? static_cast<float>(static_cast<double>(1.0f - voice.sustainLevel)
+                                / (static_cast<double>(settings.decaySeconds) * sampleRate_))
+                            : 1.0f;
+                        voice.attackComplete = attackSeconds <= 0.0f;
+                        if (voice.attackComplete)
+                            voice.attackLevel = 1.0f;
+                    }
                     if (!voice.releasing)
-                        voice.attackLevel = std::min(1.0f, voice.attackLevel + attackStep);
+                    {
+                        if (!voice.attackComplete)
+                        {
+                            voice.attackLevel = std::min(1.0f, voice.attackLevel + voice.attackStep);
+                            voice.attackComplete = voice.attackLevel >= 1.0f;
+                        }
+                        else
+                            voice.attackLevel = std::max(voice.sustainLevel,
+                                voice.attackLevel - voice.decayStep);
+                    }
                     envelope = voice.attackLevel;
                     if (voice.releasing)
                     {
                         if (voice.releaseFramesElapsed == 0)
                         {
-                            voice.releaseStartLevel = attackSeconds > 0.0f ? voice.attackLevel : 1.0f;
+                            voice.releaseStartLevel = voice.attackLevel;
+                            voice.releaseOutputRemaining = voice.releaseStartLevel;
+                            voice.releaseOutputStep = voice.releaseDurationFrames > 0.0
+                                ? static_cast<float>(static_cast<double>(voice.releaseStartLevel)
+                                    / voice.releaseDurationFrames) : voice.releaseStartLevel;
                             // Native layer note-off (c93d98) uses two float
                             // divisions; combining them changes the 44.1 kHz tail.
                             voice.releaseInputStep = (voice.releaseInputLevel
                                 / static_cast<float>(sampleRate_)) / 0.1f;
                         }
                         ++voice.releaseFramesElapsed;
-                        const double releaseFrames = settings.releaseSeconds * sampleRate_;
                         // The native output release accumulates float decrements.
                         // A closed-form ramp diverges during release and the aux
                         // distortion amplifies that otherwise small difference.
-                        voice.releaseOutputRemaining = releaseFrames > 0.0
-                            ? std::max(0.0f, voice.releaseOutputRemaining
-                                - static_cast<float>(1.0 / releaseFrames)) : 0.0f;
+                        voice.releaseOutputRemaining = std::max(0.0f,
+                            voice.releaseOutputRemaining - voice.releaseOutputStep);
                         // The native sampler has its own 100 ms float release
                         // before the inserts. It keeps advancing after the pad's
                         // output release reaches silence, preserving filter history.
                         voice.releaseInputLevel = std::max(0.0f,
                             voice.releaseInputLevel - voice.releaseInputStep);
                         releaseInputGain = voice.releaseInputLevel;
-                        envelope = voice.releaseStartLevel * voice.releaseOutputRemaining;
+                        envelope = voice.releaseOutputRemaining;
                     }
                     // Native updates a float accumulator before rendering each
                     // frame; a closed-form fade loses its rate-dependent rounding.
-                    if (settings.lengthEnvelopeEnabled && settings.oneShot)
+                    // Native initializes Length with the voice's envelope at note-on
+                    // (c93770-c93807); automation applies to subsequent voices.
+                    if (voice.lengthEnvelopeStep < 0.0f)
+                        voice.lengthEnvelopeStep = lengthFrames > 0.0
+                            ? static_cast<float>(1.0 / lengthFrames) : 1.0f;
+                    if (settings.lengthEnvelopeEnabled && voice.oneShotEnvelope)
                         voice.lengthEnvelope = std::max(0.0f, voice.lengthEnvelope
-                            - (lengthFrames > 0.0 ? static_cast<float>(1.0 / lengthFrames) : 1.0f));
+                            - voice.lengthEnvelopeStep);
                     // Gated voices sustain; Length belongs to the One Shot envelope.
-                    const float lengthEnvelope = settings.lengthEnvelopeEnabled && settings.oneShot
+                    const float lengthEnvelope = settings.lengthEnvelopeEnabled && voice.oneShotEnvelope
                         ? voice.lengthEnvelope : 1.0f;
                     const float inputEnvelope = lengthEnvelope * releaseInputGain;
                     float left = 0.0f;
@@ -908,8 +1007,22 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                         finishedSamples[static_cast<std::size_t>(&voice - voices_.data())] = true;
                     if (settings.highPassEnabled)
                     {
-                        left = highPass(left, voice.highPassLeft);
-                        right = highPass(right, voice.highPassRight);
+                        float b0 = highPassB0, b1 = highPassB1;
+                        float a1 = highPassA1, a2 = highPassA2;
+                        if (voice.highPassRampRemaining > 0)
+                        {
+                            --voice.highPassRampRemaining;
+                            voice.highPassCurrent = voice.highPassRampRemaining == 0
+                                ? voice.highPassTarget : voice.highPassCurrent + voice.highPassStep;
+                            const float t = std::tan(3.14159265358979323846f * voice.highPassCurrent
+                                                     / static_cast<float>(sampleRate_));
+                            b0 = 1.0f / (1.0f + 2.0f * t + t * t);
+                            b1 = -2.0f * b0;
+                            a1 = 2.0f * (t * t - 1.0f) * b0;
+                            a2 = (1.0f - 2.0f * t + t * t) * b0;
+                        }
+                        left = highPass(left, voice.highPassLeft, b0, b1, a1, a2);
+                        right = highPass(right, voice.highPassRight, b0, b1, a1, a2);
                     }
                     if (nativeDriveActive)
                     {
@@ -967,8 +1080,12 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
                     ++voice.elapsedFrames;
             }
 
-            dryLeft *= leftPan;
-            dryRight *= rightPan;
+            // Original UI RMS is pre gain/compression. Its position relative
+            // to pan is not yet established; retain a pre-pan tap here.
+            padGlowEnergy_[pad] += dryLeft * dryLeft;
+            const float panAngle = pan.next() * halfPi;
+            dryLeft *= std::cos(panAngle);
+            dryRight *= std::sin(panAngle);
 
             // Pad volume follows the compressor; its detector sees the fixed boost.
             // All sends receive the resulting post-volume, post-compressor signal.
@@ -981,6 +1098,8 @@ void AudioEngine::renderPreparedRange(AudioBlock& output, std::size_t start, std
 
             const float parallelGain = auxGain.next();
             const float distortionGain = distortionSend.next();
+            const float roomSendGain = roomSend.next();
+            const float plateSendGain = reverbSend.next();
             if (audible)
             {
                 // Sum all post-pad sends before the shared nonlinear processor.
@@ -1043,13 +1162,14 @@ void AudioEngine::renderEffects(AudioBlock& output, std::size_t start, std::size
         ambience_->process(ambienceSends_[0].data(), ambienceSends_[1].data(),
                            ambienceSends_[2].data(), ambienceSends_[3].data(), end - start);
     // Room/Plate have +3/+6 dB effect gains followed by a separate +6 dB
-    // shared return, ramping from zero over 100 ms after reset. Advance it
+    // output return each, ramping from zero over 100 ms after reset. Advance both
     // during silence and AUX bypass as well, independently of master processing.
     constexpr float roomEffectGain = 1.4125375747680664f;
     constexpr float plateEffectGain = 1.9952623844146729f;
     for (std::size_t frame = start; frame < end; ++frame)
     {
         const float returnGain = ambienceReturn_.next();
+        const float roomGain = roomReturn_.next();
         const float distortionGain = distortionReturn_.next();
         const auto offset = frame - start;
         if (auxEnabled_)
@@ -1058,8 +1178,8 @@ void AudioEngine::renderEffects(AudioBlock& output, std::size_t start, std::size
             // Grouping the sums changes rounding before master quantization.
             if (ambience_ != nullptr)
             {
-                output[0][frame] += (ambienceSends_[0][offset] * roomEffectGain) * returnGain;
-                output[1][frame] += (ambienceSends_[1][offset] * roomEffectGain) * returnGain;
+                output[0][frame] += (ambienceSends_[0][offset] * roomEffectGain) * roomGain;
+                output[1][frame] += (ambienceSends_[1][offset] * roomEffectGain) * roomGain;
                 output[0][frame] += (ambienceSends_[2][offset] * plateEffectGain) * returnGain;
                 output[1][frame] += (ambienceSends_[3][offset] * plateEffectGain) * returnGain;
             }

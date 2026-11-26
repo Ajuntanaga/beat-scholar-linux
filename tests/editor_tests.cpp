@@ -15,6 +15,10 @@
 // Observe publication and provide deterministic convolution fixtures without factory IRs.
 struct BeatScholarLinuxProcessorTestAccess
 {
+    static void setPadGlowRms(BeatScholarLinuxProcessor& processor, std::size_t pad, float rms)
+    {
+        processor.padGlowRms_[pad].store(rms, std::memory_order_relaxed);
+    }
     static bool currentProjectIsPublished(BeatScholarLinuxProcessor& processor)
     {
         const std::lock_guard lock(processor.statePublishMutex_);
@@ -49,7 +53,61 @@ struct BeatScholarLinuxProcessorTestAccess
 
 struct BeatScholarLinuxEditorTestAccess
 {
-    static void tick(BeatScholarLinuxEditor& editor) { editor.timerCallback(); }
+    static std::vector<juce::Component*> randomizerBody(BeatScholarLinuxEditor& editor, int module)
+    {
+        if (module == 0) return { &editor.randomClearPads_, &editor.randomAllPads_ };
+        if (module == 2) return { &editor.soundControls_[0], &editor.soundControls_[1], &editor.randomFillEmpty_ };
+        if (module == 3) return { &editor.soundControls_[2], &editor.soundControls_[3] };
+        std::vector<juce::Component*> controls { &editor.randomClearSlices_, &editor.randomAllSlices_,
+                                               &editor.randomSlicePrevious_, &editor.randomSliceNext_ };
+        for (auto& button : editor.randomSliceButtons_) controls.push_back(&button);
+        return controls;
+    }
+
+    static void clickSampleArrow(BeatScholarLinuxEditor& editor, int direction)
+    {
+        auto& button = editor.layerOne_;
+        const juce::Point<float> point(direction < 0 ? 2.0f : button.getWidth() - 2.0f,
+                                      button.getHeight() * 0.5f);
+        const auto now = juce::Time::getCurrentTime();
+        const auto event = [&](juce::ModifierKeys modifiers) {
+            return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(),
+                point, modifiers, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &button, &button,
+                now, point, now, 1, false);
+        };
+        button.mouseDown(event(juce::ModifierKeys::leftButtonModifier));
+        button.mouseUp(event({}));
+    }
+    static bool dragSampleArrowRemainsUnpressed(BeatScholarLinuxEditor& editor, int direction)
+    {
+        auto& button = editor.layerOne_;
+        const juce::Point<float> start(direction < 0 ? 2.0f : button.getWidth() - 2.0f,
+                                      button.getHeight() * 0.5f);
+        const auto end = button.getLocalBounds().toFloat().getCentre();
+        const auto now = juce::Time::getCurrentTime();
+        const auto event = [&](juce::Point<float> point, juce::ModifierKeys modifiers) {
+            return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(),
+                point, modifiers, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &button, &button,
+                now, start, now, 1, point != start);
+        };
+        // JUCE focusGained may mark the button down before mouseDown arrives.
+        button.setState(juce::Button::buttonDown);
+        button.mouseDown(event(start, juce::ModifierKeys::leftButtonModifier));
+        const bool downCleared = !button.isDown();
+        button.mouseDrag(event(end, juce::ModifierKeys::leftButtonModifier));
+        const bool dragUnpressed = !button.isDown();
+        button.mouseUp(event(end, {}));
+        return downCleared && dragUnpressed && !button.isDown();
+    }
+    static void tick(BeatScholarLinuxEditor& editor) { editor.timerCallback(0); }
+    static void tickGlow(BeatScholarLinuxEditor& editor) { editor.timerCallback(1); }
+    static float padGlow(const BeatScholarLinuxEditor& editor, std::size_t pad) { return editor.padFlashes_[pad]; }
+    static int glowInterval(const BeatScholarLinuxEditor& editor) { return editor.getTimerInterval(1); }
+    static bool sliceLit(const BeatScholarLinuxEditor& editor, std::size_t lane, std::size_t beat, std::size_t slice)
+    {
+        return editor.sliceFlashes_.contains({ lane, beat, slice });
+    }
+    static int displayInterval(const BeatScholarLinuxEditor& editor) { return editor.getTimerInterval(0); }
     static void dragMapNote(BeatScholarLinuxEditor& editor, int distance)
     {
         auto& label = editor.midiMapLabels_[0];
@@ -74,6 +132,7 @@ struct BeatScholarLinuxEditorTestAccess
 
 namespace {
 int failures = 0;
+std::unique_ptr<BeatScholarLinuxProcessor> makeProcessorForWrapper(juce::AudioProcessor::WrapperType wrapper);
 void check(bool condition, const juce::String& message)
 {
     if (!condition) { ++failures; std::cerr << "FAIL: " << message << '\n'; }
@@ -113,8 +172,8 @@ void testSectors(const juce::File& output)
     state.patterns.front().lanes = { bsl::LaneState::make(4) };
     state.ui.selectedPad = 15;
     auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
-    const auto centre = juce::Point<float>(67.0f + 1067.0f / 8.0f, 306.0f);
-    constexpr float radius = (1067.0f / 4.0f) * 0.36f;
+    const auto centre = juce::Point<float>(67.0f + 1067.0f / 8.0f, 313.0f);
+    constexpr float radius = (1067.0f / 4.0f) * 0.4f;
     const std::array colours { 0xffbe3063U, 0xff495dcbU, 0xff30be71U, 0xffe11430U,
         0xffc3a03fU, 0xffb96643U, 0xff5a3aa6U, 0xff7ca83dU, 0xff803232U };
     for (std::size_t count = 1; count <= bsl::maximumSubdivision; ++count)
@@ -174,8 +233,8 @@ void testPartialSliceOutlines(const juce::File& output)
     {
         const float scale = float(width) / 1280.0f;
         editor->setSize(width, width * 9 / 16);
-        const auto centre = juce::Point<float>(67.0f + 1067.0f / 8.0f, 306.0f) * scale;
-        const float radius = (1067.0f / 4.0f) * 0.36f * scale;
+        const auto centre = juce::Point<float>(67.0f + 1067.0f / 8.0f, 313.0f) * scale;
+        const float radius = (1067.0f / 4.0f) * 0.4f * scale;
         const auto pointAt = [&](float angle, float distance)
         {
             return centre + juce::Point<float>(-std::sin(angle), std::cos(angle))
@@ -339,6 +398,10 @@ void testSoundControlEditsPreserveOtherValues()
     pad.fineCents = 17.23f;
     pad.highPass = 0.987654f;
     pad.cutoff = 0.753219f;
+    // Restore through the host entry point so automated parameters and the
+    // imported project start in sync, as they do for a real saved preset.
+    const auto encoded = bsl::statecodec::encode(processor->projectState());
+    processor->setStateInformation(encoded.getData(), static_cast<int>(encoded.getSize()));
     const auto before = pad;
     auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
     auto* level = dynamic_cast<juce::Slider*>(editor->findChildWithID("sound.5"));
@@ -406,7 +469,8 @@ std::vector<std::uint8_t> constantPcm16Wav(int sampleRate, int frames)
 }
 
 std::vector<float> renderSequencedGateCase(int sampleRate, int blockSize, bool oneShot,
-                                           bool useHostClock = false, std::vector<int>* releases = nullptr)
+                                           bool useHostClock = false, std::vector<int>* releases = nullptr,
+                                           bool automateOneShot = false)
 {
     // A 4/4 pattern has just one enabled one-slice beat at time zero.  Its
     // native gate is 98% of one beat; the pattern cannot
@@ -433,7 +497,7 @@ std::vector<float> renderSequencedGateCase(int sampleRate, int blockSize, bool o
     pad.customSamples[0].name = "sequenced-gate.wav";
     pad.customSamples[0].sha256 = juce::SHA256(wavBytes).toHexString().toStdString();
     pad.customSamples[0].base64 = juce::Base64::toBase64(wavBytes.getData(), wavBytes.getSize()).toStdString();
-    pad.oneShot = oneShot;
+    pad.oneShot = automateOneShot ? !oneShot : oneShot;
     pad.releaseSeconds = 0.0f; // Isolate the gate boundary from the separately tested release envelope.
     pad.hpfBypass = true; // Keep this DC fixture audible while isolating the note gate.
     const auto state = bsl::statecodec::encode(project);
@@ -450,6 +514,8 @@ std::vector<float> renderSequencedGateCase(int sampleRate, int blockSize, bool o
     processor.setRateAndBufferSizeDetails(sampleRate, blockSize);
     processor.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
     processor.prepareToPlay(sampleRate, blockSize);
+    if (automateOneShot)
+        processor.parameters().getParameter("pad1OneShot")->setValueNotifyingHost(oneShot ? 1.0f : 0.0f);
     if (useHostClock)
         processor.setPlayHead(&clock);
     else
@@ -1013,10 +1079,105 @@ private:
 };
 
 
+// Manual p14: rename through the pattern's actual context menu and dialog.
+class PatternRenameTests : private juce::Timer
+{
+public:
+    PatternRenameTests()
+    {
+        processor_.projectState().ui.patternMode = true;
+        editor_ = std::make_unique<BeatScholarLinuxEditor>(processor_);
+        editor_->setSize(1280, 720);
+        window_.setContentNonOwned(editor_.get(), true);
+    }
+    ~PatternRenameTests() override { window_.clearContentComponent(); }
+    void start(std::function<void()> done)
+    {
+        done_ = std::move(done);
+        window_.setVisible(true);
+        window_.toFront(true);
+        startTimer(75);
+    }
+private:
+    static juce::AccessibilityHandler* item(juce::Component& c)
+    {
+        if (auto* h = c.getAccessibilityHandler(); h && h->getTitle() == "Rename") return h;
+        for (auto* child : c.getChildren()) if (auto* h = item(*child)) return h;
+        return nullptr;
+    }
+    void finish()
+    {
+        juce::PopupMenu::dismissAllActiveMenus();
+        stopTimer();
+        window_.setVisible(false);
+        done_();
+    }
+    void timerCallback() override
+    {
+        if (phase_ == 0)
+        {
+            const juce::Point<float> point{1205.0f, 146.0f};
+            juce::Desktop::setMousePosition(editor_->localPointToGlobal(point.toInt()));
+            editor_->mouseDown(visualEvent(*editor_, point, juce::ModifierKeys::rightButtonModifier));
+            before_ = bsl::statecodec::encode(processor_.projectState());
+            revision_ = processor_.projectEditor().revision();
+            phase_ = 1;
+        }
+        else if (phase_ == 1)
+        {
+            auto* menu = juce::Component::getCurrentlyModalComponent();
+            auto* rename = menu ? item(*menu) : nullptr;
+            const bool invoked = rename && rename->getActions().invoke(juce::AccessibilityActionType::press);
+            check(invoked, "pattern Rename context-menu action opens");
+            if (!invoked) { finish(); return; }
+            deadline_ = juce::Time::getMillisecondCounterHiRes() + 2000;
+            phase_ = 2;
+        }
+        else if (phase_ == 2)
+        {
+            auto* dialog = dynamic_cast<juce::AlertWindow*>(juce::Component::getCurrentlyModalComponent());
+            if (!dialog && juce::Time::getMillisecondCounterHiRes() < deadline_) return;
+            check(dialog != nullptr, "pattern Rename creates an editable dialog");
+            if (!dialog) { finish(); return; }
+            check(dialog->getTextEditorContents("name") == juce::String(processor_.projectState().patterns[0].name),
+                  "rename dialog starts with the current pattern name");
+            dialog->getTextEditor("name")->setText(case_ == 1 ? "   " : "  Verse 2  ");
+            dialog->exitModalState(case_ == 2 ? 0 : 1);
+            phase_ = 3;
+        }
+        else
+        {
+            const bool cancelled = case_ == 2;
+            check(processor_.projectEditor().revision() == revision_ + (cancelled ? 0 : 1),
+                  "rename acceptance creates one edit and cancellation creates none");
+            if (!cancelled)
+            {
+                check(processor_.projectState().patterns[0].name == (case_ == 1 ? "Pattern" : "Verse 2"),
+                      "rename trims surrounding whitespace and handles an empty name");
+                check(processor_.projectEditor().undo(), "pattern rename can be undone");
+            }
+            check(bsl::statecodec::encode(processor_.projectState()) == before_,
+                  "rename undo or cancel preserves the complete prior project");
+            if (++case_ == 3) { finish(); return; }
+            phase_ = 0;
+        }
+    }
+    BeatScholarLinuxProcessor processor_;
+    std::unique_ptr<BeatScholarLinuxEditor> editor_;
+    juce::DocumentWindow window_{"Pattern rename", juce::Colours::black, juce::DocumentWindow::closeButton};
+    std::function<void()> done_;
+    juce::MemoryBlock before_;
+    std::uint64_t revision_ = 0;
+    double deadline_ = 0;
+    int phase_ = 0, case_ = 0;
+};
+
 void testReferenceLaneSpacing(const juce::File& output)
 {
-    // Original 1.6.2, 960x540 client: row centres are approximately
-    // 122.6, 193.9, 265.1 and 336.4; separators have a 71.25px pitch.
+    // Original 1.6.2: four rows have 95 design-pixel pitch, a 5px top
+    // gutter and centres at client y163,258,353,448 (1280px capture).
+    // Separator colours were sampled at client x60 in the 960px capture.
+    const std::array<juce::uint32, 3> separatorColours { 0xff201d50, 0xff221f53, 0xff221f53 };
     for (const int width : { 960, 1280, 1920 })
     {
         auto processor = std::make_unique<BeatScholarLinuxProcessor>();
@@ -1030,14 +1191,14 @@ void testReferenceLaneSpacing(const juce::File& output)
         const auto snapshot = editor->createComponentSnapshot(editor->getLocalBounds());
         for (int row = 1; row < 4; ++row)
             check(similar(snapshot.getPixelAt(juce::roundToInt(80.0f * scale),
-                                             juce::roundToInt((116.0f + row * 95.0f) * scale)),
-                          juce::Colour(0xff272761)),
-                  "lane separators match reference client spacing at every editor size");
+                                             juce::roundToInt((115.5f + row * 95.0f) * scale)),
+                          juce::Colour(separatorColours[static_cast<std::size_t>(row - 1)])),
+                  "lane separators retain reference gradient colors across editor sizes");
         for (int row = 0; row < 4; ++row)
         {
             const juce::Point<float> point {
                 (67.0f + 1067.0f / 8.0f) * scale,
-                (116.0f + (static_cast<float>(row) + 0.5f) * 95.0f) * scale };
+                (113.0f + (static_cast<float>(row) + 10.0f / 19.0f) * 95.0f) * scale };
             const auto click = visualEvent(*editor, point);
             editor->mouseDown(click);
             editor->mouseUp(click);
@@ -1075,11 +1236,11 @@ void testMixedMeterGeometry(const juce::File& output)
     float start = 0.0f;
     for (std::size_t beat = 0; beat < lengths.size(); ++beat)
     {
-        const juce::Point<float> centre { 67.0f + (start + lengths[beat] * 0.5f) * 1067.0f / 7.5f, 306.0f };
+        const juce::Point<float> centre { 67.0f + (start + lengths[beat] * 0.5f) * 1067.0f / 7.5f, 313.0f };
         const auto expected = juce::Colour(colours[beat]);
         check(similar(snapshot.getPixelAt(juce::roundToInt(centre.x), juce::roundToInt(centre.y)), expected),
               "mixed-meter beat is drawn at its time-proportional centre");
-        const float radius = std::min(1.0f, lengths[beat]) * 1067.0f / 7.5f * 0.36f;
+        const float radius = std::min(1.0f, lengths[beat]) * 1067.0f / 7.5f * 0.4f;
         check(!similar(snapshot.getPixelAt(juce::roundToInt(centre.x + radius * 1.2f),
                                            juce::roundToInt(centre.y)), expected),
               "long beats retain quarter-note circle size as shown in the public visual");
@@ -1230,7 +1391,7 @@ void testEmbeddedLayerVisualStateAndHistory(const juce::File& output)
 }
 
 template <typename Component>
-Component* childWithId(juce::Component& owner, const char* id)
+Component* childWithId(juce::Component& owner, const juce::String& id)
 {
     return dynamic_cast<Component*>(owner.findChildWithID(id));
 }
@@ -1418,6 +1579,105 @@ void testRandomizerTriggerModuleToggleIsIndependent(const juce::File& output)
     saveVisual(*editor, output, "randomizer-modules.png");
 }
 
+void testDisabledRandomizerModules(const juce::File& output)
+{
+    // Original 1.6.2 captures 07..12 in randomizer-disabled-original:
+    // body input is blocked, the complete body is half-bright, pads still work.
+    for (const auto wrapper : {juce::AudioProcessor::wrapperType_Standalone,
+                               juce::AudioProcessor::wrapperType_VST3})
+    {
+        auto processor = makeProcessorForWrapper(wrapper);
+        auto& settings = processor->projectState().randomizer;
+        settings.noteSelectionEnabled = settings.slicingEnabled = true;
+        settings.triggeringEnabled = settings.velocityEnabled = true;
+        settings.triggerChance = 0.65f;
+        settings.minimumVelocity = 18.0f / 127.0f;
+        settings.selectedPads = {0};
+        settings.selectedSubdivisions = {1, 2, 4, 8};
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        editor->setSize(1280, 720);
+        childWithId<juce::TextButton>(*editor, "brush.dice")->onClick();
+        const auto directory = output.getChildFile(
+            wrapper == juce::AudioProcessor::wrapperType_VST3 ? "randomizer-vst3" : "randomizer-standalone");
+        check(directory.createDirectory().wasOk(), "create randomizer module screenshots directory");
+        const auto enabledImage = editor->createComponentSnapshot(editor->getLocalBounds());
+        saveVisual(*editor, directory, "enabled.png");
+        for (int module = 0; module < 4; ++module)
+        {
+            auto* toggle = childWithId<juce::TextButton>(*editor, "random.module." + juce::String(module));
+            toggle->onClick();
+            check(toggle->isEnabled(), "disabled module retains its enable switch");
+            for (auto* control : BeatScholarLinuxEditorTestAccess::randomizerBody(*editor, module))
+            {
+                check(!control->isEnabled(), "disabled randomizer body rejects interaction");
+                const auto event = visualEvent(*editor, control->getBounds().getCentre().toFloat())
+                                       .getEventRelativeTo(control);
+                if (dynamic_cast<juce::TextButton*>(control) != nullptr)
+                {
+                    control->mouseDown(event);
+                    control->mouseUp(event);
+                }
+                if (auto* slider = dynamic_cast<juce::Slider*>(control))
+                {
+                    const auto value = slider->getValue();
+                    editor->mouseDown(visualEvent(*editor, slider->getBounds().getCentre().toFloat(),
+                        juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::altModifier)
+                        .getEventRelativeTo(slider));
+                    check(slider->getValue() == value, "Alt-click cannot reset a disabled randomizer slider");
+                    editor->mouseDoubleClick(event);
+                    check(!childWithId<juce::TextEditor>(*editor, "control.value")->isVisible(),
+                          "disabled randomizer slider cannot open numeric entry");
+                }
+            }
+        }
+        check(settings.selectedPads == std::vector<std::uint8_t>{0}
+                  && settings.selectedSubdivisions == std::vector<std::size_t>({1, 2, 4, 8})
+                  && !settings.fillEmptyOnly,
+              "disabled buttons preserve selections and Fill Empty");
+        const auto disabledImage = editor->createComponentSnapshot(editor->getLocalBounds());
+        for (const auto region : { juce::Rectangle<int>(412, 588, 113, 120),
+                                  juce::Rectangle<int>(546, 588, 163, 120),
+                                  juce::Rectangle<int>(731, 588, 142, 120),
+                                  juce::Rectangle<int>(894, 588, 158, 120) })
+        {
+            bool halfBright = true;
+            for (int y = region.getY(); y < region.getBottom(); y += 3)
+                for (int x = region.getX(); x < region.getRight(); x += 3)
+                {
+                    const auto on = enabledImage.getPixelAt(x, y);
+                    const auto off = disabledImage.getPixelAt(x, y);
+                    halfBright = halfBright && std::abs(off.getRed() * 2 - on.getRed()) <= 2
+                        && std::abs(off.getGreen() * 2 - on.getGreen()) <= 2
+                        && std::abs(off.getBlue() * 2 - on.getBlue()) <= 2;
+                }
+            check(halfBright, "disabled module dims its complete body once to half brightness");
+        }
+        saveVisual(*editor, directory, "disabled.png");
+        auto* pad = childWithId<juce::TextButton>(*editor, "pad.1");
+        check(pad != nullptr && pad->isEnabled(), "pad bank stays interactive with Drum Selection disabled");
+        if (pad != nullptr) pad->onClick();
+        check(settings.selectedPads == std::vector<std::uint8_t>({0, 1}),
+              "disabled Drum Selection still permits individual pad selection");
+        for (int module = 0; module < 4; ++module)
+        {
+            childWithId<juce::TextButton>(*editor, "random.module." + juce::String(module))->onClick();
+            for (int other = 0; other < 4; ++other)
+                for (auto* control : BeatScholarLinuxEditorTestAccess::randomizerBody(*editor, other))
+                    check(control->isEnabled() == (other <= module), "modules re-enable independently");
+        }
+        auto* chance = childWithId<juce::Slider>(*editor, "random.0");
+        editor->mouseDown(visualEvent(*editor, chance->getBounds().getCentre().toFloat(),
+            juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::altModifier).getEventRelativeTo(chance));
+        check(settings.triggerChance == 0.5f, "re-enabled chance accepts Alt-click reset");
+        for (int module = 0; module < 4; ++module)
+            childWithId<juce::TextButton>(*editor, "random.module." + juce::String(module))->onClick();
+        childWithId<juce::TextButton>(*editor, "brush.drum")->onClick();
+        for (int index = 0; index < 4; ++index)
+            check(childWithId<juce::Slider>(*editor, "sound." + juce::String(index))->isEnabled(),
+                  "returning to sampler restores shared controls despite disabled Randomizer modules");
+    }
+}
+
 void testRandomizerFillEmptyIsClickToggle(const juce::File& output)
 {
     for (const int width : { 960, 1280 })
@@ -1505,6 +1765,16 @@ void testRandomizerAllSelectsOnlyCurrentSlicePage()
     check(selected == std::vector<std::size_t> { 10, 11, 12, 13, 14, 15, 16, 17, 18,
                                                19, 20, 21, 22, 23, 24, 25, 26, 27 },
           "page All retains earlier selections without adding duplicates");
+    // Complete the manual's 45-value range through the actual page controls.
+    for (int page = 0; page < 3; ++page)
+        if (!click({ 692, 663 }, "") || !click({ 653, 602 }, "All")) return;
+    auto sorted = selected;
+    std::sort(sorted.begin(), sorted.end());
+    std::vector<std::size_t> expected;
+    for (std::size_t value = 1; value <= 45; ++value) expected.push_back(value);
+    check(sorted == expected, "all five pages expose exactly subdivisions 1 through 45");
+    if (!click({ 602, 602 }, "Clear")) return;
+    check(selected.empty(), "Clear removes selections from every subdivision page");
 }
 
 void configureExportPattern(bsl::ProjectState& state, int numerator, int denominator,
@@ -2013,8 +2283,10 @@ private:
                 auto* clear = childWithId<juce::TextButton>(*editor_, "sample.clear");
                 check(clear != nullptr && clear->isVisible(), "custom sample exposes the X removal control");
                 auto* folder = childWithId<juce::TextButton>(*editor_, "sample.folder");
-                check(folder != nullptr && folder->getBounds() == factoryFolderBounds_,
-                      "imported sample keeps the folder beside the waveform");
+                // The original custom-sample layout shifts the folder 12 design pixels left.
+                check(folder != nullptr && folder->isVisible()
+                          && folder->getBounds() == factoryFolderBounds_.translated(-12, 0),
+                      "imported sample uses the reference folder position beside the waveform");
                 saveVisual(*editor_, output_, "tutorial-sample-loaded.png");
                 editor_->setSize(960, 540);
                 saveVisual(*editor_, output_, "tutorial-sample-loaded-960.png");
@@ -2079,6 +2351,11 @@ public:
               "decode factory menu WAV fixture");
         for (const auto* name : {"test_INST-BD_TYPE-Body_NAME-Wav Body.wav",
                                  "test_INST-BD_TYPE-Hit_NAME-Wav Hit.WAV",
+                                 "test_INST-BD_TYPE-Hit_NAME-SvN Kick.wav",
+                                 "test_INST-BD_TYPE-Hit_NAME-Ungh.wav",
+                                 "test_INST-FX_NAME-Finger Snap.wav",
+                                 "test_INST-FX_NAME-MonkMealTime.wav",
+                                 "test_INST-FX_NAME-Crackle.wav",
                                  "test_INST-SD_TYPE-Body_NAME-Wrong Pad.wav"})
             check(samples.getChildFile(name).replaceWithData(wav.getData(), wav.getDataSize()),
                   "write factory menu WAV fixture");
@@ -2106,6 +2383,8 @@ private:
         // Six reference choices at three scales, then no-op, cancel, host recall,
         // changed pattern identity, Bars mode, and both factory sample layers.
         const bool factory = step_ >= 23;
+        const bool fx = step_ >= 25;
+        const std::size_t layer = step_ == 24 ? 1 : 0;
         const int choice = step_ < 18 ? step_ % 6 : 0;
         const std::array<bsl::PatternQuantization, 6> values {
             bsl::PatternQuantization::whole, bsl::PatternQuantization::half,
@@ -2117,6 +2396,7 @@ private:
         {
             auto& state = processor_.projectState();
             state.ui.patternMode = step_ != 22;
+            state.ui.selectedPad = fx ? static_cast<std::size_t>(step_ - 11) : 0;
             state.activePattern = step_ < 18 ? static_cast<std::size_t>(step_ % 2) : 0;
             state.patterns[0].quantization = bsl::PatternQuantization::off;
             state.patterns[1].quantization = bsl::PatternQuantization::thirtySecond;
@@ -2129,9 +2409,10 @@ private:
                 for (auto* child : editor_->getChildren())
                     if (child->getComponentID() == "sample.layer")
                         if (auto* button = dynamic_cast<juce::Button*>(child)) buttons.push_back(button);
-                std::sort(buttons.begin(), buttons.end(), [](auto* a, auto* b) { return a->getX() < b->getX(); });
+                // Factory layers are stacked: Body above Hit; horizontal label offsets vary.
+                std::sort(buttons.begin(), buttons.end(), [](auto* a, auto* b) { return a->getY() < b->getY(); });
                 check(buttons.size() == 2, label + " exposes both sample knobs");
-                if (buttons.size() == 2) buttons[static_cast<std::size_t>(step_ - 23)]->onClick();
+                if (buttons.size() == 2) buttons[layer]->onClick();
             }
             else
             {
@@ -2163,7 +2444,7 @@ private:
             }
             if (menu != nullptr && step_ != 19)
             {
-                const char* title = factory ? (step_ == 23 ? "Wav Body" : "Wav Hit") : labels[choice];
+                const char* title = fx ? "Crackle" : factory ? (step_ == 23 ? "Wav Body" : "Wav Hit") : labels[choice];
                 if (!factory)
                 {
                     check(item(*menu, "Off") == nullptr, label + " excludes unsupported Off choice");
@@ -2181,6 +2462,24 @@ private:
                               && item(*menu, step_ == 23 ? "Wav Hit" : "Wav Body") == nullptr,
                           label + " excludes other pads, other layer and non-audio files");
                 }
+                if (fx)
+                {
+                    auto* first = item(*menu, "Finger Snap");
+                    auto* second = item(*menu, "MonkMealTime");
+                    auto* third = item(*menu, "Crackle");
+                    check(first != nullptr && second != nullptr && third != nullptr
+                              && first->getComponent().getScreenX() < second->getComponent().getScreenX()
+                              && second->getComponent().getScreenX() < third->getComponent().getScreenX(),
+                          label + " preserves all three original FX columns");
+                }
+                if (step_ == 24)
+                {
+                    auto* first = item(*menu, "SvN Kick");
+                    auto* second = item(*menu, "Ungh");
+                    check(first != nullptr && second != nullptr
+                              && second->getComponent().getScreenX() > first->getComponent().getScreenX(),
+                          "Kick Hit reference column starts at Ungh");
+                }
                 if (step_ == 0 || step_ == 6 || step_ == 12 || factory)
                     saveVisual(*menu, output_, ("tutorial-header-factory-menu-" + juce::String(step_) + ".png").toRawUTF8());
                 auto* action = item(*menu, title);
@@ -2197,7 +2496,8 @@ private:
             const bool edits = step_ < 18 || factory;
             if (step_ < 18) expected.global.quantization = values[choice];
             if (factory)
-                expected.kit.pads[0].factorySampleIds[static_cast<std::size_t>(step_ - 23)] = step_ == 23
+                expected.kit.pads[before_.ui.selectedPad].factorySampleIds[layer] = fx
+                    ? "test_INST-FX_NAME-Crackle.wav" : step_ == 23
                     ? "test_INST-BD_TYPE-Body_NAME-Wav Body.wav" : "test_INST-BD_TYPE-Hit_NAME-Wav Hit.WAV";
             check(bsl::statecodec::encode(processor_.projectState()) == bsl::statecodec::encode(expected),
                   label + " changes exactly the selected setting or rejects stale/cancelled input");
@@ -2209,7 +2509,7 @@ private:
                       label + " restores all state with one undo");
             juce::PopupMenu::dismissAllActiveMenus();
             phase_ = 0;
-            if (++step_ == 25)
+            if (++step_ == 27)
             {
                 stopTimer();
                 window_.setVisible(false);
@@ -2496,12 +2796,264 @@ private:
     int selection_ = 0;
 };
 
+// Original 1.6.2 Save To Menu / Load from File, captured 2026-11-26.
+// Drive the asynchronous menu and chooser, including failed/cancelled operations.
+class RandomizerFileMenuTests final : private juce::Timer
+{
+public:
+    explicit RandomizerFileMenuTests(const juce::File& output) : output_(output) {}
+    ~RandomizerFileMenuTests() override { window_.clearContentComponent(); }
+    void start(std::function<void()> done)
+    {
+        done_ = std::move(done);
+        check(!juce::FileChooser::isPlatformDialogAvailable(), "Randomizer test uses isolated built-in chooser");
+        beginWrapper();
+        startTimer(100);
+    }
+private:
+    template <typename T> static T* descendant(juce::Component& c)
+    {
+        if (auto* match = dynamic_cast<T*>(&c)) return match;
+        for (auto* child : c.getChildren()) if (auto* match = descendant<T>(*child)) return match;
+        return nullptr;
+    }
+    static juce::AccessibilityHandler* item(juce::Component& c, const juce::String& title)
+    {
+        if (auto* h = c.getAccessibilityHandler(); h && h->getTitle() == title) return h;
+        for (auto* child : c.getChildren()) if (auto* h = item(*child, title)) return h;
+        return nullptr;
+    }
+    template <typename T> T* control(const char* id)
+    {
+        auto* result = childWithId<T>(*editor_, id);
+        if (result == nullptr)
+            if (auto* overlay = editor_->findChildWithID("random.save.overlay"))
+                result = childWithId<T>(*overlay, id);
+        check(result != nullptr, juce::String("Randomizer control exists: ") + id);
+        return result;
+    }
+    void remember()
+    {
+        before_ = bsl::statecodec::encode(processor_->projectState());
+        revision_ = processor_->projectEditor().revision();
+    }
+    void unchanged(const char* why)
+    {
+        check(before_ == bsl::statecodec::encode(processor_->projectState())
+                  && revision_ == processor_->projectEditor().revision(), why);
+    }
+    void action(std::function<void()> fn)
+    { steps_.push_back([fn = std::move(fn)] { fn(); return true; }); }
+    void menu(const char* title)
+    {
+        action([this] { control<juce::TextButton>("random.preset")->onClick(); });
+        steps_.push_back([this, title] {
+            auto* modal = juce::Component::getCurrentlyModalComponent();
+            auto* target = modal ? item(*modal, title) : nullptr;
+            if (!target) return false;
+            if (juce::String(title) == "Default Preset")
+                saveVisual(*modal, folder_, "default-preset-menu.png");
+            return target->getActions().invoke(juce::AccessibilityActionType::press);
+        });
+    }
+    void chooser(const juce::File& file, bool accept)
+    {
+        steps_.push_back([file] {
+            auto* modal = juce::Component::getCurrentlyModalComponent();
+            auto* dialog = dynamic_cast<juce::FileChooserDialogBox*>(modal);
+            auto* browser = dialog ? descendant<juce::FileBrowserComponent>(*dialog) : nullptr;
+            if (!browser) return false;
+            browser->setRoot(file.getParentDirectory());
+            browser->setFileName(file.getFileName());
+            return true;
+        });
+        action([this, file, accept] {
+            auto* dialog = dynamic_cast<juce::FileChooserDialogBox*>(juce::Component::getCurrentlyModalComponent());
+            auto* browser = dialog ? descendant<juce::FileBrowserComponent>(*dialog) : nullptr;
+            check(browser && browser->getSelectedFile(0) == file, "chooser selects requested randomizer file");
+            if (dialog) dialog->exitModalState(accept ? 1 : 0);
+        });
+    }
+    void beginWrapper()
+    {
+        steps_.clear(); step_ = 0;
+        const auto mode = wrapper_ == 0 ? "standalone" : "vst3";
+        folder_ = output_.getChildFile(mode);
+        folder_.createDirectory();
+        processor_ = makeProcessorForWrapper(wrapper_ == 0 ? juce::AudioProcessor::wrapperType_Standalone
+                                                          : juce::AudioProcessor::wrapperType_VST3);
+        editor_ = std::make_unique<BeatScholarLinuxEditor>(*processor_);
+        editor_->setSize(960, 540);
+        window_.setContentNonOwned(editor_.get(), true);
+        window_.setVisible(true); window_.toFront(true);
+        control<juce::TextButton>("brush.dice")->onClick();
+        native_ = bsl::RandomizerSettings::makeInitPreset();
+        native_.triggerChance = 0.37f;
+        const auto nativeFile = folder_.getChildFile("Native.bslrandom");
+        check(nativeFile.replaceWithText(bsl::statecodec::encodeRandomizerJson(native_)), "write native Randomizer fixture");
+        const auto legacyFile = folder_.getChildFile("Original.json");
+        check(legacyFile.replaceWithText(R"({"Randomize":{"noteNumbers":false,"noteOnOff":false,
+            "onlyFillEmpty":true,"slice":false,"velocity":false,"spacing":0.75,"triggerChance":0.25,
+            "possibleNotes":[{"value":3},{"value":5}],"possibleSlices":[{"value":7},{"value":13}],
+            "velocityRange":{"start":0.3,"end":0.6}}})"), "write original Randomizer fixture");
+        const auto invalidFile = folder_.getChildFile("Invalid.bslrandom");
+        invalidFile.replaceWithText("not a randomizer");
+        action([this] { remember(); });
+        menu("Default Preset");
+        action([this] { unchanged("Default Preset preserves initial settings/history/identity like original"); });
+        menu("Load from File"); chooser(nativeFile, false);
+        action([this] { unchanged("cancelled Randomizer load preserves state/history/identity"); });
+        menu("Load from File"); chooser(nativeFile, true);
+        action([this, nativeFile] {
+            check(bsl::statecodec::encodeRandomizerJson(processor_->projectState().randomizer)
+                      == bsl::statecodec::encodeRandomizerJson(native_)
+                      && processor_->projectState().ui.randomizerFile == nativeFile.getFullPathName().toStdString(),
+                  "native Randomizer load applies settings and identity");
+        });
+        menu("Load from File"); chooser(legacyFile, true);
+        action([this, legacyFile] {
+            const auto& settings = processor_->projectState().randomizer;
+            check(settings.selectedPads == std::vector<std::uint8_t>({3, 5})
+                      && settings.selectedSubdivisions == std::vector<std::size_t>({7, 13})
+                      && !settings.slicingEnabled && settings.fillEmptyOnly
+                      && std::abs(settings.triggerChance - 0.25f) < 1.0e-6f
+                      && processor_->projectState().ui.randomizerFile == legacyFile.getFullPathName().toStdString(),
+                  "original JSON load applies original Randomizer fields");
+            remember();
+        });
+        menu("Default Preset");
+        action([this] { unchanged("Default Preset preserves loaded settings/history/identity like original"); });
+        menu("Load from File"); chooser(invalidFile, true);
+        action([this] { unchanged("invalid Randomizer file preserves state/history/identity"); });
+        menu("Save To Menu");
+        action([this] {
+            auto* overlay = control<juce::Component>("random.save.overlay");
+            saveVisual(*editor_, folder_, "save-form.png");
+            overlay->mouseDown(visualEvent(*editor_, {20.0f, 20.0f}).getEventRelativeTo(overlay));
+            check(!overlay->isVisible(), "outside click cancels Randomizer save form");
+            unchanged("cancelled menu save preserves state/history/identity");
+        });
+        menu("Save To Menu");
+        action([this] {
+            control<juce::TextEditor>("random.save.name")->onEscapeKey();
+            check(!control<juce::Component>("random.save.overlay")->isVisible(),
+                  "Escape cancels Randomizer save form");
+            unchanged("Escape preserves state/history/identity");
+        });
+        menu("Save To Menu");
+        action([this] {
+            auto* name = control<juce::TextEditor>("random.save.name");
+            name->setText("../invalid");
+            control<juce::TextButton>("random.save.accept")->onClick();
+            check(control<juce::Component>("random.save.overlay")->isVisible(), "invalid name keeps save form open");
+            unchanged("invalid menu name preserves project");
+            control<juce::TextButton>("random.save.add-category")->onClick();
+            saveVisual(*editor_, folder_, "new-category.png");
+            auto* category = control<juce::TextEditor>("random.save.new-category");
+            category->setText("Parity " + juce::String(wrapper_));
+            category->onReturnKey();
+            check(control<juce::ComboBox>("random.save.category")->getText() == "Parity " + juce::String(wrapper_),
+                  "Enter returns to save form with new category selected");
+            name->setText("Saved Randomizer");
+            saved_ = bsl::dataRoot().getChildFile("User/Randomizers/Parity " + juce::String(wrapper_))
+                         .getChildFile("Saved Randomizer.bslrandom");
+            saveVisual(*editor_, folder_, "named-save.png");
+            control<juce::TextButton>("random.save.accept")->onClick();
+        });
+        action([this] {
+            savedBytes_ = saved_.loadFileAsString();
+            check(savedBytes_ == bsl::statecodec::encodeRandomizerJson(processor_->projectState().randomizer)
+                      && !control<juce::Component>("random.save.overlay")->isVisible(),
+                  "Save To Menu writes the selected category and closes");
+            processor_->resetRandomizerToInit();
+            check(processor_->loadRandomizerFile(saved_), "saved menu preset reloads");
+            check(control<juce::TextButton>("random.preset")->getButtonText() == "Saved Randomizer",
+                  "menu save refreshes displayed preset name");
+        });
+        menu("Save To Menu");
+        action([this] {
+            auto* category = control<juce::ComboBox>("random.save.category");
+            for (int i = 0; i < category->getNumItems(); ++i)
+                if (category->getItemText(i) == "Parity " + juce::String(wrapper_))
+                    category->setSelectedItemIndex(i, juce::dontSendNotification);
+            check(category->getText() == "Parity " + juce::String(wrapper_), "saved category survives form reopening");
+            control<juce::TextEditor>("random.save.name")->setText("Saved Randomizer");
+            processor_->projectState().randomizer.triggerChance = 0.6f;
+            remember();
+            control<juce::TextButton>("random.save.accept")->onClick();
+        });
+        steps_.push_back([] {
+            auto* alert = dynamic_cast<juce::AlertWindow*>(juce::Component::getCurrentlyModalComponent());
+            if (!alert) return false;
+            alert->triggerButtonClick("Cancel"); return true;
+        });
+        action([this] {
+            check(saved_.loadFileAsString() == savedBytes_, "overwrite cancel preserves existing preset bytes");
+            unchanged("overwrite cancel preserves project/history");
+            control<juce::TextButton>("random.save.accept")->onClick();
+        });
+        steps_.push_back([] {
+            auto* alert = dynamic_cast<juce::AlertWindow*>(juce::Component::getCurrentlyModalComponent());
+            if (!alert) return false;
+            alert->triggerButtonClick("Replace"); return true;
+        });
+        action([this] {
+            check(saved_.loadFileAsString() == bsl::statecodec::encodeRandomizerJson(processor_->projectState().randomizer)
+                      && saved_.loadFileAsString() != savedBytes_, "overwrite Replace writes updated settings");
+            remember();
+        });
+        const auto exportFile = folder_.getNonexistentChildFile("Export", ".bslrandom");
+        menu("Save to File"); chooser(exportFile, false);
+        action([this, exportFile] {
+            unchanged("cancelled file save preserves state/history/identity");
+            check(!exportFile.exists(), "cancelled file save creates no preset");
+        });
+        menu("Save to File"); chooser(exportFile, true);
+        action([this, exportFile] {
+            check(exportFile.loadFileAsString() == bsl::statecodec::encodeRandomizerJson(processor_->projectState().randomizer),
+                  "Save to File exports the current Randomizer settings");
+        });
+        deadline_ = juce::Time::getMillisecondCounterHiRes() + 3000.0;
+    }
+    void timerCallback() override
+    {
+        if (!steps_[step_]())
+        {
+            if (juce::Time::getMillisecondCounterHiRes() < deadline_) return;
+            check(false, "Randomizer UI step timed out: " + juce::String(static_cast<int>(step_)));
+            juce::PopupMenu::dismissAllActiveMenus();
+            stopTimer(); window_.setVisible(false); done_(); return;
+        }
+        deadline_ = juce::Time::getMillisecondCounterHiRes() + 3000.0;
+        if (++step_ != steps_.size()) return;
+        window_.setVisible(false); window_.clearContentComponent();
+        editor_.reset(); processor_.reset();
+        if (++wrapper_ < 2) { beginWrapper(); return; }
+        stopTimer(); done_();
+    }
+    juce::File output_, folder_, saved_;
+    juce::String savedBytes_;
+    juce::MemoryBlock before_;
+    std::uint64_t revision_ = 0;
+    bsl::RandomizerSettings native_;
+    std::unique_ptr<BeatScholarLinuxProcessor> processor_;
+    std::unique_ptr<BeatScholarLinuxEditor> editor_;
+    juce::DocumentWindow window_ { "Randomizer file actions", juce::Colours::black, juce::DocumentWindow::closeButton };
+    std::vector<std::function<bool()>> steps_;
+    std::function<void()> done_;
+    double deadline_ = 0;
+    std::size_t step_ = 0;
+    int wrapper_ = 0;
+};
+
 void testKeyboardFocus(const juce::File& output)
 {
+    RandomizerFileMenuTests randomizerFiles(output.getChildFile("randomizer-file-menu"));
     SwingReferenceMenuTests swingReferenceMenus(output);
     InitPresetMenuTests initPresetMenus(output);
     TutorialHeaderAndFactoryMenus headerAndFactory(output);
     TutorialArrangementMenuTests arrangementMenus(output);
+    PatternRenameTests patternRename;
     TutorialSampleChooserTests sampleChooser(output);
     bsl::ui::BeatScholarLookAndFeel look;
     juce::DocumentWindow parent("Beat Scholar focus regression", juce::Colours::black,
@@ -2621,6 +3173,30 @@ void testKeyboardFocus(const juce::File& output)
     auto shortcutProcessor = std::make_unique<BeatScholarLinuxProcessor>();
     shortcutProcessor->projectState().patterns[0].lanes = { bsl::LaneState::make(4) };
     auto shortcutEditor = std::make_unique<BeatScholarLinuxEditor>(*shortcutProcessor);
+    struct ClickDeliveryTrace final : juce::MouseListener
+    {
+        explicit ClickDeliveryTrace(juce::Component& component) : editor(component)
+        {
+            editor.addMouseListener(this, true);
+        }
+        ~ClickDeliveryTrace() override { editor.removeMouseListener(this); }
+        void mouseDown(const juce::MouseEvent& event) override
+        {
+            ++downs;
+            const auto p = event.getEventRelativeTo(&editor).getPosition();
+            lastDown = "down=" + juce::String(p.x) + "," + juce::String(p.y)
+                + " modalAfterDown=" + juce::String(juce::Component::getNumCurrentlyModalComponents())
+                + " peerFocused=" + juce::String(editor.getPeer() != nullptr && editor.getPeer()->isFocused() ? 1 : 0);
+        }
+        void mouseUp(const juce::MouseEvent&) override { ++ups; }
+        juce::String describe() const
+        {
+            return " delivered=" + juce::String(downs) + "/" + juce::String(ups) + " " + lastDown;
+        }
+        juce::Component& editor;
+        int downs = 0, ups = 0;
+        juce::String lastDown;
+    } clickDelivery(*shortcutEditor);
     const auto brushSelected = [&](const char* id) {
         auto* control = childWithId<juce::TextButton>(*shortcutEditor, id);
         return control != nullptr && control->getToggleState();
@@ -2639,21 +3215,48 @@ void testKeyboardFocus(const juce::File& output)
     // cannot establish that its temporary action or restored subdivision works.
     std::vector<bsl::BeatState> shortcutOriginalBeats;
     const auto clickShortcutEditor = [&](juce::Point<int> position, std::function<bool()> ready) {
+        clickDelivery.downs = clickDelivery.ups = 0;
+        clickDelivery.lastDown.clear();
         const auto screen = shortcutEditor->localPointToGlobal(position);
         auto command = std::make_shared<juce::ChildProcess>();
-        const bool started = command->start(juce::StringArray { "xdotool", "mousemove",
-            juce::String(screen.x), juce::String(screen.y), "click", "1" });
-        check(started, "start shortcut editor click only on isolated Xvfb display");
+        const bool peerFocused = shortcutEditor->getPeer() != nullptr
+            && shortcutEditor->getPeer()->isFocused();
+        const int modalBefore = juce::Component::getNumCurrentlyModalComponents();
+        const auto expectedWindow = juce::String(static_cast<juce::int64>(
+            reinterpret_cast<std::uintptr_t>(shortcutEditor->getPeer()->getNativeHandle())));
+        auto launched = std::make_shared<bool>(false);
+        const auto launch = [&, command, screen, launched] {
+            *launched = command->start(juce::StringArray { "xdotool", "mousemove",
+                juce::String(screen.x), juce::String(screen.y), "click", "1",
+                "getmouselocation", "--shell" });
+            check(*launched, "start shortcut editor click only on isolated Xvfb display");
+        };
         // Deliver the click while JUCE can dispatch X11 events. Blocking its
         // message thread until xdotool exits can strand the input before the
         // menu has received it. Keep the child alive and observe both results.
-        pendingUiInput = [&, command, screen, ready = std::move(ready)] {
-            const bool running = command->isRunning();
+        pendingUiInput = [&, command, screen, launched, peerFocused, modalBefore, expectedWindow,
+                          ready = std::move(ready), sawModal = false, outputRead = false,
+                          pointerDetail = juce::String()]() mutable {
+            const bool running = *launched && command->isRunning();
+            if (*launched && !running && !outputRead)
+            {
+                pointerDetail = command->readAllProcessOutput().replace("\n", " ").trim();
+                outputRead = true;
+            }
+            sawModal = sawModal || juce::Component::getCurrentlyModalComponent() != nullptr;
             pendingClickDetail = "click at " + juce::String(screen.x) + ","
                 + juce::String(screen.y) + ", xdotool="
-                + (running ? juce::String("running") : juce::String(command->getExitCode()));
-            return !running && command->getExitCode() == 0 && ready();
+                + (running ? juce::String("running") : juce::String(command->getExitCode()))
+                + clickDelivery.describe() + " sawModal=" + juce::String(sawModal ? 1 : 0)
+                + " peerFocusedBefore=" + juce::String(peerFocused ? 1 : 0)
+                + " modalBefore=" + juce::String(modalBefore)
+                + " launched=" + juce::String(*launched ? 1 : 0)
+                + " expectedWindow=" + expectedWindow + " pointer=" + pointerDetail;
+            return *launched && !running && command->getExitCode() == 0 && ready();
         };
+        // Restore native focus and allow its events to drain before every
+        // injected click; the earlier peer snapshot is diagnostic only.
+        focusEditor(launch);
     };
     const auto clickShortcutGrid = [&](juce::Point<int> position) {
         const auto revision = shortcutProcessor->projectEditor().revision();
@@ -2721,11 +3324,14 @@ void testKeyboardFocus(const juce::File& output)
             check(control != nullptr, "reset test locates boolean parameter");
             if (control == nullptr) return;
             value() = !defaultValue;
+            if (id != nullptr && juce::String(id) == "sample.oneshot")
+                shortcutProcessor->parameters().getParameter("pad1OneShot")
+                    ->setValueNotifyingHost(value() ? 1.0f : 0.0f);
             control->onClick();
             check(value() == defaultValue, "Alt-click restores boolean default");
             control->onClick();
             check(value() == defaultValue, "Alt-click at boolean default does not toggle");
-            check(shortcutProcessor->projectEditor().undo() && value() == !defaultValue
+            check(shortcutProcessor->restoreProjectHistory(false) && value() == !defaultValue
                       && !shortcutProcessor->projectEditor().canUndo(),
                   "boolean reset is one undoable action and default reset adds no history");
         };
@@ -2970,7 +3576,11 @@ void testKeyboardFocus(const juce::File& output)
                 sampleChooser.start([&] {
                     headerAndFactory.start([&] {
                         initPresetMenus.start([&] {
-                            swingReferenceMenus.start([] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
+                            swingReferenceMenus.start([&] {
+                                patternRename.start([&] {
+                                    randomizerFiles.start([] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
+                                });
+                            });
                         });
                     });
                 });
@@ -3584,11 +4194,10 @@ void testSequencerMappedSamplerRouting()
             if (metadata.getMessage().isNoteOn())
                 emitted |= metadata.getMessage().getNoteNumber() == mappedNote;
         check(emitted, "sequencer preserves mapped output MIDI note");
-        check(audio.getMagnitude(2, 0, 64) == 0.0f,
-              "sequencer must not play source pad after output-note remapping");
-        check(mappedNote == 38 ? audio.getMagnitude(4, 0, 64) > 0.01f
-                               : audio.getMagnitude(4, 0, 64) == 0.0f,
-              "sequencer resolves fixed sampler input map and ignores unmapped notes");
+        check(audio.getMagnitude(2, 0, 64) > 0.01f,
+              "output remapping preserves internal source drum audio after state recall");
+        check(audio.getMagnitude(4, 0, 64) == 0.0f,
+              "output remapping never redirects audio to another drum");
         processor->setPlayHead(nullptr);
         processor->releaseResources();
     }
@@ -3622,19 +4231,23 @@ void testSparseMultiOutputBusMapping()
 }
 
 std::vector<float> renderBypassTest(bsl::ProjectState state, int pad, const juce::String& parameter,
-                                   bool bypass)
+                                   float normalizedValue, int blockCount = 4, bool withAmbience = false, bool withDistortion = false)
 {
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
     processor->setRateAndBufferSizeDetails(48000, 64);
     const auto bytes = bsl::statecodec::encode(state);
     processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
     processor->prepareToPlay(48000, 64);
+    if (withAmbience)
+        BeatScholarLinuxProcessorTestAccess::prepareAmbience(*processor);
+    if (withDistortion)
+        BeatScholarLinuxProcessorTestAccess::prepareDistortion(*processor);
     if (auto* toggle = processor->parameters().getParameter(parameter))
-        toggle->setValueNotifyingHost(bypass ? 1.0f : 0.0f);
+        toggle->setValueNotifyingHost(normalizedValue);
     std::vector<float> result;
     juce::AudioBuffer<float> buffer(processor->getTotalNumOutputChannels(), 64);
     juce::MidiBuffer midi;
-    for (int block = 0; block < 4; ++block)
+    for (int block = 0; block < blockCount; ++block)
     {
         midi.clear();
         if (block == 0)
@@ -3656,7 +4269,10 @@ std::vector<float> renderBypassTest(bsl::ProjectState state, int pad, const juce
 void testMasterResonanceAltReset()
 {
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
-    processor->projectState().master.resonance = 0.9f;
+    auto state = processor->projectState();
+    state.master.resonance = 0.9f;
+    const auto bytes = bsl::statecodec::encode(state);
+    processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
     auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
     auto* resonance = childWithId<juce::Slider>(*editor, "master.1");
     check(resonance != nullptr && resonance->isVisible(), "master resonance reset control exists");
@@ -3668,15 +4284,19 @@ void testMasterResonanceAltReset()
     check(std::abs(processor->projectState().master.resonance - 7.0f / 24.0f) < 1.0e-7f
               && std::abs(resonance->getValue() - 7.0 / 24.0) < 1.0e-7,
           "Alt-click restores native master Q 0.8 without slider quantization");
-    check(processor->projectEditor().undo()
-              && processor->projectState().master.resonance == 0.9f,
+    check(processor->restoreProjectHistory(false)
+              && processor->projectState().master.resonance == 0.9f
+              && processor->parameters().getParameter("masterResonance")->getValue() == 0.9f,
           "master resonance reset is undoable");
 }
 
 void testPadResonanceAltReset()
 {
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
-    processor->projectState().kit.pads[0].resonance = 0.9f;
+    auto state = processor->projectState();
+    state.kit.pads[0].resonance = 0.9f;
+    const auto bytes = bsl::statecodec::encode(state);
+    processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
     auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
     auto* resonance = childWithId<juce::Slider>(*editor, "effect.2");
     check(resonance != nullptr && resonance->isVisible(), "pad resonance reset control exists");
@@ -3688,9 +4308,939 @@ void testPadResonanceAltReset()
     check(std::abs(processor->projectState().kit.pads[0].resonance
                        - bsl::defaultFilterResonance) < 1.0e-7f,
           "Alt-click restores the native pad Q 0.8 resonance default");
-    check(processor->projectEditor().undo()
-              && processor->projectState().kit.pads[0].resonance == 0.9f,
-          "pad resonance reset is undoable");
+    check(processor->restoreProjectHistory(false)
+              && processor->projectState().kit.pads[0].resonance == 0.9f
+              && processor->parameters().getParameter("pad1Resonance")->getValue() == 0.9f,
+          "pad resonance reset is undoable in project and host state");
+}
+
+// Focused parity gate for the original's automatable Volume and Pan controls.
+// Keep this available independently while the integration repair is in progress.
+void testPadMixAutomationExposure()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    for (int pad = 1; pad <= 16; ++pad)
+        for (const auto* suffix : { "Gain", "Pan", "Pitch", "Fine" })
+        {
+            const auto id = "pad" + juce::String(pad) + suffix;
+            auto* parameter = processor->parameters().getParameter(id);
+            check(parameter != nullptr && parameter->isAutomatable(),
+                  "original pad mix control is host automatable: " + id);
+            if (parameter == nullptr) continue;
+            const bool gain = juce::String(suffix) == "Gain";
+            const bool pitch = juce::String(suffix) == "Pitch";
+            const bool fine = juce::String(suffix) == "Fine";
+            const float low = parameter->convertFrom0to1(0.0f);
+            const float high = parameter->convertFrom0to1(1.0f);
+            check(std::abs(low - (gain ? 0.0f : pitch ? -12.0f : fine ? -100.0f : -1.0f)) < 1.0e-6f
+                      && std::abs(high - (gain ? 1.9952623844146729f : pitch ? 12.0f : fine ? 100.0f : 1.0f)) < 1.0e-6f,
+                  "pad mix range matches reference in engine units: " + id);
+            const float midpoint = parameter->convertFrom0to1(0.5f);
+            check(std::abs(midpoint - (gain ? 0.2511886432f : 0.0f)) < 1.0e-5f,
+                  "pad mix midpoint matches reference: " + id);
+        }
+    auto* gain = processor->parameters().getParameter("pad1Gain");
+    auto* pan = processor->parameters().getParameter("pad1Pan");
+    auto* other = processor->parameters().getParameter("pad2Gain");
+    if (gain && pan && other)
+    {
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        auto* slider = childWithId<juce::Slider>(*editor, "sound.5");
+        auto* panSlider = childWithId<juce::Slider>(*editor, "sound.6");
+        check(slider && panSlider, "pad mix editor controls exist");
+        if (slider && panSlider)
+        {
+            gain->setValueNotifyingHost(gain->convertTo0to1(0.6f));
+            pan->setValueNotifyingHost(pan->convertTo0to1(-0.4f));
+            BeatScholarLinuxEditorTestAccess::tick(*editor);
+            check(std::abs(slider->getValue() - 0.6) < 1e-4
+                      && std::abs(panSlider->getValue() + 0.4) < 1e-4,
+                  "host automation updates visible pad mix controls");
+            slider->onDragStart();
+            slider->setValue(1.2, juce::sendNotificationSync);
+            slider->onDragEnd();
+            other->setValueNotifyingHost(other->convertTo0to1(0.35f));
+            processor->projectState().ui.selectedPad = 1;
+            check(processor->restoreProjectHistory(false), "pad gain undo exists");
+            check(std::abs(gain->convertFrom0to1(gain->getValue()) - 0.6f) < 1e-5f
+                      && std::abs(other->convertFrom0to1(other->getValue()) - 0.35f) < 1e-5f,
+                  "pad gain undo restores target and preserves another pad automation");
+            check(processor->restoreProjectHistory(true), "pad gain redo exists");
+            check(std::abs(gain->convertFrom0to1(gain->getValue()) - 1.2f) < 1e-4f
+                      && std::abs(other->convertFrom0to1(other->getValue()) - 0.35f) < 1e-5f,
+                  "pad gain redo retains original target after selection changes");
+            juce::MemoryBlock saved;
+            processor->getStateInformation(saved);
+            gain->setValueNotifyingHost(0.0f);
+            pan->setValueNotifyingHost(1.0f);
+            processor->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+            check(std::abs(gain->convertFrom0to1(gain->getValue()) - 1.2f) < 1e-4f
+                      && std::abs(pan->convertFrom0to1(pan->getValue()) + 0.4f) < 1e-5f,
+                  "host state recall restores automated pad mix values");
+        }
+    }
+    for (const bool fine : { false, true })
+    {
+        auto* tuning = processor->parameters().getParameter(fine ? "pad1Fine" : "pad1Pitch");
+        if (tuning == nullptr) continue;
+        processor->projectState().ui.selectedPad = 0;
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        auto* slider = childWithId<juce::Slider>(*editor, fine ? "sound.3" : "sound.2");
+        check(slider != nullptr, "pitch automation editor exists");
+        if (slider == nullptr) continue;
+        tuning->setValueNotifyingHost(0.75f);
+        BeatScholarLinuxEditorTestAccess::tick(*editor);
+        const float initial = fine ? 50.0f : 6.0f;
+        check(std::abs(slider->getValue() - initial) < 1e-4, "pitch automation refreshes editor");
+        slider->onDragStart();
+        slider->setValue(-initial, juce::sendNotificationSync);
+        slider->onDragEnd();
+        processor->projectState().ui.selectedPad = 15;
+        check(processor->restoreProjectHistory(false)
+                  && std::abs(tuning->convertFrom0to1(tuning->getValue()) - initial) < 1e-4,
+              "pitch undo retains original pad target");
+        check(processor->restoreProjectHistory(true)
+                  && std::abs(tuning->convertFrom0to1(tuning->getValue()) + initial) < 1e-4,
+              "pitch redo retains original pad target");
+        juce::MemoryBlock saved;
+        processor->getStateInformation(saved);
+        tuning->setValueNotifyingHost(0.5f);
+        processor->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+        check(std::abs(tuning->convertFrom0to1(tuning->getValue()) + initial) < 1e-4,
+              "host recall restores tuning automation");
+    }
+    for (const int pad : { 0, 15 })
+    {
+        const auto source = makeBypassTestProject(pad);
+        const auto dry = renderBypassTest(source, pad, {}, 0.0f);
+        check(std::any_of(dry.begin(), dry.end(), [](float v) { return std::abs(v) > 1e-6f; }),
+              "pad mix audio fixture is non-silent");
+        const auto id = "pad" + juce::String(pad + 1);
+        for (const bool fine : { false, true })
+        {
+            auto tuned = source;
+            if (fine) tuned.kit.pads[static_cast<std::size_t>(pad)].fineCents = 50.0f;
+            else tuned.kit.pads[static_cast<std::size_t>(pad)].pitchSemitones = 6.0f;
+            const auto expectedTune = renderBypassTest(tuned, pad, {}, 0.0f);
+            check(expectedTune != dry
+                      && renderBypassTest(source, pad, id + (fine ? "Fine" : "Pitch"), 0.75f) == expectedTune,
+                  "host pitch automation matches state-defined tuning");
+        }
+        const auto muted = renderBypassTest(source, pad, id + "Gain", 0.0f);
+        check(std::all_of(muted.begin(), muted.end(), [](float v) { return v == 0.0f; }),
+              "host pad gain automation mutes rendered audio");
+        auto panned = source;
+        panned.kit.pads[static_cast<std::size_t>(pad)].pan = 1.0f;
+        const auto expected = renderBypassTest(panned, pad, {}, 0.0f);
+        check(expected != dry && renderBypassTest(source, pad, id + "Pan", 1.0f) == expected,
+              "host pan automation matches state-defined audio pan");
+    }
+    check(processor->parameters().getParameter("swing")->getParameterIndex() == 0
+              && processor->parameters().getParameter("masterGain")->getParameterIndex() == 3
+              && processor->parameters().getParameter("pad16CrushBypass")->getParameterIndex() == 67
+              && processor->parameters().getParameter("pad16Pan")->getParameterIndex() == 99,
+          "pad mix additions preserve existing automation indices");
+}
+
+void testPadFilterAutomation()
+{
+    constexpr std::array suffixes { "HighPass", "Cutoff", "Resonance" };
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    for (int pad = 1; pad <= 16; ++pad)
+        for (const auto* suffix : suffixes)
+        {
+            const auto id = "pad" + juce::String(pad) + suffix;
+            auto* parameter = processor->parameters().getParameter(id);
+            check(parameter != nullptr && parameter->isAutomatable(), "host filter exposed: " + id);
+        }
+    const std::array midpoints { "400 Hz", "2.00 kHz", "1.30" };
+    for (std::size_t filter = 0; filter < suffixes.size(); ++filter)
+    {
+        auto* parameter = processor->parameters().getParameter("pad1" + juce::String(suffixes[filter]));
+        if (parameter == nullptr) continue;
+        check(parameter->getText(0.5f, 32) == midpoints[filter], "host filter midpoint matches original display");
+        check(std::abs(parameter->getValueForText(midpoints[filter]) - 0.5f) < 1e-5f,
+              "host filter text entry follows the original range");
+        processor->projectState().ui.selectedPad = 0;
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        auto* slider = childWithId<juce::Slider>(*editor, ("effect." + juce::String(static_cast<int>(filter))).toRawUTF8());
+        check(slider != nullptr, "filter editor control exists");
+        if (slider == nullptr) continue;
+        parameter->setValueNotifyingHost(0.75f);
+        BeatScholarLinuxEditorTestAccess::tick(*editor);
+        check(std::abs(slider->getValue() - 0.75) < 1e-5, "filter automation refreshes visible control");
+        slider->onDragStart();
+        slider->setValue(0.25, juce::sendNotificationSync);
+        slider->onDragEnd();
+        check(std::abs(parameter->getValue() - 0.25f) < 1e-5f, "filter gesture updates host parameter");
+        processor->projectState().ui.selectedPad = 15;
+        check(processor->restoreProjectHistory(false) && std::abs(parameter->getValue() - 0.75f) < 1e-5f,
+              "filter undo retains original pad after selection changes");
+        check(processor->restoreProjectHistory(true) && std::abs(parameter->getValue() - 0.25f) < 1e-5f,
+              "filter redo retains original pad after selection changes");
+        juce::MemoryBlock saved;
+        processor->getStateInformation(saved);
+        parameter->setValueNotifyingHost(0.0f);
+        processor->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+        check(std::abs(parameter->getValue() - 0.25f) < 1e-5f, "filter automation survives state recall");
+    }
+    for (const int pad : { 0, 15 })
+        for (std::size_t filter = 0; filter < suffixes.size(); ++filter)
+        {
+            auto source = makeBypassTestProject(pad);
+            // Put resonance in an audible filter range in both references.
+            source.kit.pads[static_cast<std::size_t>(pad)].cutoff = 0.4f;
+            auto filtered = source;
+            auto& sound = filtered.kit.pads[static_cast<std::size_t>(pad)];
+            if (filter == 0) sound.highPass = 0.85f;
+            if (filter == 1) sound.cutoff = 0.85f;
+            if (filter == 2) sound.resonance = 0.85f;
+            const auto expected = renderBypassTest(filtered, pad, {}, 0.0f);
+            const auto id = "pad" + juce::String(pad + 1) + suffixes[filter];
+            check(expected != renderBypassTest(source, pad, {}, 0.0f), "filter audio fixture distinguishes change");
+            check(expected == renderBypassTest(source, pad, id, 0.85f),
+                  "filter automation matches state-defined audio: " + id);
+        }
+    check(processor->parameters().getParameter("pad16Fine")->getParameterIndex() == 131,
+          "filter additions preserve earlier parameter indices");
+}
+
+void testMasterRoomReturnAutomation()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    auto* parameter = processor->parameters().getParameter("masterRoomReturn");
+    check(parameter != nullptr && parameter->isAutomatable(), "Room return exposed to host");
+    if (parameter == nullptr) return;
+    check(parameter->getParameterIndex() == 244, "Room return appends without shifting existing controls");
+    check(parameter->getValue() == 1.0f, "Room return defaults to unity for old folded sends");
+    check(parameter->getText(0.5f, 32) == "50.0%"
+              && parameter->getValueForText("25%") == 0.25f,
+          "Room return uses native percentage display");
+    parameter->setValueNotifyingHost(0.25f);
+    juce::MemoryBlock saved;
+    processor->getStateInformation(saved);
+    parameter->setValueNotifyingHost(0.0f);
+    processor->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    check(parameter->getValue() == 0.25f && processor->projectState().master.roomReturn == 0.25f,
+          "Room return automation survives state recall");
+    auto source = makeBypassTestProject(0);
+    source.kit.pads[0].room = 1.0f;
+    source.master.roomReturn = 1.0f;
+    auto muted = source;
+    muted.master.roomReturn = 0.0f;
+    const auto expected = renderBypassTest(muted, 0, {}, 0.0f, 128, true);
+    check(expected != renderBypassTest(source, 0, {}, 0.0f, 128, true), "Room fixture distinguishes wet output");
+    check(expected == renderBypassTest(source, 0, "masterRoomReturn", 0.0f, 128, true),
+          "Room return host automation reaches audio");
+}
+
+void testMasterReverbReturnAutomation()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    auto* parameter = processor->parameters().getParameter("masterReverbReturn");
+    check(parameter != nullptr && parameter->isAutomatable(), "Reverb return exposed to host");
+    if (parameter == nullptr) return;
+    check(parameter->getParameterIndex() == 245, "Reverb return appends without shifting existing controls");
+    check(parameter->getValue() == 1.0f, "Reverb return defaults to unity for old folded sends");
+    check(parameter->getText(0.5f, 32) == "50.0%"
+              && parameter->getValueForText("25%") == 0.25f,
+          "Reverb return uses native percentage display");
+    parameter->setValueNotifyingHost(0.25f);
+    juce::MemoryBlock saved;
+    processor->getStateInformation(saved);
+    parameter->setValueNotifyingHost(0.0f);
+    processor->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    check(parameter->getValue() == 0.25f && processor->projectState().master.reverbReturn == 0.25f,
+          "Reverb return automation survives state recall");
+    auto source = makeBypassTestProject(0);
+    source.kit.pads[0].reverb = 1.0f;
+    source.master.reverbReturn = 1.0f;
+    auto muted = source;
+    muted.master.reverbReturn = 0.0f;
+    const auto expected = renderBypassTest(muted, 0, {}, 0.0f, 256, true);
+    check(expected != renderBypassTest(source, 0, {}, 0.0f, 256, true), "Reverb fixture distinguishes wet output");
+    check(expected == renderBypassTest(source, 0, "masterReverbReturn", 0.0f, 256, true),
+          "Reverb return host automation reaches audio");
+}
+
+void testSharedDistortionAutomation()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    auto* parameter = processor->parameters().getParameter("masterDistortionDrive");
+    check(parameter != nullptr, "shared distortion exposes native Master DistDrive automation");
+    if (parameter == nullptr) return;
+    check(parameter->isAutomatable() && parameter->getParameterIndex() == 298,
+          "shared distortion appends stable automation index");
+    for (float value : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f})
+        check(parameter->getText(value, 32) == juce::String(value, 2)
+                  && std::abs(parameter->getValueForText(juce::String(value, 2)) - value) < 1e-7f,
+              "shared distortion matches native text and range");
+    parameter->setValueNotifyingHost(0.75f);
+    juce::MemoryBlock saved;
+    processor->getStateInformation(saved);
+    parameter->setValueNotifyingHost(0.0f);
+    processor->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    check(parameter->getValue() == 0.75f, "shared distortion recalls automated state");
+    auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    auto* slider = childWithId<juce::Slider>(*editor, "effect.9");
+    check(slider != nullptr, "shared distortion Gain control exists");
+    if (slider == nullptr) return;
+    BeatScholarLinuxEditorTestAccess::tick(*editor);
+    check(std::abs(slider->getValue() - 0.75) < 1e-7, "shared Gain follows host automation");
+    slider->onDragStart();
+    slider->setValue(0.25, juce::sendNotificationSync);
+    slider->onDragEnd();
+    check(parameter->getValue() == 0.25f, "shared Gain reports host automation");
+    auto* unrelated = processor->parameters().getParameter("masterCrush");
+    unrelated->setValueNotifyingHost(0.625f);
+    check(processor->restoreProjectHistory(false) && parameter->getValue() == 0.75f,
+          "shared Gain undo restores host value");
+    check(unrelated->getValue() == 0.625f, "shared Gain undo preserves unrelated automation");
+    check(processor->restoreProjectHistory(true) && parameter->getValue() == 0.25f,
+          "shared Gain redo restores host value");
+    check(std::all_of(processor->projectState().kit.pads.begin(), processor->projectState().kit.pads.end(),
+                     [](const auto& pad) { return pad.distortionDrive == 0.25f; }),
+          "shared Gain synchronizes every pad representation");
+    for (const int pad : { 0, 15 })
+    {
+        auto dry = makeBypassTestProject(pad);
+        dry.kit.pads[pad].independentDistortion = true;
+        dry.kit.pads[pad].distortionMix = 1.0f;
+        auto wet = dry;
+        for (auto& sound : wet.kit.pads) sound.distortionDrive = 0.85f;
+        const auto expected = renderBypassTest(wet, pad, {}, 0.0f, 64, false, true);
+        check(expected != renderBypassTest(dry, pad, {}, 0.0f, 64, false, true), "shared Gain fixture is audible");
+        check(expected == renderBypassTest(dry, pad, "masterDistortionDrive", 0.85f, 64, false, true),
+              "shared Gain automation reaches audio for first and last pads");
+    }
+}
+
+void testPadLengthAutomation()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    for (int pad = 0; pad < 16; ++pad)
+    {
+        auto* parameter = processor->parameters().getParameter("pad" + juce::String(pad + 1) + "Length");
+        check(parameter != nullptr, "pad length exposed");
+        if (parameter == nullptr) continue;
+        check(parameter->isAutomatable() && parameter->getParameterIndex() == 316 + pad,
+              "pad length preserves existing parameter indices");
+        for (int i = 0; i < 5; ++i)
+            check(parameter->getText(i * 0.25f, 32) == juce::String(i * 0.25f, 2),
+                  "pad length matches original range text");
+        parameter->setValueNotifyingHost(0.75f);
+    }
+    juce::MemoryBlock saved;
+    processor->getStateInformation(saved);
+    auto recalled = std::make_unique<BeatScholarLinuxProcessor>();
+    recalled->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    for (int pad = 0; pad < 16; ++pad)
+    {
+        check(recalled->projectEditor().state().kit.pads[pad].damp == 0.75f,
+              "pad length survives recall");
+        check(recalled->parameters().getParameter("pad" + juce::String(pad + 1) + "Length")->getValue() == 0.75f,
+              "pad length restores host parameter");
+    }
+    for (const int pad : { 0, 15 })
+    {
+        auto original = makeBypassTestProject(pad);
+        original.kit.pads[pad].oneShot = true;
+        original.kit.pads[pad].damp = 0.0f;
+        auto shortened = original;
+        shortened.kit.pads[pad].damp = 0.85f;
+        const auto dry = renderBypassTest(original, pad, {}, 0.0f);
+        const auto shortAudio = renderBypassTest(shortened, pad, {}, 0.0f);
+        check(dry != shortAudio, "length fixture changes audible envelope");
+        check(shortAudio == renderBypassTest(original, pad, "pad" + juce::String(pad + 1) + "Length", 0.85f),
+              "host length controls sample envelope");
+    }
+}
+
+void testPadAttackAutomation()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    for (int pad = 0; pad < 16; ++pad)
+    {
+        auto* parameter = processor->parameters().getParameter("pad" + juce::String(pad + 1) + "Attack");
+        check(parameter != nullptr, "pad attack exposed");
+        if (parameter == nullptr) continue;
+        check(parameter->isAutomatable() && parameter->getParameterIndex() == 332 + pad,
+              "pad attack preserves existing parameter indices");
+        for (int i = 0; i < 5; ++i)
+            check(parameter->getText(i * 0.25f, 32) == juce::String(i * 0.25f, 2),
+                  "pad attack matches original range text");
+        parameter->setValueNotifyingHost(0.024f);
+        check(std::abs(parameter->getValue() - 0.02f) < 1e-6f,
+              "pad attack rounds down to native hundredths");
+        parameter->setValueNotifyingHost(0.025f);
+        check(std::abs(parameter->getValue() - 0.03f) < 1e-6f,
+              "pad attack rounds midpoint up to native hundredths");
+        parameter->setValueNotifyingHost(0.75f);
+    }
+    juce::MemoryBlock saved;
+    processor->getStateInformation(saved);
+    auto recalled = std::make_unique<BeatScholarLinuxProcessor>();
+    recalled->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    for (int pad = 0; pad < 16; ++pad)
+    {
+        check(recalled->projectEditor().state().kit.pads[pad].attackSeconds == 0.75f,
+              "pad attack survives recall");
+        check(recalled->parameters().getParameter("pad" + juce::String(pad + 1) + "Attack")->getValue() == 0.75f,
+              "pad attack restores host parameter");
+    }
+    auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    auto* slider = childWithId<juce::Slider>(*editor, "sound.0");
+    auto* attack = processor->parameters().getParameter("pad1Attack");
+    check(slider != nullptr && attack != nullptr, "attack automation editor exists");
+    if (slider != nullptr && attack != nullptr)
+    {
+        BeatScholarLinuxEditorTestAccess::tick(*editor);
+        check(std::abs(slider->getValue() - 0.75) < 1e-6 && slider->getMaximum() == 1.0,
+              "attack automation refreshes editor and native range");
+        slider->onDragStart();
+        slider->setValue(0.25, juce::sendNotificationSync);
+        slider->onDragEnd();
+        processor->projectState().ui.selectedPad = 15;
+        check(processor->restoreProjectHistory(false) && attack->getValue() == 0.75f,
+              "attack undo targets original pad");
+        check(processor->restoreProjectHistory(true) && attack->getValue() == 0.25f,
+              "attack redo targets original pad");
+    }
+    for (const int pad : { 0, 15 })
+    {
+        auto original = makeBypassTestProject(pad);
+        original.kit.pads[pad].oneShot = true;
+        original.kit.pads[pad].attackSeconds = 0.0f;
+        auto shortened = original;
+        shortened.kit.pads[pad].attackSeconds = 0.85f;
+        const auto dry = renderBypassTest(original, pad, {}, 0.0f);
+        const auto shortAudio = renderBypassTest(shortened, pad, {}, 0.0f);
+        check(dry != shortAudio, "attack fixture changes audible envelope");
+        check(shortAudio == renderBypassTest(original, pad, "pad" + juce::String(pad + 1) + "Attack", 0.85f),
+              "host attack controls sample envelope");
+    }
+}
+
+void testPadRemainingEnvelopeAutomation()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    constexpr std::array names { "Decay", "Sustain", "Release" };
+    constexpr std::array members { &bsl::PadState::decaySeconds,
+                                  &bsl::PadState::sustainLevel, &bsl::PadState::releaseSeconds };
+    for (int control = 0; control < 3; ++control)
+        for (int pad = 0; pad < 16; ++pad)
+        {
+            auto* parameter = processor->parameters().getParameter(
+                "pad" + juce::String(pad + 1) + names[control]);
+            check(parameter != nullptr, "remaining envelope parameter exists");
+            if (!parameter) continue;
+            check(parameter->isAutomatable() && parameter->getParameterIndex() == 348 + control * 16 + pad,
+                  "remaining envelope parameters append without renumbering");
+            parameter->setValueNotifyingHost(0.024f);
+            check(std::abs(parameter->getValue() - 0.02f) < 1e-6f,
+                  "remaining envelope rounds down to native hundredths");
+            parameter->setValueNotifyingHost(0.025f);
+            check(std::abs(parameter->getValue() - 0.03f) < 1e-6f,
+                  "remaining envelope rounds midpoint up to native hundredths");
+            parameter->setValueNotifyingHost(0.15f + control * 0.25f);
+        }
+    juce::MemoryBlock saved;
+    processor->getStateInformation(saved);
+    auto recalled = std::make_unique<BeatScholarLinuxProcessor>();
+    recalled->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    for (int control = 0; control < 3; ++control)
+        for (int pad = 0; pad < 16; ++pad)
+            check(std::abs(recalled->projectState().kit.pads[pad].*members[control]
+                           - (0.15f + control * 0.25f)) < 1e-6f,
+                  "remaining envelope automation survives state recall");
+}
+
+void testPadEnableAutomation()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    for (int pad = 0; pad < 16; ++pad)
+    {
+        const auto id = "pad" + juce::String(pad + 1) + "FilterEnabled";
+        auto* parameter = processor->parameters().getParameter(id);
+        check(parameter != nullptr, "pad filter enable exposed: " + id);
+        if (parameter == nullptr) continue;
+        check(parameter->isAutomatable() && parameter->getParameterIndex() == 300 + pad,
+              "pad filter enables preserve previous host indices");
+        for (int i = 0; i < 5; ++i)
+            check(parameter->getText(i * 0.25f, 32) == (i < 2 ? "Off" : "On"),
+                  "pad filter enable matches original threshold and labels");
+        parameter->setValueNotifyingHost(0.0f);
+    }
+    juce::MemoryBlock saved;
+    processor->getStateInformation(saved);
+    auto recalled = std::make_unique<BeatScholarLinuxProcessor>();
+    recalled->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    for (int pad = 0; pad < 16; ++pad)
+    {
+        check(!recalled->projectEditor().state().kit.pads[pad].filterEnabled,
+              "pad filter enables survive state recall");
+        check(recalled->parameters().getParameter("pad" + juce::String(pad + 1) + "FilterEnabled")->getValue() == 0.0f,
+              "pad filter enables restore host parameters");
+    }
+    for (const int pad : { 0, 15 })
+    {
+        const auto id = "pad" + juce::String(pad + 1) + "FilterEnabled";
+        auto enabled = makeBypassTestProject(pad);
+        enabled.kit.pads[pad].filterEnabled = true;
+        enabled.kit.pads[pad].cutoff = 0.25f;
+        enabled.kit.pads[pad].lpfBypass = false;
+        auto disabled = enabled;
+        disabled.kit.pads[pad].filterEnabled = false;
+        const auto on = renderBypassTest(enabled, pad, {}, 0.0f);
+        const auto off = renderBypassTest(disabled, pad, {}, 0.0f);
+        check(on != off, "pad filter enable fixture audible");
+        check(off == renderBypassTest(enabled, pad, id, 0.0f), "host disables pad filter");
+        check(on == renderBypassTest(disabled, pad, id, 1.0f), "host enables pad filter");
+        enabled.kit.pads[pad].lpfBypass = true;
+        check(off == renderBypassTest(enabled, pad, id, 1.0f), "bypass overrides enable without resetting it");
+    }
+}
+
+void testMasterFilterEnableAutomation()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    auto* parameter = processor->parameters().getParameter("masterFilterEnabled");
+    check(parameter != nullptr, "master filter enable exposed");
+    if (parameter == nullptr) return;
+    check(parameter->isAutomatable() && parameter->getParameterIndex() == 299,
+          "master filter enable appended without moving existing parameters");
+    for (int i = 0; i < 5; ++i)
+        check(parameter->getText(i * 0.25f, 32) == (i < 2 ? "Off" : "On"),
+              "master filter enable matches original threshold and labels");
+    parameter->setValueNotifyingHost(0.0f);
+    juce::MemoryBlock saved;
+    processor->getStateInformation(saved);
+    parameter->setValueNotifyingHost(1.0f);
+    processor->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    check(parameter->getValue() == 0.0f && !processor->projectEditor().state().master.filterEnabled,
+          "disabled master filter survives state recall");
+    for (const int pad : { 0, 15 })
+    {
+        auto enabled = makeBypassTestProject(pad);
+        enabled.master.cutoff = 0.25f;
+        enabled.master.filterEnabled = true;
+        auto disabled = enabled;
+        disabled.master.filterEnabled = false;
+        const auto on = renderBypassTest(enabled, pad, {}, 0.0f);
+        const auto off = renderBypassTest(disabled, pad, {}, 0.0f);
+        check(on != off, "master filter enable fixture audible");
+        check(off == renderBypassTest(enabled, pad, "masterFilterEnabled", 0.0f),
+              "host can disable master filter");
+        check(on == renderBypassTest(disabled, pad, "masterFilterEnabled", 1.0f),
+              "host can enable master filter");
+    }
+}
+
+void testMasterFilterAutomationExposure()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    const std::array<const char*, 2> ids { "masterCutoff", "masterResonance" };
+    const std::array<const char*, 5> cutoffText { "10 Hz", "208 Hz", "2.00 kHz", "7.68 kHz", "20.00 kHz" };
+    const std::array<const char*, 5> resonanceText { "0.10", "0.70", "1.30", "1.90", "2.50" };
+    for (int control = 0; control < 2; ++control)
+    {
+        auto* parameter = processor->parameters().getParameter(ids[control]);
+        check(parameter != nullptr, "master filter exposes " + juce::String(ids[control]));
+        if (parameter == nullptr) continue;
+        check(parameter->isAutomatable(), "master filter is automatable");
+        check(parameter->getParameterIndex() == 296 + control, "master filter preserves prior indices");
+        for (int position = 0; position < 5; ++position)
+        {
+            const auto normalized = position * 0.25f;
+            const auto* text = control == 0 ? cutoffText[position] : resonanceText[position];
+            check(parameter->getText(normalized, 32) == text, "master filter matches original formatted range: " + juce::String(ids[control])
+                  + " at " + juce::String(normalized) + " got " + parameter->getText(normalized, 32)
+                  + " expected " + text);
+            check(std::abs(parameter->getValueForText(text) - normalized) < 0.001f,
+                  "master filter parses original units");
+        }
+        parameter->setValueNotifyingHost(0.75f);
+        juce::MemoryBlock saved;
+        processor->getStateInformation(saved);
+        parameter->setValueNotifyingHost(0.0f);
+        processor->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+        check(parameter->getValue() == 0.75f, "master filter recalls automation");
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        auto* slider = childWithId<juce::Slider>(*editor, control == 0 ? "master.0" : "master.1");
+        check(slider != nullptr, "master filter knob exists");
+        if (slider == nullptr) continue;
+        BeatScholarLinuxEditorTestAccess::tick(*editor);
+        check(std::abs(slider->getValue() - 0.75) < 1e-7, "master filter knob follows host");
+        slider->onDragStart();
+        slider->setValue(0.25, juce::sendNotificationSync);
+        slider->onDragEnd();
+        check(parameter->getValue() == 0.25f, "master filter knob reports host");
+        auto* unrelated = processor->parameters().getParameter("masterCrush");
+        unrelated->setValueNotifyingHost(0.625f);
+        check(processor->restoreProjectHistory(false) && parameter->getValue() == 0.75f,
+              "master filter undo restores host");
+        check(unrelated->getValue() == 0.625f, "master filter undo preserves unrelated automation");
+        check(processor->restoreProjectHistory(true) && parameter->getValue() == 0.25f,
+              "master filter redo restores host");
+        for (const int pad : { 0, 15 })
+        {
+            auto dry = makeBypassTestProject(pad);
+            dry.master.cutoff = 0.5f;
+            auto wet = dry;
+            if (control == 0) wet.master.cutoff = 0.25f;
+            else wet.master.resonance = 0.85f;
+            const auto expected = renderBypassTest(wet, pad, {}, 0.0f);
+            check(expected != renderBypassTest(dry, pad, {}, 0.0f), "master filter fixture is audible");
+            check(expected == renderBypassTest(dry, pad, ids[control], control == 0 ? 0.25f : 0.85f),
+                  "master filter automation reaches audio");
+        }
+    }
+}
+
+void testMasterDynamicsAutomationExposure()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    const std::array<juce::String, 2> ids { "masterCrush", "masterCompression" };
+    for (std::size_t index = 0; index < ids.size(); ++index)
+    {
+        auto* parameter = processor->parameters().getParameter(ids[index]);
+        check(parameter != nullptr, "master dynamics exposes " + ids[index]);
+        if (parameter == nullptr) continue;
+        check(parameter->isAutomatable(), "master dynamics is automatable " + ids[index]);
+        check(parameter->getParameterIndex() == 294 + static_cast<int>(index),
+              "master dynamics appends stable parameter index " + ids[index]);
+        for (const auto value : { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f })
+        {
+            check(std::abs(parameter->convertFrom0to1(value) - value) < 1.0e-7f,
+                  "master dynamics matches native linear range " + ids[index]);
+            check(std::abs(parameter->getValueForText(juce::String(value, 2)) - value) < 1.0e-7f,
+                  "master dynamics parses native decimal " + ids[index]);
+        }
+    }
+    for (int index = 0; index < 2; ++index)
+    {
+        auto* parameter = processor->parameters().getParameter(ids[index]);
+        if (parameter == nullptr) continue;
+        parameter->setValueNotifyingHost(0.75f);
+        juce::MemoryBlock saved;
+        processor->getStateInformation(saved);
+        parameter->setValueNotifyingHost(0.0f);
+        processor->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+        check(std::abs(parameter->getValue() - 0.75f) < 1e-7f, "master dynamics recalls automation");
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        auto* slider = childWithId<juce::Slider>(*editor, index == 0 ? "master.2" : "master.3");
+        check(slider != nullptr, "master dynamics control exists");
+        if (slider == nullptr) continue;
+        BeatScholarLinuxEditorTestAccess::tick(*editor);
+        check(std::abs(slider->getValue() - 0.75) < 1e-7, "master dynamics knob follows automation");
+        slider->onDragStart();
+        slider->setValue(0.25, juce::sendNotificationSync);
+        slider->onDragEnd();
+        check(std::abs(parameter->getValue() - 0.25f) < 1e-7f, "master dynamics knob reports host");
+        check(processor->restoreProjectHistory(false) && std::abs(parameter->getValue() - 0.75f) < 1e-7f,
+              "master dynamics undo restores host value");
+        check(processor->restoreProjectHistory(true) && std::abs(parameter->getValue() - 0.25f) < 1e-7f,
+              "master dynamics redo restores host value");
+        for (const int pad : { 0, 15 })
+        {
+            auto dry = makeBypassTestProject(pad);
+            auto wet = dry;
+            if (index == 0) wet.master.crush = 0.85f;
+            else wet.master.compression = 0.85f;
+            const auto expected = renderBypassTest(wet, pad, {}, 0.0f);
+            check(expected != renderBypassTest(dry, pad, {}, 0.0f), "master dynamics fixture is audible");
+            check(expected == renderBypassTest(dry, pad, ids[index], 0.85f),
+                  "master dynamics automation reaches audio");
+        }
+    }
+
+}
+
+void testPadAux3AutomationExposure()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    for (int pad = 1; pad <= 16; ++pad)
+    {
+        auto* parameter = processor->parameters().getParameter("pad" + juce::String(pad) + "Aux3");
+        check(parameter != nullptr && parameter->isAutomatable(),
+              "Pad Aux3 distortion send exposed to host");
+        if (parameter == nullptr) continue;
+        check(parameter->getParameterIndex() == 278 + pad - 1,
+              "Aux3 sends append without renumbering existing parameters");
+        check(std::abs(parameter->getValueForText("75%") - 0.75f) < 1e-5f,
+              "Aux3 send accepts native percentage text");
+    }
+    auto* parameter = processor->parameters().getParameter("pad1Aux3");
+    if (parameter == nullptr) return;
+    auto legacy = processor->projectState();
+    legacy.kit.pads[0].independentDistortion = false;
+    legacy.kit.pads[0].distortionMix = 0.35f;
+    const auto encoded = bsl::statecodec::encode(legacy);
+    processor->setStateInformation(encoded.getData(), static_cast<int>(encoded.getSize()));
+    processor->syncAutomatedValuesToProject();
+    check(!processor->projectState().kit.pads[0].independentDistortion
+              && std::abs(parameter->getValue() - 0.35f) < 1e-5f,
+          "Legacy recall preserves insert distortion route and value");
+    parameter->setValueNotifyingHost(0.75f);
+    processor->syncAutomatedValuesToProject();
+    check(processor->projectState().kit.pads[0].independentDistortion,
+          "Explicit Aux3 automation selects independent send");
+    juce::MemoryBlock saved;
+    processor->getStateInformation(saved);
+    parameter->setValueNotifyingHost(0.0f);
+    processor->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    check(std::abs(parameter->getValue() - 0.75f) < 1e-5f
+              && processor->projectState().kit.pads[0].independentDistortion,
+          "Aux3 send and route survive state recall");
+    processor->projectState().ui.selectedPad = 0;
+    auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    auto* slider = childWithId<juce::Slider>(*editor, "effect.8");
+    check(slider != nullptr, "Aux3 knob exists");
+    if (slider == nullptr) return;
+    BeatScholarLinuxEditorTestAccess::tick(*editor);
+    check(std::abs(slider->getValue() - 0.75) < 1e-5, "Aux3 automation refreshes knob");
+    slider->onDragStart();
+    slider->setValue(0.25, juce::sendNotificationSync);
+    slider->onDragEnd();
+    check(std::abs(parameter->getValue() - 0.25f) < 1e-5f, "Aux3 knob reports host value");
+    processor->projectState().ui.selectedPad = 15;
+    check(processor->restoreProjectHistory(false) && std::abs(parameter->getValue() - 0.75f) < 1e-5f,
+          "Aux3 undo targets edited pad");
+    check(processor->restoreProjectHistory(true) && std::abs(parameter->getValue() - 0.25f) < 1e-5f,
+          "Aux3 redo targets edited pad");
+    for (const int pad : { 0, 15 })
+    {
+        auto dry = makeBypassTestProject(pad);
+        dry.kit.pads[pad].independentDistortion = true;
+        dry.kit.pads[pad].distortionMix = 0.0f;
+        auto sent = dry;
+        sent.kit.pads[pad].distortionMix = 0.85f;
+        const auto expected = renderBypassTest(sent, pad, {}, 0.0f, 256, true, true);
+        check(expected != renderBypassTest(dry, pad, {}, 0.0f, 256, true, true),
+              "Aux3 fixture has audible send output");
+        check(expected == renderBypassTest(dry, pad, "pad" + juce::String(pad + 1) + "Aux3", 0.85f, 256, true, true),
+              "Aux3 automation reaches first and last pad audio");
+    }
+
+}
+
+void testPadAmbienceAutomationExposure()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    for (int pad = 1; pad <= 16; ++pad)
+        for (const auto* suffix : { "Room", "Reverb" })
+        {
+            auto* parameter = processor->parameters().getParameter(
+                "pad" + juce::String(pad) + suffix);
+            check(parameter != nullptr && parameter->isAutomatable(),
+                  "Raw pad ambience send exposed to host");
+            if (parameter == nullptr) continue;
+            check(std::abs(parameter->getValueForText("75%") - 0.75f) < 1e-5f,
+                  "Pad ambience send accepts percentage text");
+            for (int step = 0; step < 5; ++step)
+                check(std::abs(parameter->getText(step * 0.25f, 32).getFloatValue()
+                               - step * 25.0f) < 0.01f,
+                      "Pad ambience send displays native percent mapping");
+        }
+    for (const auto* suffix : { "Room", "Reverb" })
+    {
+        const bool room = juce::String(suffix) == "Room";
+        for (int pad = 1; pad <= 16; ++pad)
+        {
+            auto* parameter = processor->parameters().getParameter("pad" + juce::String(pad) + suffix);
+            if (parameter == nullptr) return;
+            check(parameter->getParameterIndex() == 246 + (pad - 1) * 2 + (room ? 0 : 1),
+                  "Ambience sends preserve existing parameter indices");
+            parameter->setValueNotifyingHost(0.75f);
+        }
+        juce::MemoryBlock saved;
+        processor->getStateInformation(saved);
+        for (int pad = 1; pad <= 16; ++pad)
+            processor->parameters().getParameter("pad" + juce::String(pad) + suffix)->setValueNotifyingHost(0.0f);
+        processor->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+        for (int pad = 1; pad <= 16; ++pad)
+            check(std::abs(processor->parameters().getParameter("pad" + juce::String(pad) + suffix)->getValue() - 0.75f) < 1e-5f,
+                  "Ambience sends survive all-pad state recall");
+        processor->projectState().ui.selectedPad = 0;
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        auto* slider = childWithId<juce::Slider>(*editor, room ? "effect.7" : "effect.6");
+        check(slider != nullptr, "Ambience send knob exists");
+        if (slider == nullptr) return;
+        auto* parameter = processor->parameters().getParameter("pad1" + juce::String(suffix));
+        BeatScholarLinuxEditorTestAccess::tick(*editor);
+        check(std::abs(slider->getValue() - 0.75) < 1e-5, "Host send automation refreshes knob");
+        slider->onDragStart();
+        slider->setValue(0.25, juce::sendNotificationSync);
+        slider->onDragEnd();
+        check(std::abs(parameter->getValue() - 0.25f) < 1e-5f, "Ambience knob sends host change");
+        processor->projectState().ui.selectedPad = 15;
+        check(processor->restoreProjectHistory(false) && std::abs(parameter->getValue() - 0.75f) < 1e-5f,
+              "Ambience undo targets original pad");
+        check(processor->restoreProjectHistory(true) && std::abs(parameter->getValue() - 0.25f) < 1e-5f,
+              "Ambience redo targets original pad");
+        for (const int pad : { 0, 15 })
+        {
+            auto source = makeBypassTestProject(pad);
+            source.kit.pads[pad].room = 0.0f;
+            source.kit.pads[pad].reverb = 0.0f;
+            auto sent = source;
+            (room ? sent.kit.pads[pad].room : sent.kit.pads[pad].reverb) = 0.85f;
+            const auto expected = renderBypassTest(sent, pad, {}, 0.0f, 256, true);
+            check(expected != renderBypassTest(source, pad, {}, 0.0f, 256, true),
+                  "Ambience send fixture produces audible wet output");
+            check(expected == renderBypassTest(source, pad, "pad" + juce::String(pad + 1) + suffix, 0.85f, 256, true),
+                  "Ambience send host automation reaches first and last pad audio");
+        }
+    }
+
+}
+
+void testPadAuxGainAutomation()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    for (int pad = 1; pad <= 16; ++pad)
+    {
+        auto* parameter = processor->parameters().getParameter("pad" + juce::String(pad) + "AuxGain");
+        check(parameter != nullptr && parameter->isAutomatable(), "Aux4 exposed to host");
+        if (parameter == nullptr) continue;
+        check(parameter->getParameterIndex() == 227 + pad, "Aux4 preserves existing parameter indices");
+        for (int step = 0; step < 5; ++step)
+            check(std::abs(parameter->getText(step * 0.25f, 32).getFloatValue() - step * 25.0f) < 0.01f,
+                  "Aux4 display matches original percent mapping");
+        check(std::abs(parameter->getValueForText("75%") - 0.75f) < 1e-5f, "Aux4 accepts percentage text");
+        parameter->setValueNotifyingHost(0.75f);
+    }
+    juce::MemoryBlock saved;
+    processor->getStateInformation(saved);
+    processor->parameters().getParameter("pad16AuxGain")->setValueNotifyingHost(0.0f);
+    processor->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    for (int pad = 1; pad <= 16; ++pad)
+        check(std::abs(processor->parameters().getParameter("pad" + juce::String(pad) + "AuxGain")->getValue() - 0.75f) < 1e-5f,
+              "Aux4 automation survives state recall on every pad");
+    for (const int pad : { 0, 15 })
+    {
+        auto source = makeBypassTestProject(pad);
+        source.kit.pads[pad].auxGain = 0.0f;
+        auto sent = source;
+        sent.kit.pads[pad].auxGain = 0.85f;
+        const auto expected = renderBypassTest(sent, pad, {}, 0.0f);
+        check(expected != renderBypassTest(source, pad, {}, 0.0f), "Aux4 fixture distinguishes audible send");
+        check(expected == renderBypassTest(source, pad, "pad" + juce::String(pad + 1) + "AuxGain", 0.85f),
+              "Aux4 automation reaches audio on first and last pads");
+    }
+}
+
+void testPadDriveAutomation()
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    for (int pad = 1; pad <= 16; ++pad)
+    {
+        auto* parameter = processor->parameters().getParameter("pad" + juce::String(pad) + "Drive");
+        check(parameter != nullptr && parameter->isAutomatable(), "Drive gain exposed to host");
+        if (parameter == nullptr) continue;
+        const std::array expected { 0.0f, 4.07f, 12.0f, 18.72f, 24.0f };
+        for (int step = 0; step < 5; ++step)
+            check(std::abs(parameter->getText(step * 0.25f, 32).getFloatValue() - expected[step]) < 0.015f,
+                  "Drive host display follows original nonlinear range");
+        check(parameter->getParameterIndex() == 211 + pad, "Drive appended without shifting existing indices");
+    }
+    auto* parameter = processor->parameters().getParameter("pad1Drive");
+    if (parameter == nullptr) return;
+    auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    auto* slider = childWithId<juce::Slider>(*editor, "effect.3");
+    check(slider != nullptr, "Drive editor control exists");
+    if (slider == nullptr) return;
+    parameter->setValueNotifyingHost(0.5f);
+    BeatScholarLinuxEditorTestAccess::tick(*editor);
+    check(std::abs(slider->getValue() - 12.0) < 0.01, "Drive host automation refreshes knob");
+    slider->onDragStart();
+    slider->setValue(24.0, juce::sendNotificationSync);
+    slider->onDragEnd();
+    check(std::abs(parameter->getValue() - 1.0f) < 1e-5f, "Drive knob notifies host using nonlinear conversion");
+    processor->projectState().ui.selectedPad = 15;
+    check(processor->restoreProjectHistory(false) && std::abs(parameter->getValue() - 0.5f) < 1e-5f,
+          "Drive undo restores original pad");
+    check(processor->restoreProjectHistory(true) && std::abs(parameter->getValue() - 1.0f) < 1e-5f,
+          "Drive redo restores original pad");
+    juce::MemoryBlock saved;
+    processor->getStateInformation(saved);
+    parameter->setValueNotifyingHost(0.0f);
+    processor->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    check(std::abs(parameter->getValue() - 1.0f) < 1e-5f, "Drive automation survives state recall");
+    for (const int pad : { 0, 15 })
+    {
+        auto source = makeBypassTestProject(pad);
+        source.kit.pads[pad].driveEnabled = true;
+        source.kit.pads[pad].nativeDriveInsert = true;
+        auto driven = source;
+        driven.kit.pads[pad].driveGainDb = 24.0f;
+        const auto expected = renderBypassTest(driven, pad, {}, 0.0f);
+        check(expected != renderBypassTest(source, pad, {}, 0.0f), "Drive fixture distinguishes audible gain change");
+        check(expected == renderBypassTest(source, pad, "pad" + juce::String(pad + 1) + "Drive", 1.0f),
+              "Drive host automation reaches audio on first and last pads");
+    }
+}
+
+void testPadDynamicsAutomation()
+{
+    constexpr std::array suffixes { "Compression", "Crush" };
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    for (int pad = 1; pad <= 16; ++pad)
+        for (const auto* suffix : suffixes)
+        {
+            const auto id = "pad" + juce::String(pad) + suffix;
+            auto* parameter = processor->parameters().getParameter(id);
+            check(parameter != nullptr && parameter->isAutomatable(), "host dynamics exposed: " + id);
+        }
+    const std::array midpoints { "0.50", "0.50" };
+    for (std::size_t filter = 0; filter < suffixes.size(); ++filter)
+    {
+        auto* parameter = processor->parameters().getParameter("pad1" + juce::String(suffixes[filter]));
+        if (parameter == nullptr) continue;
+        check(std::abs(parameter->getText(0.5f, 32).getFloatValue() - 0.5f) < 1e-5f, "host dynamics midpoint matches original display");
+        check(std::abs(parameter->getValueForText(midpoints[filter]) - 0.5f) < 1e-5f,
+              "host dynamics text entry follows the original range");
+        processor->projectState().ui.selectedPad = 0;
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        auto* slider = childWithId<juce::Slider>(*editor, ("effect." + juce::String(static_cast<int>(filter + 4))).toRawUTF8());
+        check(slider != nullptr, "dynamics editor control exists");
+        if (slider == nullptr) continue;
+        parameter->setValueNotifyingHost(0.75f);
+        BeatScholarLinuxEditorTestAccess::tick(*editor);
+        check(std::abs(slider->getValue() - 0.75) < 1e-5, "dynamics automation refreshes visible control");
+        slider->onDragStart();
+        slider->setValue(0.25, juce::sendNotificationSync);
+        slider->onDragEnd();
+        check(std::abs(parameter->getValue() - 0.25f) < 1e-5f, "dynamics gesture updates host parameter");
+        processor->projectState().ui.selectedPad = 15;
+        check(processor->restoreProjectHistory(false) && std::abs(parameter->getValue() - 0.75f) < 1e-5f,
+              "dynamics undo retains original pad after selection changes");
+        check(processor->restoreProjectHistory(true) && std::abs(parameter->getValue() - 0.25f) < 1e-5f,
+              "dynamics redo retains original pad after selection changes");
+        juce::MemoryBlock saved;
+        processor->getStateInformation(saved);
+        parameter->setValueNotifyingHost(0.0f);
+        processor->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+        check(std::abs(parameter->getValue() - 0.25f) < 1e-5f, "dynamics automation survives state recall");
+    }
+    for (const int pad : { 0, 15 })
+        for (std::size_t filter = 0; filter < suffixes.size(); ++filter)
+        {
+            auto source = makeBypassTestProject(pad);
+            // Use the same filtered source for both automation and saved-state renders.
+            source.kit.pads[static_cast<std::size_t>(pad)].cutoff = 0.4f;
+            auto filtered = source;
+            auto& sound = filtered.kit.pads[static_cast<std::size_t>(pad)];
+            if (filter == 0) sound.compression = 0.85f;
+            if (filter == 1) sound.crush = 0.85f;
+            const auto expected = renderBypassTest(filtered, pad, {}, 0.0f);
+            const auto id = "pad" + juce::String(pad + 1) + suffixes[filter];
+            check(expected != renderBypassTest(source, pad, {}, 0.0f), "dynamics audio fixture distinguishes change");
+            check(expected == renderBypassTest(source, pad, id, 0.85f),
+                  "dynamics automation matches state-defined audio: " + id);
+        }
+    check(processor->parameters().getParameter("pad16Resonance")->getParameterIndex() == 179,
+          "dynamics additions preserve earlier parameter indices");
 }
 
 void testDocumentedPadBypassAutomation(const juce::File& output)
@@ -3806,8 +5356,11 @@ void testBeatDragPublishesEachChangeAndOwnsOneUndo()
         if (move)
             for (int step = 1; step <= 2; ++step)
             {
+                // A single lane has a 300-pixel BeatPizza component, even
+                // though its painted circle is narrower. Advance one slice
+                // per movement under the original height-based drag law.
                 editor->mouseDrag(visualEvent(*editor,
-                    { start.x, start.y - float(step * (velocityDrag ? 14 : 12)) }, modifiers));
+                    { start.x, start.y - float(step * (velocityDrag ? 14 : 147)) }, modifiers));
                 processor->publishProjectStateIfNeeded(); // Each movement must reach the audio thread.
             }
         editor->mouseUp(visualEvent(*editor, start, modifiers));
@@ -3852,10 +5405,126 @@ void testBeatDragPublishesEachChangeAndOwnsOneUndo()
     }
 }
 
+// Original 1.6.2 Ctrl-drag captures at 960x540 and 1280x720, 2026-11-26.
+void testSubdivisionDragReference(const juce::File& output)
+{
+    for (const auto wrapper : { juce::AudioProcessor::wrapperType_Standalone,
+                               juce::AudioProcessor::wrapperType_VST3 })
+    for (const int width : { 960, 1280 })
+    {
+        auto processor = makeProcessorForWrapper(wrapper);
+        auto& state = processor->projectState();
+        state = bsl::ProjectState::makeMainInit();
+        state.patterns[0].lanes = { bsl::LaneState::make(4), bsl::LaneState::make(4),
+                                   bsl::LaneState::make(4) };
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        editor->setSize(width, width * 720 / 1280);
+        const float scale = width / 1280.0f;
+        const auto start = juce::Point<float>(200.0f, 179.0f) * scale;
+        const juce::ModifierKeys mods(juce::ModifierKeys::leftButtonModifier
+                                     | juce::ModifierKeys::commandModifier);
+        auto& beat = state.patterns[0].lanes[0].beats[0];
+        beat = bsl::BeatState::withSubdivision(1, 0, 0.8f);
+        editor->mouseDown(visualEvent(*editor, start, mods));
+        auto move = [&](float dy) {
+            editor->mouseDrag(visualEvent(*editor, { start.x, start.y + dy }, mods));
+            processor->publishProjectStateIfNeeded();
+        };
+        move(-12.0f);
+        check(beat.slices.size() == 1 && !processor->projectEditor().canUndo(),
+              "short upward Ctrl-drag does not subdivide or create history like original");
+        if (width == 1280)
+        {
+            move(-47.0f);
+            check(beat.slices.size() == 1,
+                  "original 1280-wide three-lane drag remains unchanged at 47 pixels");
+        }
+        move(-48.0f * scale);
+        check(beat.slices.size() == 2, "Ctrl-drag sensitivity scales with the pie size");
+        move(-96.0f * scale);
+        check(beat.slices.size() == 3, "continued Ctrl-drag publishes the third slice");
+        const auto folder = output.getChildFile((wrapper == juce::AudioProcessor::wrapperType_VST3
+                                                ? "vst3-" : "standalone-") + juce::String(width));
+        folder.createDirectory();
+        saveVisual(*editor, folder, "three-slices.png");
+        editor->mouseUp(visualEvent(*editor, start, mods));
+        check(processor->projectEditor().undo()
+                  && state.patterns[0].lanes[0].beats[0].slices.size() == 1
+                  && !processor->projectEditor().canUndo(), "one Undo restores the size-scaled subdivision gesture");
+        check(processor->projectEditor().redo(), "subdivision gesture can be redone");
+        // Undo/redo replaces project storage, so acquire the beat again below.
+        editor->mouseDown(visualEvent(*editor, start, mods));
+        move(1.0f);
+        check(state.patterns[0].lanes[0].beats[0].slices.size() == 2,
+              "one downward pixel immediately decrements subdivision like original");
+        move(10000.0f);
+        check(state.patterns[0].lanes[0].beats[0].slices.size() == 1,
+              "downward Ctrl-drag clamps at one slice");
+        move(-10000.0f);
+        check(state.patterns[0].lanes[0].beats[0].slices.size() == 42,
+              "original Ctrl-drag range ends at 42 while toolbar still permits 45");
+        editor->mouseUp(visualEvent(*editor, start, mods));
+    }
+
+    // Original heap captures: four-lane BeatPizza height is 54 at 960 and
+    // 72 at 1280. The drag divisor is its height, independent of beat width.
+    for (const auto wrapper : { juce::AudioProcessor::wrapperType_Standalone,
+                               juce::AudioProcessor::wrapperType_VST3 })
+    for (const int width : { 960, 1280 })
+    for (const int beatCount : { 8, 16 })
+    {
+        auto processor = makeProcessorForWrapper(wrapper);
+        auto& state = processor->projectState();
+        state = bsl::ProjectState::makeMainInit();
+        state.patterns[0].bars = { bsl::BarState::make(beatCount, 4) };
+        state.patterns[0].lanes.assign(4, bsl::LaneState::make(beatCount));
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        editor->setSize(width, width * 720 / 1280);
+        const float scale = width / 1280.0f;
+        const auto start = juce::Point<float>(
+            std::round((67.0f + 1067.0f / (2.0f * beatCount)) * scale),
+            std::round(164.0f * scale));
+        const juce::ModifierKeys mods(juce::ModifierKeys::leftButtonModifier
+                                     | juce::ModifierKeys::commandModifier);
+        auto& beat = state.patterns[0].lanes[0].beats[0];
+        const float threshold = width == 960 ? 27.0f : 36.0f;
+        editor->mouseDown(visualEvent(*editor, start, mods));
+        editor->mouseDrag(visualEvent(*editor, { start.x, start.y - threshold + 1.0f }, mods));
+        check(beat.slices.size() == 1 && !processor->projectEditor().canUndo(),
+              "narrow beats retain the original component-height subdivision threshold");
+        editor->mouseDrag(visualEvent(*editor, { start.x, start.y - threshold }, mods));
+        check(beat.slices.size() == 2,
+              "four-lane subdivision starts at the original component-height threshold");
+        editor->mouseUp(visualEvent(*editor, start, mods));
+    }
+}
+
 void testRandomizerPaintStroke(const juce::File& output)
 {
+    // Hit testing must reject incomplete lane data before a stroke can mutate it.
+    for (const bool emptySlices : { false, true })
+    {
+        auto incomplete = std::make_unique<BeatScholarLinuxProcessor>();
+        auto& incompleteState = incomplete->projectState();
+        incompleteState = bsl::ProjectState::makeDefault();
+        incompleteState.patterns[0].lanes = { bsl::LaneState::make(1) };
+        if (emptySlices)
+            incompleteState.patterns[0].lanes[0].beats[0].slices.clear();
+        auto incompleteEditor = std::make_unique<BeatScholarLinuxEditor>(*incomplete);
+        incompleteEditor->setSize(1280, 720);
+        childWithId<juce::TextButton>(*incompleteEditor, "brush.dice")->onClick();
+        const auto before = incompleteState.patterns[0].lanes[0].beats;
+        const juce::Point<float> point { emptySlices ? 196.0f : 730.0f, 306.0f };
+        incompleteEditor->mouseDown(visualEvent(*incompleteEditor, point));
+        incompleteEditor->mouseUp(visualEvent(*incompleteEditor, point));
+        check(incompleteState.patterns[0].lanes[0].beats == before
+                  && !incomplete->projectEditor().canUndo(),
+              "Randomizer ignores missing beats and empty slices without creating history");
+    }
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
     auto& state = processor->projectState();
+    // Factory content may open a multi-bar tutorial; this fixture uses four beats.
+    state = bsl::ProjectState::makeDefault();
     state.patterns[0].lanes = { bsl::LaneState::make(4) };
     const auto original = state.patterns[0].lanes[0].beats;
     auto& settings = state.randomizer;
@@ -3989,7 +5658,7 @@ void testRandomizerInitUndoAndHostRecall(const juce::File& output)
                   && p.projectState().ui.randomizerFile.empty(),
               "Randomizer Init resets every setting and clears the old preset identity");
         auto* button = childWithId<juce::TextButton>(e, "random.preset");
-        check(button != nullptr && button->getButtonText() == "Init Preset",
+        check(button != nullptr && button->getButtonText() == "Init",
               "Randomizer Init displays its name after reset and host recall");
         const auto& beat = p.projectState().patterns[0].lanes[0].beats[0];
         check(beat.slices.size() == 3 && beat.slices[0].padIndex == 5
@@ -4294,8 +5963,8 @@ void testTutorialRandomizerNumericUnits(const juce::File& output)
               "one undo restores velocity before reset and a repeated reset adds no empty edit");
         editor->keyPressed(juce::KeyPress(juce::KeyPress::tabKey));
         auto* attack = childWithId<juce::Slider>(*editor, "sound.0");
-        typeValue(*attack, "0.625", "0.000");
-        check(std::abs(state.kit.pads[0].attackSeconds - 0.625f) < 1e-6f,
+        typeValue(*attack, "0.625", "0.00");
+        check(std::abs(state.kit.pads[0].attackSeconds - 0.63f) < 1e-6f,
               "leaving Randomizer restores the sound control's ordinary units");
     }
 }
@@ -4313,6 +5982,16 @@ void testMasterGainReportsHostGestures()
     auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
     auto* parameter = processor->parameters().getParameter("masterGain");
     auto* control = childWithId<juce::Slider>(*editor, "master.4");
+    check(std::abs(control->valueToProportionOfLength(1.0) - 0.79370051622391) < 1e-6,
+          "Master unity travel matches original host measurement");
+    for (const auto& point : std::array<std::pair<float, float>, 3> {{{0.25f, -30.0f}, {0.5f, -12.0f}, {1.0f, 6.0f}}})
+    {
+        const auto gain = parameter->convertFrom0to1(point.first);
+        check(std::abs(juce::Decibels::gainToDecibels(gain) - point.second) < 0.001f,
+              "Master host gain mapping matches original measured dB points");
+        check(std::abs(control->proportionOfLengthToValue(point.first) - gain) < 1e-6,
+              "Master visual and host mapping agree");
+    }
     parameter->addListener(&listener);
     control->onDragStart();
     control->setValue(0.8, juce::sendNotificationSync);
@@ -4380,8 +6059,8 @@ void testAutonomousManualRegressions()
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
     auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
     auto* gain = childWithId<juce::Slider>(*editor, "master.4");
-    check(gain != nullptr && gain->getMaximum() == 1.5,
-          "master fader matches the existing host automation range");
+    check(gain != nullptr && std::abs(gain->getMaximum() - 1.9952623844146729) < 1e-6,
+          "master fader matches the measured original +6 dB maximum");
     auto* attack = childWithId<juce::Slider>(*editor, "sound.0");
     check(attack != nullptr, "attack control exists for undo test");
     if (attack != nullptr)
@@ -4908,6 +6587,8 @@ void testTutorialPatternAddTile(const juce::File& output)
 {
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
     auto& state = processor->projectState();
+    check(processor->projectEditor().addBar(0, bsl::BarState::make(4, 4)),
+          "create both selected and inactive Bars cards for the reference fixture");
     BeatScholarLinuxEditor editor(*processor);
     editor.setVisible(true);
     auto* toggle = childWithId<juce::TextButton>(editor, "arrangement.toggle");
@@ -4944,8 +6625,22 @@ void testTutorialPatternAddTile(const juce::File& output)
             const auto image = editor.createComponentSnapshot(editor.getLocalBounds());
             check(image.getPixelAt(910, 93) == juce::Colour(35, 35, 87),
                   "Bars card edge matches original fill without a selection frame");
+            check(image.getPixelAt(910, 155) == juce::Colour(35, 35, 87),
+                  "both occupied Bars cards use the measured original fill");
             check(image.getPixelAt(910, 90) == juce::Colour(20, 20, 47),
                   "Bars rail background matches original capture");
+            check(image.getPixelAt(953, 194) == juce::Colour(20, 20, 47)
+                      && image.getPixelAt(910, 380) == juce::Colour(20, 20, 47),
+                  "Bars rail has no candidate-only outer frame");
+            const auto selectSecondBar = visualEvent(editor, { 910, 180 });
+            editor.mouseDown(selectSecondBar); editor.mouseUp(selectSecondBar);
+            const auto selectedSecond = editor.createComponentSnapshot(editor.getLocalBounds());
+            check(state.ui.selectedBar == 1
+                      && selectedSecond.getPixelAt(910, 93) == juce::Colour(35, 35, 87)
+                      && selectedSecond.getPixelAt(910, 155) == juce::Colour(35, 35, 87),
+                  "selecting a Bars card preserves the original uniform card fill");
+            const auto selectFirstBar = visualEvent(editor, { 910, 118 });
+            editor.mouseDown(selectFirstBar); editor.mouseUp(selectFirstBar);
         }
         saveVisual(editor, output, ("bars-add-short-" + std::to_string(width) + ".png").c_str());
         check(editor.getComponentAt(add->getBounds().getCentre()) == add,
@@ -5068,6 +6763,468 @@ void testArrangementOverflowAndContextActions(const juce::File& output)
         }
 }
 
+void testOriginalZoomGeometry(const juce::File& output)
+{
+    // Offline original 1.6.2 captures 15..23 in zoom-vm-original-20261126:
+    // 4/8 + 4/4, eight lanes, client 1280x720. Assert rendered dimensions,
+    // not private zoom values, so these checks catch paint/input divergence.
+    for (const auto wrapper : { juce::AudioProcessor::wrapperType_Standalone,
+                               juce::AudioProcessor::wrapperType_VST3 })
+    {
+        auto processor = makeProcessorForWrapper(wrapper);
+        auto& state = processor->projectState();
+        state = bsl::ProjectState::makeMainInit();
+        auto& pattern = state.patterns[0];
+        pattern.bars = { bsl::BarState::make(4, 8), bsl::BarState::make(4, 4) };
+        pattern.lanes.assign(8, bsl::LaneState::make(8));
+        for (auto& lane : pattern.lanes)
+            for (auto& beat : lane.beats)
+                beat = bsl::BeatState::withSubdivision(1, 0, 1.0f);
+        BeatScholarLinuxEditor editor(*processor);
+        editor.setSize(1280, 720);
+        const auto before = bsl::statecodec::encode(state);
+        const auto folder = output.getChildFile(wrapper == juce::AudioProcessor::wrapperType_VST3
+                                                   ? "vst3" : "standalone");
+        folder.createDirectory();
+        const auto click = [&](float x, float y) {
+            const auto event = visualEvent(editor, { x, y });
+            editor.mouseDown(event); editor.mouseUp(event);
+        };
+        const auto capture = [&](const char* name) {
+            saveVisual(editor, folder, name);
+            return editor.createComponentSnapshot(editor.getLocalBounds());
+        };
+        const auto checkThumb = [&](const juce::Image& image, int axis, int expected) {
+            int length = 0;
+            const auto colour = axis == 1 ? juce::Colour(50, 50, 100) : juce::Colour(146, 146, 189);
+            for (int coordinate = axis == 1 ? 12 : 72; coordinate < (axis == 1 ? 970 : 338); ++coordinate)
+                if ((axis == 1 ? image.getPixelAt(coordinate, 512)
+                               : image.getPixelAt(1148, coordinate)) == colour)
+                    ++length;
+            check(std::abs(length - expected) <= 2,
+                  "original proportional thumb axis=" + juce::String(axis)
+                      + " expected=" + juce::String(expected) + " actual=" + juce::String(length));
+        };
+        const auto checkCircle = [&](const juce::Image& image, int x, float centreY, float radius) {
+            int first = image.getHeight(), last = -1;
+            const auto fill = juce::Colour(0xffbe3063);
+            for (int y = static_cast<int>(centreY - radius - 5);
+                 y <= static_cast<int>(centreY + radius + 5); ++y)
+                if (similar(image.getPixelAt(x, y), fill)) { first = std::min(first, y); last = y; }
+            check(last >= first && std::abs((first + last) * 0.5f - centreY) <= 1.0f
+                      && std::abs((last - first + 1) * 0.5f - radius) <= 2.0f,
+                  "original circle centre/radius y=" + juce::String(centreY)
+                      + " r=" + juce::String(radius) + " observed="
+                      + juce::String(first) + ".." + juce::String(last));
+        };
+        auto image = capture("fit.png");
+        checkThumb(image, 1, 958);
+        for (const float y : { 138.0f, 185.5f, 233.0f, 280.5f, 328.0f, 375.5f, 423.0f, 470.5f })
+            checkCircle(image, 512, y, 18.0f);
+        click(1149, 353);
+        image = capture("vertical-plus.png");
+        checkThumb(image, 2, 205); // 266 / 1.30
+        checkCircle(image, 512, 145.5f, 23.4f);
+        checkCircle(image, 512, 454.25f, 23.4f);
+        click(1149, 353);
+        image = capture("vertical-plus2.png");
+        checkThumb(image, 2, 166); // 266 / 1.60
+        checkCircle(image, 512, 153.0f, 28.8f);
+        click(1149, 487);
+        checkThumb(editor.createComponentSnapshot(editor.getLocalBounds()), 2, 205);
+        for (int i = 0; i < 25; ++i) click(1149, 353);
+        image = capture("vertical-max.png");
+        checkThumb(image, 2, 38); // 266 / 7
+        checkCircle(image, 512, 288.0f, 71.1f); // quarter beat
+        checkCircle(image, 111, 288.0f, 35.6f); // half-quarter beat
+        check(!similar(image.getPixelAt(80, 125), juce::Colour(0xff14142f))
+                  && similar(image.getPixelAt(80, 137), juce::Colour(0xff14142f)),
+              "max-zoom top gutter scales to about 17px instead of a fixed 5px");
+        for (int i = 0; i < 25; ++i) click(1149, 487);
+        click(1149, 512);
+        checkThumb(capture("horizontal-plus.png"), 1, 661); // 958 / 1.45
+        click(1149, 512);
+        checkThumb(capture("horizontal-plus2.png"), 1, 504); // 958 / 1.90
+        for (int i = 0; i < 25; ++i) click(1149, 512);
+        checkThumb(capture("horizontal-max.png"), 1, 96); // 958 / 10
+        for (int i = 0; i < 25; ++i) click(994, 512);
+        checkThumb(editor.createComponentSnapshot(editor.getLocalBounds()), 1, 958);
+        click(1149, 512);
+        editor.mouseDown(visualEvent(editor, { 100, 512 }));
+        editor.mouseDrag(visualEvent(editor, { 249, 512 }));
+        editor.mouseUp(visualEvent(editor, { 249, 512 }));
+        click(1149, 512);
+        image = capture("horizontal-middle-zoom.png");
+        int thumbStart = 12;
+        while (thumbStart < 970 && image.getPixelAt(thumbStart, 512) != juce::Colour(50, 50, 100))
+            ++thumbStart;
+        check(std::abs(thumbStart - 240) <= 3,
+              "zoom retains the scrollbar fraction when the view is partially scrolled");
+        check(bsl::statecodec::encode(state) == before && !processor->projectEditor().canUndo(),
+              "original zoom range and clamp checks leave project and Undo untouched");
+    }
+}
+
+void testOriginalLowerPanelFrames(const juce::File& output)
+{
+    // Original 1.6.2 captures 18-horizontal-min and 23-resize-border in
+    // zoom-rail-original-20261126. Pixel positions below are in the client area.
+    for (const auto wrapper : { juce::AudioProcessor::wrapperType_Standalone,
+                               juce::AudioProcessor::wrapperType_VST3 })
+        for (const int width : { 960, 1280 })
+        {
+            auto processor = makeProcessorForWrapper(wrapper);
+            processor->projectState() = bsl::ProjectState::makeMainInit();
+            BeatScholarLinuxEditor editor(*processor);
+            editor.setSize(width, width * 720 / 1280);
+            const float scale = float(width) / 1280.0f;
+            for (int row = 0; row < 2; ++row)
+                for (int column = 0; column < 8; ++column)
+                {
+                    const int index = row * 8 + column;
+                    auto* pad = childWithId<juce::TextButton>(editor, "pad." + juce::String(index));
+                    check(pad != nullptr, "original kit pad exists");
+                    if (pad == nullptr)
+                        continue;
+                    check(std::abs(pad->getY() / scale - (row == 0 ? 644.0f : 566.0f)) <= 1.0f
+                              && std::abs(pad->getHeight() / scale - 58.0f) <= 1.0f,
+                          "kit pad rows match original vertical bounds");
+                    if (column < 7)
+                    {
+                        auto* next = childWithId<juce::TextButton>(editor, "pad." + juce::String(index + 1));
+                        check(next != nullptr && pad->getRight() == next->getX(),
+                              "original kit pad frames meet without background gaps");
+                    }
+                }
+            // Measured original centres: Dist belongs on the same lower row
+            // as Damp/Fine, while Level shares the top label baseline.
+            auto* dist = childWithId<juce::Slider>(editor, "effect.8");
+            check(dist != nullptr && std::abs(dist->getBounds().getCentreY() / scale - 688.0f) <= 1.0f,
+                  "Dist ring aligns with the original lower row at width " + juce::String(width));
+            for (const auto& expected : std::array<std::pair<const char*, float>, 3> {{
+                     { "HPF", 722.0f }, { "Cutoff", 779.0f }, { "Level", 1023.0f }
+                 }})
+            {
+                bool aligned = false;
+                for (auto* child : editor.getChildren())
+                    if (auto* label = dynamic_cast<juce::Label*>(child);
+                        label != nullptr && label->isVisible() && label->getText() == expected.first
+                        && label->getX() / scale < 1056.0f)
+                        aligned = std::abs(label->getBounds().getCentreX() / scale - expected.second) <= 1.5f
+                                  && std::abs(label->getBounds().getCentreY() / scale - 580.0f) <= 1.0f;
+                check(aligned, juce::String(expected.first) + " label aligns with its original axis and row");
+            }
+            const auto image = editor.createComponentSnapshot(editor.getLocalBounds());
+            const auto pixel = [&](int x, int y) {
+                return image.getPixelAt(juce::roundToInt(x * scale), juce::roundToInt(y * scale));
+            };
+            // Original 1.6.2 Master text bounds at 1280 and 960. This header
+            // has its own font proportions; other labels are already aligned.
+            {
+                int left = width, top = image.getHeight(), right = -1, bottom = -1;
+                for (int y = juce::roundToInt(530 * scale); y < juce::roundToInt(551 * scale); ++y)
+                    for (int x = juce::roundToInt(1130 * scale); x < juce::roundToInt(1210 * scale); ++x)
+                    {
+                        const auto c = image.getPixelAt(x, y);
+                        if (std::min({ c.getRed(), c.getGreen(), c.getBlue() }) > 100)
+                        {
+                            left = std::min(left, x); right = std::max(right, x);
+                            top = std::min(top, y); bottom = std::max(bottom, y);
+                        }
+                    }
+                const std::array<int, 4> expected = width == 1280
+                    ? std::array<int, 4> { 1146, 536, 1196, 546 }
+                    : std::array<int, 4> { 859, 402, 896, 409 };
+                check(std::abs(left - expected[0]) <= 1 && std::abs(top - expected[1]) <= 1
+                          && std::abs(right - expected[2]) <= 1 && std::abs(bottom - expected[3]) <= 1,
+                      "Master header matches original text bounds at width " + juce::String(width)
+                          + " actual=" + juce::String(left) + "," + juce::String(top)
+                          + ".." + juce::String(right) + "," + juce::String(bottom));
+            }
+            // Bright shell pixels in original captures 18/23. The ROIs exclude
+            // upper marks and pad frames; one pixel allows raster scaling.
+            for (const auto& bounds : std::array<std::array<int, 6>, 2> {{{
+                     60, 101, 66, 678, 92, 687 }, { 110, 151, 117, 677, 142, 687 }}})
+            {
+                int left = width, top = image.getHeight(), right = -1, bottom = -1;
+                for (int y = juce::roundToInt(677 * scale); y < juce::roundToInt(693 * scale); ++y)
+                    for (int x = juce::roundToInt(bounds[0] * scale); x < juce::roundToInt(bounds[1] * scale); ++x)
+                    {
+                        const auto colour = image.getPixelAt(x, y);
+                        if (std::min({ colour.getRed(), colour.getGreen(), colour.getBlue() }) > 100)
+                        {
+                            left = std::min(left, x); right = std::max(right, x);
+                            top = std::min(top, y); bottom = std::max(bottom, y);
+                        }
+                    }
+                check(std::abs(left - juce::roundToInt(bounds[2] * scale)) <= 1
+                          && std::abs(top - juce::roundToInt(bounds[3] * scale)) <= 1
+                          && std::abs(right - juce::roundToInt(bounds[4] * scale)) <= 1
+                          && std::abs(bottom - juce::roundToInt(bounds[5] * scale)) <= 1,
+                      "Snare kit shell matches original bounds at width " + juce::String(width)
+                          + " actual=" + juce::String(left) + "," + juce::String(top)
+                          + ".." + juce::String(right) + "," + juce::String(bottom));
+            }
+            // Original 1.6.2 small-kit silhouettes, measured independently at
+            // both widths. Two pixels allow thin strokes to cross the cutoff
+            // differently when downsampled; the old oversized glyphs fail.
+            for (const auto& expected : std::array<std::array<int, 9>, 7> {{{
+                     3, 166, 664, 192, 688, 125, 498, 144, 516 },
+                     { 9, 65, 588, 96, 610, 49, 441, 72, 457 },
+                     { 10, 114, 588, 145, 610, 86, 441, 109, 457 },
+                     { 11, 163, 588, 194, 610, 122, 441, 146, 457 },
+                     { 12, 216, 585, 241, 611, 162, 439, 180, 458 },
+                     { 13, 267, 589, 289, 609, 200, 441, 217, 457 },
+                     { 15, 364, 589, 389, 609, 273, 442, 291, 456 }}})
+            {
+                auto* pad = childWithId<juce::TextButton>(editor, "pad." + juce::String(expected[0]));
+                if (pad == nullptr)
+                    continue; // Pad existence is checked above.
+                const auto region = pad->getBounds()
+                    .withTrimmedTop(juce::roundToInt(10 * scale))
+                    .withTrimmedBottom(juce::roundToInt(6 * scale))
+                    .reduced(juce::roundToInt(4 * scale), 0);
+                int left = width, top = image.getHeight(), right = -1, bottom = -1;
+                for (int y = region.getY(); y < region.getBottom(); ++y)
+                    for (int x = region.getX(); x < region.getRight(); ++x)
+                    {
+                        const auto c = image.getPixelAt(x, y);
+                        if (std::min({ c.getRed(), c.getGreen(), c.getBlue() }) > 45
+                            && std::abs(int(c.getRed()) - int(c.getGreen())) <= 8)
+                        {
+                            left = std::min(left, x); right = std::max(right, x);
+                            top = std::min(top, y); bottom = std::max(bottom, y);
+                        }
+                    }
+                const int offset = width == 1280 ? 1 : 5;
+                check(std::abs(left - expected[offset]) <= 2
+                          && std::abs(top - expected[offset + 1]) <= 2
+                          && std::abs(right - expected[offset + 2]) <= 2
+                          && std::abs(bottom - expected[offset + 3]) <= 2,
+                      "Kit glyph " + juce::String(expected[0]) + " matches original bounds at width "
+                          + juce::String(width) + " actual=" + juce::String(left) + "," + juce::String(top)
+                          + ".." + juce::String(right) + "," + juce::String(bottom));
+            }
+            // The top-row cymbal falls to the right in both original captures.
+            // Exclude its central bell and stand when measuring the disc slope.
+            const auto discMeanY = [&](int x0, int x1) {
+                double sum = 0.0;
+                int count = 0;
+                for (int y = juce::roundToInt(583 * scale); y < juce::roundToInt(601 * scale); ++y)
+                    for (int x = juce::roundToInt(x0 * scale); x < juce::roundToInt(x1 * scale); ++x)
+                    {
+                        const auto c = image.getPixelAt(x, y);
+                        if (std::min({ c.getRed(), c.getGreen(), c.getBlue() }) > 100)
+                        {
+                            sum += y;
+                            ++count;
+                        }
+                    }
+                return count == 0 ? -1.0 : sum / count;
+            };
+            const double leftDiscY = discMeanY(17, 25), rightDiscY = discMeanY(37, 45);
+            check(leftDiscY >= 0 && rightDiscY > leftDiscY + scale,
+                  "top-row cymbal slopes down to the right like the original");
+            // Original stand peaks are 71/109 at 1280/960 (thin-line raster
+            // coverage differs). A full-bright stand is a distinct regression.
+            int closedHatStandPeak = 0;
+            for (int y = juce::roundToInt(679 * scale); y < juce::roundToInt(685 * scale); ++y)
+                for (int x = juce::roundToInt(227 * scale); x < juce::roundToInt(231 * scale); ++x)
+                    closedHatStandPeak = std::max(closedHatStandPeak, int(image.getPixelAt(x, y).getRed()));
+            check(closedHatStandPeak >= 45 && closedHatStandPeak <= 125,
+                  "closed-hat stand remains visible and fainter than its disc");
+            // Filled cymbal pixels reveal the original glyph tint without
+            // thin-stroke antialiasing; both captures use this lavender colour.
+            int brightest = 0;
+            juce::Colour glyphPeak;
+            for (int y = juce::roundToInt(667 * scale); y < juce::roundToInt(685 * scale); ++y)
+                for (int x = juce::roundToInt(213 * scale); x < juce::roundToInt(244 * scale); ++x)
+                    if (const auto colour = image.getPixelAt(x, y); colour.getRed() > brightest)
+                    {
+                        brightest = colour.getRed();
+                        glyphPeak = colour;
+                    }
+            check(glyphPeak == juce::Colour(0xffd7dbf6),
+                  "kit glyph tint matches original at width " + juce::String(width));
+            // Neutral kit pad interiors have their own shading, darker in the
+            // centre and lighter at the edges (original captures 18 and 23).
+            for (const auto& expected : std::array<std::array<int, 4>, 4> {{
+                     { 12, 580, 28, 63 }, { 16, 592, 27, 59 },
+                     { 25, 579, 27, 59 }, { 50, 610, 29, 63 }
+                 }})
+            {
+                const auto actual = pixel(expected[0], expected[1]);
+                check(std::abs(actual.getRed() - expected[2]) <= 2
+                          && std::abs(actual.getGreen() - expected[2]) <= 2
+                          && std::abs(actual.getBlue() - expected[3]) <= 2,
+                      "kit pad shading matches original at " + juce::String(expected[0])
+                          + "," + juce::String(expected[1]) + " width=" + juce::String(width)
+                          + " actual=" + actual.toDisplayString(false));
+            }
+            for (const int x : { 12, 16 })
+            {
+                const auto neutral = pixel(x, 580), selected = pixel(x, 658);
+                check(std::abs(neutral.getRed() - selected.getRed()) <= 2
+                          && std::abs(neutral.getGreen() - selected.getGreen()) <= 2
+                          && std::abs(neutral.getBlue() - selected.getBlue()) <= 2,
+                      "selected idle pad retains neutral body shading at width " + juce::String(width));
+            }
+            // Original silent captures show stereo rails only under Master,
+            // with background to the right of Level (no separate pad meter).
+            for (const int x : { 1232, 1244 })
+                check(pixel(x, 675) == juce::Colour(0xff282856),
+                      "Master rails occupy the measured original axes at width " + juce::String(width));
+            check(std::abs(pixel(1034, 675).getBlue() - pixel(1039, 675).getBlue()) <= 3,
+                  "Level has no additional meter beside its original single rail");
+            for (const int x : { 100, 1000, 1100 })
+                check(pixel(x, 526) == juce::Colour(35, 35, 87)
+                          && pixel(x, 552) == juce::Colour(35, 35, 87),
+                      "lower module header position and colour match original at width " + juce::String(width));
+            check(pixel(1000, 523) == juce::Colour(20, 20, 40),
+                  "scroll gutter extends to the original lower-header boundary");
+            for (const int x : { 406, 1060 })
+                check(pixel(x, 540) == juce::Colour(20, 20, 47)
+                          && pixel(x, 709) == juce::Colour(20, 20, 47),
+                      "lower modules have separate canvas-coloured gaps");
+            if (width == 1280)
+            {
+                check(pixel(401, 530) == juce::Colour(35, 35, 87)
+                          && pixel(410, 530) == juce::Colour(35, 35, 87)
+                          && pixel(1056, 530) == juce::Colour(35, 35, 87)
+                          && pixel(1064, 530) == juce::Colour(35, 35, 87),
+                      "lower module horizontal edges match the original");
+                check(pixel(1000, 554) == juce::Colour(35, 35, 87)
+                          && pixel(1000, 555) != juce::Colour(35, 35, 87),
+                      "original lower header is 30 pixels tall");
+            }
+            // Unobstructed body pixels measured in both original captures.
+            // Allow three channel levels for the fitted gradient and raster rounding.
+            struct BodyPixel { int x, y, red, blue; };
+            for (const auto& expected : std::array<BodyPixel, 9> {{
+                     { 80, 636, 32, 70 }, { 170, 636, 41, 82 }, { 350, 636, 25, 62 },
+                     { 630, 636, 33, 71 }, { 700, 636, 36, 74 }, { 880, 636, 42, 83 },
+                     { 1080, 636, 32, 70 }, { 1140, 636, 25, 62 }, { 1200, 636, 21, 55 }
+                 }})
+            {
+                const auto actual = pixel(expected.x, expected.y);
+                check(std::abs(actual.getRed() - expected.red) <= 3
+                          && std::abs(actual.getGreen() - expected.red) <= 3
+                          && std::abs(actual.getBlue() - expected.blue) <= 3,
+                      "lower body shading matches original at " + juce::String(expected.x)
+                          + "," + juce::String(expected.y) + " width=" + juce::String(width)
+                          + " actual=" + actual.toDisplayString(false));
+            }
+            for (const auto& gap : std::array<std::array<int, 2>, 5> {{{563, 573}, {625, 634},
+                     {687, 696}, {861, 870}, {983, 991}}})
+            {
+                const auto middle = pixel((gap[0] + gap[1]) / 2, 634);
+                for (const int edge : gap)
+                {
+                    int brightest = 0;
+                    const int x = juce::roundToInt(edge * scale);
+                    const int y = juce::roundToInt(634 * scale);
+                    for (int offset = -1; offset <= 1; ++offset)
+                        brightest = std::max(brightest, int(image.getPixelAt(x + offset, y).getBlue()));
+                    check(brightest >= middle.getBlue() + 10,
+                          "paired lower frame edge at " + juce::String(edge)
+                              + " leaves its measured gap at width " + juce::String(width));
+                }
+            }
+            const auto folder = output.getChildFile(
+                juce::String(wrapper == juce::AudioProcessor::wrapperType_VST3 ? "vst3-" : "standalone-")
+                + juce::String(width));
+            folder.createDirectory();
+            saveVisual(editor, folder, "lower-panel.png");
+        }
+}
+
+void testOriginalZoomRailGestures(const juce::File& output)
+{
+    // Original 1.6.2: zoom-rail-original-20261126 captures 04/06/08/10 and 23..26.
+    // Horizontal movement is relative in physical pixels; vertical position is absolute.
+    for (const auto wrapper : { juce::AudioProcessor::wrapperType_Standalone,
+                               juce::AudioProcessor::wrapperType_VST3 })
+        for (const int width : { 960, 1280 })
+        {
+            auto processor = makeProcessorForWrapper(wrapper);
+            auto& state = processor->projectState();
+            state = bsl::ProjectState::makeMainInit();
+            state.patterns[0].bars.assign(2, bsl::BarState::make(4, 4));
+            state.patterns[0].lanes.assign(8, bsl::LaneState::make(8));
+            BeatScholarLinuxEditor editor(*processor);
+            editor.setSize(width, width * 720 / 1280);
+            const float scale = float(width) / 1280.0f;
+            const auto before = bsl::statecodec::encode(state);
+            const auto folder = output.getChildFile(
+                juce::String(wrapper == juce::AudioProcessor::wrapperType_VST3 ? "vst3-" : "standalone-")
+                + juce::String(width));
+            folder.createDirectory();
+            const auto click = [&](juce::Point<float> point) {
+                const auto event = visualEvent(editor, point * scale);
+                editor.mouseDown(event); editor.mouseUp(event);
+            };
+            const auto dragHorizontal = [&](float start, float physicalDelta) {
+                const auto from = juce::Point<float>(start, 512) * scale;
+                const auto to = from.translated(physicalDelta, 0);
+                editor.mouseDown(visualEvent(editor, from));
+                editor.mouseDrag(visualEvent(editor, to));
+                editor.mouseUp(visualEvent(editor, to));
+            };
+            const auto checkHorizontal = [&](float zoom, const char* name) {
+                const auto image = editor.createComponentSnapshot(editor.getLocalBounds());
+                int length = 0;
+                for (int x = juce::roundToInt(12 * scale); x < juce::roundToInt(970 * scale); ++x)
+                    if (image.getPixelAt(x, juce::roundToInt(512 * scale)) == juce::Colour(50, 50, 100))
+                        ++length;
+                check(std::abs(length - 958 * scale / zoom) <= 2,
+                      juce::String(name) + " width=" + juce::String(width)
+                          + " expected zoom=" + juce::String(zoom) + " thumb=" + juce::String(length));
+                saveVisual(editor, folder, name);
+            };
+            click({1074, 512});
+            checkHorizontal(1, "track-click.png");
+            dragHorizontal(1020, 25);
+            checkHorizontal(1.9f, "drag25.png");
+            dragHorizontal(1030, 50);
+            checkHorizontal(3.7f, "drag50.png");
+            click({1100, 512});
+            checkHorizontal(3.7f, "second-track-click.png");
+            dragHorizontal(1080, 25);
+            checkHorizontal(4.6f, "off-thumb-drag.png");
+            dragHorizontal(1080, -25);
+            checkHorizontal(3.7f, "reverse-drag.png");
+            dragHorizontal(1080, 300);
+            checkHorizontal(10, "max.png");
+            if (width == 1280)
+            {
+                const auto image = editor.createComponentSnapshot(editor.getLocalBounds());
+                check(image.getPixelAt(1050, 512) == juce::Colour(0xff343463)
+                          && image.getPixelAt(1128, 512) == juce::Colour(0xffd7dbf6),
+                      "zoom rail and thumb match the original colours and maximum endpoint");
+                check(image.getPixelAt(1050, 503) == juce::Colour(20, 20, 40)
+                          && image.getPixelAt(1149, 353) == juce::Colour(196, 196, 196),
+                      "zoom control gutter and plus glyph match the original colours");
+                check(image.getPixelAt(1147, 400) == juce::Colour(52, 52, 99)
+                          && image.getPixelAt(1150, 400) == juce::Colour(52, 52, 99)
+                          && image.getPixelAt(1152, 400) == juce::Colour(20, 20, 40),
+                      "vertical zoom rail has the original four-pixel solid width");
+            }
+            dragHorizontal(1080, -300);
+            checkHorizontal(1, "min.png");
+            click({1149, 419});
+            const auto image = editor.createComponentSnapshot(editor.getLocalBounds());
+            int length = 0;
+            for (int y = juce::roundToInt(72 * scale); y < juce::roundToInt(338 * scale); ++y)
+                if (image.getPixelAt(juce::roundToInt(1148 * scale), y) == juce::Colour(146, 146, 189))
+                    ++length;
+            check(std::abs(length - 67 * scale) <= 2,
+                  "vertical track click applies absolute zoom immediately");
+            checkHorizontal(1, "vertical-track-click.png");
+            check(bsl::statecodec::encode(state) == before && !processor->projectEditor().canUndo(),
+                  "zoom rail clicks and drags leave project state and Undo unchanged");
+        }
+}
+
 void testTutorialContinuousZoomAndProportionalScroll(const juce::File& output)
 {
     for (const int width : { 960, 1280, 1600 })
@@ -5090,9 +7247,25 @@ void testTutorialContinuousZoomAndProportionalScroll(const juce::File& output)
             editor.mouseDrag(visualEvent(editor, to * scale));
             editor.mouseUp(visualEvent(editor, to * scale));
         };
+        const auto laneRailPixel = (juce::Point<float>(1148, 100) * scale).roundToInt();
+        check(editor.createComponentSnapshot(editor.getLocalBounds())
+                  .getPixelAt(laneRailPixel.x, laneRailPixel.y) == juce::Colour(50, 50, 100),
+              "vertical scroll track stays visible when all lanes fit, as in the original");
+        if (width == 960)
+        {
+            const auto image = editor.createComponentSnapshot(editor.getLocalBounds());
+            check(image.getPixelAt(858, 100) == juce::Colour(20, 20, 40)
+                      && image.getPixelAt(859, 100) == juce::Colour(50, 50, 100)
+                      && image.getPixelAt(863, 100) == juce::Colour(50, 50, 100)
+                      && image.getPixelAt(864, 100) == juce::Colour(20, 20, 40),
+                  "vertical track width and gutter match the original 960px capture");
+        }
         // Basic tutorial 5:28-5:55: independent continuous zoom and rectangular scroll thumbs.
-        drag({1014.0f, 512.0f}, {1045.43f, 512.0f}); // approximately 3x horizontal
-        drag({1141.0f, 465.0f}, {1141.0f, 451.29f}); // approximately 2x vertical
+        drag({1020.0f, 512.0f}, {1020.0f + 55.56f / scale, 512.0f}); // approximately 3x horizontal
+        drag({1149.0f, 464.0f}, {1149.0f, 448.83f}); // approximately 2x vertical
+        check(editor.createComponentSnapshot(editor.getLocalBounds())
+                  .getPixelAt(laneRailPixel.x, laneRailPixel.y) == juce::Colour(146, 146, 189),
+              "vertical scroll thumb becomes visible when zoom creates lane overflow");
         check(bsl::statecodec::encode(state) == before && !processor->projectEditor().canUndo(),
               "continuous zoom changes only the viewport");
         click(450, 300);
@@ -5106,7 +7279,7 @@ void testTutorialContinuousZoomAndProportionalScroll(const juce::File& output)
               "grabbing a scrollbar thumb preserves the clicked offset");
         processor->projectEditor().undo();
         drag({100.0f, 512.0f}, {339.5f, 512.0f}); // four quarter notes
-        drag({1141.0f, 85.0f}, {1141.0f, 129.5f}); // half a lane
+        drag({1148.0f, 85.0f}, {1148.0f, 129.5f}); // half a lane
         check(bsl::statecodec::encode(state) == before && !processor->projectEditor().canUndo(),
               "scrollbar dragging changes neither project state nor edit history");
         click(450, 300);
@@ -5172,7 +7345,7 @@ void testZoomButtonsAndScrollRails(const juce::File& output)
         auto event = visualEvent(editor, { x, y });
         editor.mouseDown(event); editor.mouseUp(event);
     };
-    click(1141, 512); // Horizontal + doubles the visible beat width.
+    click(1141, 512); // Horizontal + adds 0.45 to the zoom factor.
     click(800, 200);
     check(state.patterns[0].lanes[0].beats[1].slices[0].padIndex == 15,
           "horizontal plus zooms beat hit targets");
@@ -5184,23 +7357,23 @@ void testZoomButtonsAndScrollRails(const juce::File& output)
     click(1141, 512);
     click(965, 512); // Right end of the scroll rail, before the zoom buttons.
     state.ui.selectedPad = 13;
-    click(300, 200);
+    click(550, 200);
     check(state.patterns[0].lanes[0].beats[2].slices[0].padIndex == 13,
           "horizontal rail scrolls to the final visible beats");
     click(1141, 353); // Vertical +.
     state.ui.selectedPad = 12;
-    click(300, 400);
+    click(550, 240);
     check(state.patterns[0].lanes[0].beats[2].slices[0].padIndex == 12,
           "vertical plus zooms lane hit targets");
     click(1141, 487);
     state.ui.selectedPad = 11;
-    click(300, 400);
+    click(550, 400);
     check(state.patterns[0].lanes[1].beats[2].slices[0].padIndex == 11,
           "vertical minus restores lane hit targets");
     click(1141, 353);
-    click(1141, 330);
+    click(1148, 330);
     state.ui.selectedPad = 10;
-    click(300, 200);
+    click(550, 372);
     check(state.patterns[0].lanes[1].beats[2].slices[0].padIndex == 10,
           "vertical rail scrolls to the final lane");
     const auto afterScroll = editor.createComponentSnapshot(editor.getLocalBounds());
@@ -5214,6 +7387,39 @@ void testZoomButtonsAndScrollRails(const juce::File& output)
 
 void testDenseLaneControlsMatchTheirVisibleTargets(const juce::File& output)
 {
+    // Measured original frame centres at a 960x540 client size. The gaps
+    // between the taller S/M/minus frames must not trigger a neighbouring action.
+    for (const int laneCount : { 3, 4 })
+        for (int action = 0; action < 4; ++action)
+        {
+            auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+            auto& state = processor->projectState();
+            state.patterns[0].lanes.assign(laneCount, bsl::LaneState::make(4));
+            BeatScholarLinuxEditor editor(*processor);
+            editor.setSize(960, 540);
+            const float firstY = laneCount == 3 ? 112.0f : 100.0f;
+            const auto click = [&](float y) {
+                auto event = visualEvent(editor, { 25.0f, y });
+                editor.mouseDown(event); editor.mouseUp(event);
+            };
+            click(firstY + (action == 3 ? 47.0f : action * 16.0f));
+            const auto& lanes = state.patterns[0].lanes;
+            if (action < 2)
+                check(lanes.size() == static_cast<std::size_t>(laneCount)
+                      && lanes[0].solo == (action == 0) && lanes[0].muted == (action == 1),
+                      "reference-size lane S/M centre toggles only its action");
+            else
+                check(lanes.size() == static_cast<std::size_t>(laneCount + (action == 2 ? -1 : 1)),
+                      "reference-size lane minus/plus centre edits the lane count");
+            check(processor->projectEditor().undo(), "reference-size lane action has one Undo");
+            for (int gap = 0; gap < 3; ++gap)
+                click(firstY + 7.5f + gap * 16.0f);
+            const auto& restoredLanes = state.patterns[0].lanes;
+            check(!processor->projectEditor().canUndo()
+                  && restoredLanes.size() == static_cast<std::size_t>(laneCount)
+                  && !restoredLanes[0].solo && !restoredLanes[0].muted,
+                  "reference-size lane gaps are inert after Undo");
+        }
     // Basic Beat Making & Editing at 1:25 and 5:38 shows three lanes.
     // Retain the matching lane count for visual comparison of the control labels.
     {
@@ -5222,45 +7428,79 @@ void testDenseLaneControlsMatchTheirVisibleTargets(const juce::File& output)
         BeatScholarLinuxEditor editor(*processor);
         saveVisual(editor, output, "tutorial-three-lane-controls.png");
     }
-    // These are the four displayed first-lane button centres in the 1280x720
-    // layout with 15 lanes. They fall in different raw lane quartiles.
-    constexpr std::array<float, 4> centres { 122.79f, 126.38f, 129.96f, 133.54f };
-    for (const int width : { 960, 1280, 1600 })
-        for (int action = 0; action < 4; ++action)
-        {
-            auto processor = std::make_unique<BeatScholarLinuxProcessor>();
-            auto& state = processor->projectState();
-            state.patterns[0].lanes.assign(15, bsl::LaneState::make(4));
-            BeatScholarLinuxEditor editor(*processor);
-            editor.setSize(width, width * 720 / 1280);
-            const float scale = static_cast<float>(width) / 1280.0f;
-            if (width == 1280 && action == 0)
-                saveVisual(editor, output, "dense-lane-targets.png");
-            const auto click = [&](float x, float y) {
-                auto event = visualEvent(editor, juce::Point<float>(x, y) * scale);
-                editor.mouseDown(event); editor.mouseUp(event);
-            };
-            click(33, centres[static_cast<std::size_t>(action)]);
-            const auto& lanes = state.patterns[0].lanes;
-            if (action == 0)
-                check(lanes.size() == 15 && lanes[0].solo && !lanes[0].muted,
-                      "dense lane visible S toggles only solo");
-            else if (action == 1)
-                check(lanes.size() == 15 && lanes[0].muted && !lanes[0].solo,
-                      "dense lane visible M toggles only mute");
-            else
-                check(lanes.size() == (action == 2 ? 14 : 16),
-                      action == 2 ? "dense lane visible minus removes a lane"
-                                  : "dense lane visible plus adds a lane");
-            check(processor->projectEditor().undo(), "lane control action has one Undo");
-            check(state.patterns[0].lanes.size() == 15
-                  && !state.patterns[0].lanes[0].solo && !state.patterns[0].lanes[0].muted,
-                  "Undo restores the lane control action");
-            click(33, 118); // Visible padding above the first control.
-            check(!processor->projectEditor().canUndo()
-                  && !state.patterns[0].lanes[0].solo && !state.patterns[0].lanes[0].muted,
-                  "lane-control padding is inert");
-        }
+    // Original 1.6.2 captures at 1280x720, client coordinates (title bar excluded):
+    // five/nine lanes use M S / - +, eleven use a tighter two-row layout,
+    // and fifteen retain only M S. These targets are independent of the layout helper.
+    struct ReferenceTargets
+    {
+        int lanes;
+        float left, right, upper, lower;
+    };
+    constexpr ReferenceTargets targets[] {
+        { 5, 20, 47, 143, 163 },
+        { 9, 20, 47, 125, 145 },
+        { 11, 20, 47, 125, 139 },
+        { 15, 22, 45, 127, 0 }
+    };
+    for (const auto wrapper : { juce::AudioProcessor::wrapperType_Standalone,
+                                juce::AudioProcessor::wrapperType_VST3 })
+        for (const int width : { 960, 1280, 1600 })
+            for (const auto& target : targets)
+            {
+                auto processor = makeProcessorForWrapper(wrapper);
+                auto& state = processor->projectState();
+                state.patterns[0].lanes.assign(target.lanes, bsl::LaneState::make(4));
+                BeatScholarLinuxEditor editor(*processor);
+                editor.setSize(width, width * 720 / 1280);
+                const float scale = static_cast<float>(width) / 1280.0f;
+                if (width == 1280)
+                {
+                    const auto name = juce::String(wrapper == juce::AudioProcessor::wrapperType_VST3
+                        ? "vst3-" : "standalone-") + juce::String(target.lanes) + "-lane-controls.png";
+                    saveVisual(editor, output, name.toRawUTF8());
+                }
+                const auto click = [&](float x, float y) {
+                    auto event = visualEvent(editor, juce::Point<float>(x, y) * scale);
+                    editor.mouseDown(event); editor.mouseUp(event);
+                };
+                for (int action = 0; action < (target.lanes == 15 ? 2 : 4); ++action)
+                {
+                    click(action == 0 || action == 3 ? target.right : target.left,
+                          action < 2 ? target.upper : target.lower);
+                    const auto& lanes = state.patterns[0].lanes;
+                    if (action < 2)
+                        check(lanes.size() == static_cast<std::size_t>(target.lanes)
+                              && lanes[0].solo == (action == 0) && lanes[0].muted == (action == 1),
+                              "original compact M/S target toggles only its action in both wrappers");
+                    else
+                        check(lanes.size() == static_cast<std::size_t>(target.lanes + (action == 2 ? -1 : 1)),
+                              "original compact minus/plus target edits the lane count in both wrappers");
+                    check(processor->projectEditor().undo(), "compact lane control has one Undo");
+                    check(state.patterns[0].lanes.size() == static_cast<std::size_t>(target.lanes)
+                          && !state.patterns[0].lanes[0].solo && !state.patterns[0].lanes[0].muted,
+                          "Undo restores the original compact lane state");
+                }
+                click(33, target.upper); // Gap between M and S.
+                if (target.lanes == 15)
+                {
+                    click(33, 133.5f); // Old stacked plus target; now an inactive column gap.
+                    click(target.left, 136);
+                    click(target.right, 136); // Hidden +/- cannot react in the bottom padding.
+                }
+                else
+                {
+                    click(33, target.lower); // Gap between - and +.
+                    if (target.lanes < 11)
+                    {
+                        click(target.left, (target.upper + target.lower) * 0.5f);
+                        click(target.right, (target.upper + target.lower) * 0.5f);
+                    }
+                }
+                check(!processor->projectEditor().canUndo()
+                      && state.patterns[0].lanes.size() == static_cast<std::size_t>(target.lanes)
+                      && !state.patterns[0].lanes[0].solo && !state.patterns[0].lanes[0].muted,
+                      "compact control gaps and hidden add/remove controls are inert at three scales");
+            }
 }
 
 void testCommandDragPansBlankGrid(const juce::File& output)
@@ -5275,8 +7515,8 @@ void testCommandDragPansBlankGrid(const juce::File& output)
         auto event = visualEvent(editor, { x, y });
         editor.mouseDown(event); editor.mouseUp(event);
     };
-    click(1141, 512); // 2x horizontal zoom.
-    click(1141, 353); // 2x vertical zoom.
+    click(1141, 512); // 1.45x horizontal zoom.
+    click(1141, 353); // 1.30x vertical zoom.
     const auto before = bsl::statecodec::encode(state);
     const juce::ModifierKeys modifiers(juce::ModifierKeys::leftButtonModifier
                                       | juce::ModifierKeys::commandModifier);
@@ -5286,7 +7526,7 @@ void testCommandDragPansBlankGrid(const juce::File& output)
     editor.mouseUp(visualEvent(editor, { -1100, -450 }, modifiers));
     check(bsl::statecodec::encode(state) == before && !processor->projectEditor().canUndo(),
           "Command drag on blank grid pans without changing slices or adding Undo");
-    click(300, 200);
+    click(550, 372);
     check(state.patterns[0].lanes[1].beats[2].slices[0].padIndex == 15,
           "blank-grid pan moves both axes and clamps at the final beats and lanes");
     saveVisual(editor, output, "command-grid-pan.png");
@@ -5466,12 +7706,12 @@ void testDocumentedNumericEntry(const juce::File& output)
     check(stream && juce::PNGImageFormat().writeImageToStream(snapshot, *stream), "capture numeric entry");
     entry->setText("0.625");
     entry->onReturnKey();
-    check(std::abs(processor->projectState().kit.pads[0].attackSeconds - 0.625f) < 1e-6f,
-          "numeric entry applies typed value");
+    check(std::abs(processor->projectState().kit.pads[0].attackSeconds - 0.63f) < 1e-6f,
+          "numeric entry applies native hundredth rounding");
     editor->mouseDoubleClick(event);
     entry->setText("0.9");
     entry->onEscapeKey();
-    check(std::abs(control->getValue() - 0.625) < 1e-6,
+    check(std::abs(control->getValue() - 0.63) < 1e-6,
           "Escape cancels numeric entry without changing the control");
 
     auto* swing = childWithId<juce::Slider>(*editor, "toolbar.swing");
@@ -5720,9 +7960,9 @@ void testFunctionalRepairs(const juce::File& output)
               "startup swing parameter agrees with the preset");
         check(std::abs(processor->parameters().getRawParameterValue("bpm")->load() - 137.0f) < 1e-5f,
               "startup tempo parameter agrees with the preset");
-        // The host gain parameter has a 0.0001 interval: -6 dB (0.501187...)
-        // rounds to 0.5012 when synchronized from the imported preset.
-        check(std::abs(processor->parameters().getRawParameterValue("masterGain")->load() - 0.5012f) < 1e-6f,
+        // The continuous reference range preserves the imported -6 dB gain.
+        check(std::abs(processor->parameters().getRawParameterValue("masterGain")->load()
+                       - juce::Decibels::decibelsToGain(-6.0f)) < 1e-6f,
               "startup master parameter agrees with the preset at host precision");
         check(!processor->isTransportPlaying() && !processor->projectEditor().canUndo(),
               "startup stays stopped without adding undo history");
@@ -6271,6 +8511,31 @@ void testReferenceToolbarLayout(const juce::File& output)
 {
     auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
     auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    // Check cached geometry, not merely the look-and-feel's calculated layout.
+    std::vector<std::string> initialSliderIds;
+    for (auto* child : editor->getChildren())
+        if (auto* slider = dynamic_cast<juce::Slider*>(child);
+            slider != nullptr && slider->isVisible() && !slider->getBounds().isEmpty())
+            initialSliderIds.push_back(slider->getComponentID().toStdString());
+    check(initialSliderIds.size() >= 5, "initial layout covers visible slider controls");
+    for (const auto& sliderId : initialSliderIds)
+    {
+        const auto* id = sliderId.c_str();
+        auto fresh = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        auto* slider = childWithId<juce::Slider>(*fresh, id);
+        check(slider != nullptr, std::string("initial layout control exists: ") + id);
+        if (slider == nullptr)
+            continue;
+        const auto initial = slider->createComponentSnapshot(slider->getLocalBounds());
+        fresh->setSize(960, 540);
+        fresh->setSize(1280, 720);
+        const auto resized = slider->createComponentSnapshot(slider->getLocalBounds());
+        int changedPixels = 0;
+        for (int y = 0; y < initial.getHeight(); ++y)
+            for (int x = 0; x < initial.getWidth(); ++x)
+                changedPixels += initial.getPixelAt(x, y) != resized.getPixelAt(x, y);
+        check(changedPixels == 0, std::string("initial layout matches resized: ") + id);
+    }
     editor->setSize(960, 540);
     editor->setVisible(true);
     // Measured original 1.6.2 centres in the 960px client, with its x=160 origin removed.
@@ -6338,15 +8603,182 @@ void testReferenceVelocityColours(const juce::File& output)
             && std::abs(int(actual.getGreen()) - int(expected.getGreen())) <= 3
             && std::abs(int(actual.getBlue()) - int(expected.getBlue())) <= 3;
     };
-    check(near(image.getPixelAt(148, 306), juce::Colour(84, 71, 53)),
+    check(near(image.getPixelAt(148, 313), juce::Colour(84, 71, 53)),
           "low-velocity slice matches original dim colour");
-    check(near(image.getPixelAt(244, 306), juce::Colour(170, 140, 60)),
+    check(near(image.getPixelAt(244, 313), juce::Colour(170, 140, 60)),
           "normal-velocity slice matches original pad hue and brightness");
     saveVisual(*editor, output, "reference-velocity-colours.png");
 }
 
-void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
+void testHeldSliceActivityDoesNotFillQueue()
 {
+    struct HostClock final : juce::AudioPlayHead
+    {
+        PositionInfo info;
+        juce::Optional<PositionInfo> getPosition() const override { return info; }
+    } clock;
+    auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
+    auto state = makeBypassTestProject(0);
+    state.global.sequencerEnabled = true;
+    state.global.samplerEnabled = false;
+    state.global.swingPercent = 0.0;
+    state.patterns[0].lanes.assign(bsl::maximumLaneCount, bsl::LaneState::make(4));
+    for (auto& lane : state.patterns[0].lanes)
+        for (auto& beat : lane.beats)
+            beat.slices[0].enabled = true;
+    const auto bytes = bsl::statecodec::encode(state);
+    processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
+    processor->disableNonMainBuses();
+    processor->setRateAndBufferSizeDetails(48000, 64);
+    processor->prepareToPlay(48000, 64);
+    processor->setPlayHead(&clock);
+    clock.info.setBpm(120.0);
+    clock.info.setIsPlaying(true);
+    juce::AudioBuffer<float> audio(2, 64);
+    juce::MidiBuffer midi;
+    for (int start = 0; start < 9600; start += 64)
+    {
+        clock.info.setTimeInSamples(start);
+        clock.info.setPpqPosition(static_cast<double>(start) / 24000.0);
+        midi.clear();
+        processor->processBlock(audio, midi);
+    }
+    check(processor->playbackActivityCount() == 32,
+          "16 held lanes enqueue one pad hit and one sector each during a 200ms UI stall at 64 samples");
+    BeatScholarLinuxProcessor::PlaybackActivity activity;
+    while (processor->takePlaybackActivity(activity)) {}
+    processor->requestPlaybackActivityRefresh();
+    clock.info.setTimeInSamples(9600);
+    clock.info.setPpqPosition(0.4);
+    midi.clear();
+    processor->processBlock(audio, midi);
+    check(processor->playbackActivityCount() == 16,
+          "editor refresh republishes each held sector without replaying pad hits");
+    while (processor->takePlaybackActivity(activity))
+        check(!activity.flashPad && activity.endFrame == 24000,
+              "refreshed sector retains its original boundary");
+    clock.info.setBpm(60.0);
+    clock.info.setTimeInSamples(9664);
+    clock.info.setPpqPosition(9664.0 / 24000.0);
+    midi.clear();
+    processor->processBlock(audio, midi);
+    check(processor->playbackActivityCount() == 16,
+          "live tempo change updates all held boundaries despite coalescing");
+    while (processor->takePlaybackActivity(activity))
+        check(!activity.flashPad && activity.endFrame >= 38335 && activity.endFrame <= 38337,
+              "tempo change holds each current sector until its new endpoint");
+    processor->setPlayHead(nullptr);
+    processor->releaseResources();
+}
+
+void testPadGlowFollowsRenderedAudio(const juce::File& output)
+{
+    using Access = BeatScholarLinuxEditorTestAccess;
+    for (const auto wrapper : {juce::AudioProcessor::wrapperType_Standalone,
+                               juce::AudioProcessor::wrapperType_VST3})
+    {
+        const auto directory = output.getChildFile(
+            wrapper == juce::AudioProcessor::wrapperType_VST3 ? "vst3" : "standalone");
+        check(directory.createDirectory().wasOk(), "create pad glow screenshots directory");
+        auto processor = makeProcessorForWrapper(wrapper);
+        auto state = makeBypassTestProject(0);
+        state.ui.selectedPad = 0;
+        state.global.auxEnabled = state.global.masterEnabled = false;
+        auto& sound = state.kit.pads[0];
+        sound.oneShot = false;
+        sound.filterEnabled = false;
+        sound.hpfBypass = true;
+        const auto bytes = bsl::statecodec::encode(state);
+        processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
+        processor->disableNonMainBuses();
+        processor->setRateAndBufferSizeDetails(48000, 480);
+        processor->prepareToPlay(48000, 480);
+        processor->stopStandalone();
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        editor->setVisible(true);
+        check(Access::glowInterval(*editor) == 10, "pad glow uses the native 10ms timer independently of slices");
+        const auto snapshot = [&] { return editor->createComponentSnapshot(editor->getLocalBounds()); };
+        const auto idle = snapshot();
+        saveVisual(*editor, directory, "pad-idle.png");
+        juce::AudioBuffer<float> audio(2, 480);
+        juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1, 36, juce::uint8(127)), 0);
+        processor->processBlock(audio, midi);
+        check(!processor->isTransportPlaying() && processor->padGlowRms(0) > 0.1f,
+              "incoming MIDI publishes audio-derived pad RMS while transport is stopped");
+        Access::tickGlow(*editor);
+        check(Access::padGlow(*editor, 0) == 0.0f, "native reader publishes the previous ramp before retargeting");
+        Access::tickGlow(*editor);
+        const float hitAlpha = Access::padGlow(*editor, 0);
+        check(hitAlpha > 0.5f && hitAlpha <= 1.0f, "audio-derived pad glow is not capped at half opacity");
+        Access::tick(*editor);
+        check(Access::padGlow(*editor, 0) == hitAlpha && Access::padGlow(*editor, 1) == 0.0f,
+              "stopped sequencer display neither clears the sounding pad nor lights another pad");
+        auto* pad = childWithId<juce::TextButton>(*editor, "pad.0");
+        check(pad != nullptr, "sounding pad is visible");
+        if (pad)
+        {
+            const auto lit = snapshot();
+            const auto padPoint = pad->getBounds().getTopLeft() + juce::Point<int>(6, pad->getHeight() / 2);
+            check(lit.getPixelAt(padPoint.x, padPoint.y) != idle.getPixelAt(padPoint.x, padPoint.y),
+                  "incoming MIDI visibly lights its instrument pad");
+            check(lit.getPixelAt(410, 605) != idle.getPixelAt(410, 605),
+                  "incoming MIDI visibly lights the selected sample body");
+        }
+        saveVisual(*editor, directory, "pad-midi-hit.png");
+        for (int block = 0; block < 12; ++block)
+        {
+            midi.clear();
+            processor->processBlock(audio, midi);
+        }
+        check(processor->padGlowRms(0) == 0.0f, "finished sample replaces RMS with zero");
+        Access::tickGlow(*editor);
+        check(Access::padGlow(*editor, 0) == hitAlpha, "native release first advances the prior rise");
+        Access::tickGlow(*editor);
+        const auto releasedAlpha = Access::padGlow(*editor, 0);
+        check(std::abs(releasedAlpha / hitAlpha - std::pow(0.5f, 1.0f / 6.57881165f)) < 1e-5f,
+              "pad release follows the measured two-step reader and alpha transfer");
+        for (int tick = 0; tick < 100; ++tick) Access::tickGlow(*editor);
+        check(Access::padGlow(*editor, 0) < 0.0001f, "pad release settles without stale event lighting");
+        processor->triggerPad(0, 1.0f);
+        midi.clear();
+        processor->processBlock(audio, midi);
+        Access::tickGlow(*editor);
+        Access::tickGlow(*editor);
+        check(Access::padGlow(*editor, 0) > 0.5f, "pad audition also lights while transport is stopped");
+        saveVisual(*editor, directory, "pad-audition-hit.png");
+        // Distinguish full-range paint from the previous 0.5 alpha cap.
+        BeatScholarLinuxProcessorTestAccess::setPadGlowRms(*processor, 0, 1.0f);
+        Access::tickGlow(*editor);
+        Access::tickGlow(*editor);
+        if (pad)
+        {
+            const auto full = pad->createComponentSnapshot(pad->getLocalBounds());
+            check(full.getPixelAt(6, pad->getHeight() / 2) == pad->findColour(juce::TextButton::buttonOnColourId),
+                  "unity RMS paints the complete pad colour");
+        }
+        for (const int frameCount : {0, 481})
+        {
+            for (std::size_t index = 0; index < bsl::padCount; ++index)
+                BeatScholarLinuxProcessorTestAccess::setPadGlowRms(*processor, index, 1.0f);
+            juce::AudioBuffer<float> rejectedBlock(2, frameCount);
+            midi.clear();
+            processor->processBlock(rejectedBlock, midi);
+            bool sourcesCleared = true;
+            for (std::size_t index = 0; index < bsl::padCount; ++index)
+                sourcesCleared = sourcesCleared && processor->padGlowRms(index) == 0.0f;
+            check(sourcesCleared, "empty and oversized audio callbacks clear all pad glow sources");
+        }
+        BeatScholarLinuxProcessorTestAccess::setPadGlowRms(*processor, 0, 1.0f);
+        editor.reset();
+        processor->releaseResources();
+        check(processor->padGlowRms(0) == 0.0f, "releasing audio resources clears the published glow source");
+    }
+}
+
+void testPlaybackLightingFollowsHostTriggers(const juce::File& output, bool factorySample = false)
+{
+    check(output.createDirectory().wasOk(), "create playback lighting screenshot directory");
     struct HostClock final : juce::AudioPlayHead
     {
         PositionInfo info;
@@ -6359,6 +8791,8 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
     state.global.swingPercent = 50.0;
     state.global.swingReference = bsl::SwingReference::quarter;
     state.ui.selectedPad = 0;
+    if (factorySample)
+        state.kit.pads[0].customSamples = {};
     state.patterns[0].lanes = { bsl::LaneState::make(4) };
     for (auto& beat : state.patterns[0].lanes[0].beats)
         beat.slices[0].enabled = false;
@@ -6401,9 +8835,9 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
     saveVisual(*editor, output, "playback-idle.png");
     check(render(0, true) == 1, "host start emits first slice note");
     const auto first = snapshot();
-    const auto sampleBody = juce::Point<int>(410, 605);
-    check(!similar(colour(first, sampleBody), colour(idle, sampleBody)),
-          "selected sample body lights on its own instrument trigger");
+    const auto sampleBody = juce::Point<int>(factorySample ? 420 : 410, 605);
+    check(similar(colour(first, sampleBody), colour(idle, sampleBody)),
+          "MIDI-only sequencing leaves the silent sample body unlit");
     check(brighter(first, idle, left) && similar(colour(first, right), colour(idle, right)),
           "first MIDI trigger lights only its visible left slice");
     const auto activeColour = colour(first, left);
@@ -6416,9 +8850,9 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
     juce::Point<int> padPoint, secondPadPoint;
     if (pad)
     {
-        padPoint = pad->getBounds().getCentre() + juce::Point<int>(0, 12);
-        check(!similar(colour(first, padPoint), colour(idle, padPoint)),
-              "trigger visibly lights the selected sampler pad");
+        padPoint = pad->getBounds().getTopLeft() + juce::Point<int>(6, pad->getHeight() / 2);
+        check(similar(colour(first, padPoint), colour(idle, padPoint)),
+              "MIDI-only sequencing leaves the silent sampler pad unlit");
     }
     if (secondPad)
         secondPadPoint = secondPad->getBounds().getCentre() + juce::Point<int>(0, 12);
@@ -6429,8 +8863,14 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
     {
         const auto notes = render(next, true);
         if (next == 12000)
-            check(notes == 0 && similar(colour(snapshot(), right), colour(idle, right)),
+        {
+            const auto held = snapshot();
+            check(notes == 0 && similar(colour(held, right), colour(idle, right)),
                   "swing delays the visual trigger beyond the straight eighth note");
+            check(colour(held, left) == colour(first, left),
+                  "sounding slice holds full brightness past 150ms until its swung boundary");
+            saveVisual(*editor, output, "playback-held.png");
+        }
         if (notes != 0)
         {
             secondTriggered = true;
@@ -6442,10 +8882,10 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
     check(similar(colour(second, sampleBody), colour(idle, sampleBody)),
           "another instrument trigger does not light the selected sample body");
     check(brighter(second, idle, right) && similar(colour(second, left), colour(idle, left)),
-          "second MIDI trigger lights its right slice after the first fades");
+          "second slice lights fully as the first turns off without a fading overlap");
     if (secondPad)
-        check(!similar(colour(second, secondPadPoint), colour(idle, secondPadPoint)),
-              "second MIDI trigger visibly lights its assigned sampler pad");
+        check(similar(colour(second, secondPadPoint), colour(idle, secondPadPoint)),
+              "another MIDI-only trigger leaves its silent pad unlit");
     saveVisual(*editor, output, "playback-second.png");
     render(next + 480, false);
     const auto stopped = snapshot();
@@ -6464,17 +8904,23 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
     check(pendingBeforeRestart == 0, "stopped display has drained its activity queue");
     check(render(0, true, false) == 1, "interleaved host restart emits its first hit");
     BeatScholarLinuxEditorTestAccess::tickWithActivityCount(*editor, pendingBeforeRestart);
-    check(processor->playbackActivityCount() == 1,
+    check(processor->playbackActivityCount() == 2,
           "a hit arriving after the display snapshot stays queued");
     BeatScholarLinuxEditorTestAccess::tick(*editor);
     check(brighter(snapshot(), idle, left), "the next display tick lights the retained restart hit");
     render(480, false);
-    // A stalled message thread must not replay an old hit as a new flash.
+    // A stalled message thread keeps a still-current sector lit, but must not
+    // replay its old pad hit or retain a sector past its end.
     render(0, true, false);
     for (int start = 480; start <= 9600; start += 480) render(start, true, false);
     BeatScholarLinuxEditorTestAccess::tick(*editor);
-    check(similar(colour(snapshot(), left), colour(idle, left)),
-          "expired audio events do not flash after a delayed UI update");
+    check(colour(snapshot(), left) == colour(first, left)
+              && similar(colour(snapshot(), sampleBody), colour(idle, sampleBody)),
+          "delayed UI preserves a current slice hold without replaying its old pad hit");
+    for (int start = 10080; start <= 20160; start += 480) render(start, true, false);
+    BeatScholarLinuxEditorTestAccess::tick(*editor);
+    check(similar(colour(snapshot(), left), colour(idle, left)) && brighter(snapshot(), idle, right),
+          "delayed UI discards ended sectors and displays only the current sector");
 
     auto restState = state;
     restState.patterns[0].lanes[0].beats[0].slices[1].enabled = false;
@@ -6507,11 +8953,18 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
     check(restTriggered && restFrame > 12000, "swung silent slice eventually illuminates");
     const auto rest = snapshot();
     check(brighter(rest, restIdle, right) && similar(colour(rest, left), colour(restIdle, left)),
-          "silent slice lights grey after the sounding slice fades");
+          "silent slice lights grey at the sounding slice boundary");
     if (silentPad)
         check(similar(colour(rest, silentPadPoint), colour(restIdle, silentPadPoint)),
               "silent slice does not flash its assigned pad");
     saveVisual(*editor, output, "playback-rest.png");
+    for (int start = restFrame + 480; start < 23520; start += 480) render(start, true);
+    check(colour(snapshot(), right) == colour(rest, right),
+          "silent slice holds its exact grey until the end of its swung interval");
+    render(18000, true); // Discontinuous seek directly into the rest.
+    check(colour(snapshot(), right) == colour(rest, right)
+              && similar(colour(snapshot(), left), colour(restIdle, left)),
+          "seek into a silent slice restores the correct held sector immediately");
 
     // Hosts may destroy the editor while processing continues. Reopening must
     // discard expired activity yet still display the next host-triggered hit.
@@ -6524,18 +8977,73 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output)
     BeatScholarLinuxEditorTestAccess::tick(*editor);
     check(similar(colour(snapshot(), left), colour(restIdle, left)),
           "reopened hosted editor does not replay expired slice activity");
+    check(render(10080, true) == 0, "editor reopen during a held sector does not retrigger a note");
+    check(brighter(snapshot(), restIdle, left),
+          "reopened editor restores the current sector on the next continuous audio block");
     check(render(0, true) == 1, "host seek after editor reopen emits its first note");
     check(brighter(snapshot(), restIdle, left),
           "reopened hosted editor lights the next host-triggered slice");
     if (auto* reopenedPad = childWithId<juce::TextButton>(*editor, "pad.0"))
     {
-        const auto point = reopenedPad->getBounds().getCentre() + juce::Point<int>(0, 12);
-        check(!similar(colour(snapshot(), point), colour(restIdle, point)),
-              "reopened hosted editor lights the next host-triggered pad");
+        const auto point = reopenedPad->getBounds().getTopLeft()
+            + juce::Point<int>(6, reopenedPad->getHeight() / 2);
+        check(similar(colour(snapshot(), point), colour(restIdle, point)),
+              "reopened hosted editor keeps MIDI-only pads unlit");
     }
     else
         check(false, "reopened hosted editor retains its sampler pad");
     saveVisual(*editor, output, "playback-reopened.png");
+    auto longState = state;
+    longState.global.swingPercent = 0.0;
+    longState.patterns[0].lanes[0].beats[0] = bsl::BeatState::withSubdivision(1, 0, 1.0f);
+    longState.patterns[0].lanes[0].beats[0].slices[0].enabled = true;
+    const auto longBytes = bsl::statecodec::encode(longState);
+    processor->setStateInformation(longBytes.getData(), static_cast<int>(longBytes.getSize()));
+    render(0, false);
+    render(0, true);
+    const auto longFirst = snapshot();
+    processor->projectState().patterns[0].lanes[0].muted = true;
+    processor->markProjectDirty();
+    BeatScholarLinuxEditorTestAccess::tick(*editor);
+    check(!BeatScholarLinuxEditorTestAccess::sliceLit(*editor, 0, 0, 0),
+          "muting a lane clears its held sector immediately");
+    render(480, true);
+    processor->projectState().patterns[0].lanes[0].muted = false;
+    processor->markProjectDirty();
+    BeatScholarLinuxEditorTestAccess::tick(*editor);
+    render(960, true);
+    check(BeatScholarLinuxEditorTestAccess::sliceLit(*editor, 0, 0, 0),
+          "unmuting a lane restores its current held sector without a seek or new hit");
+    for (int start = 1440; start <= 23040; start += 480) render(start, true);
+    check(colour(snapshot(), left) == colour(longFirst, left)
+              && BeatScholarLinuxEditorTestAccess::sliceLit(*editor, 0, 0, 0),
+          "whole-beat sector remains fully lit for nearly half a second");
+    saveVisual(*editor, output, "playback-whole-beat-held.png");
+    check(BeatScholarLinuxEditorTestAccess::displayInterval(*editor) <= 17,
+          "playback refresh runs at least 60Hz");
+    render(23520, false);
+    check(BeatScholarLinuxEditorTestAccess::displayInterval(*editor) == 50,
+          "idle display returns to 20Hz");
+
+    auto shortState = longState;
+    shortState.patterns[0].lanes[0].beats[0] = bsl::BeatState::withSubdivision(8, 0, 1.0f);
+    shortState.patterns[0].lanes.push_back(shortState.patterns[0].lanes[0]);
+    const auto shortBytes = bsl::statecodec::encode(shortState);
+    processor->setStateInformation(shortBytes.getData(), static_cast<int>(shortBytes.getSize()));
+    render(0, false);
+    for (int start = 0; start < 23520; start += 480)
+    {
+        render(start, true);
+        // Include exact block/slice boundaries: the final processed sample
+        // must stay lit until the following callback supplies its successor.
+        const int expected = (start + 479) / 3000;
+        for (std::size_t lane = 0; lane < 2; ++lane)
+            for (std::size_t slice = 0; slice < 8; ++slice)
+                check(BeatScholarLinuxEditorTestAccess::sliceLit(*editor, lane, 0, slice)
+                          == (static_cast<int>(slice) == expected),
+                      "short sectors advance individually without tails in both simultaneous lanes");
+    }
+    saveVisual(*editor, output, "playback-short-slices.png");
     processor->setPlayHead(nullptr);
     processor->releaseResources();
 }
@@ -6733,7 +9241,7 @@ void testMidiExportGatesFollowPlayback(const juce::File& output)
     // Read the serialized events without JUCE inventing missing note-offs.
     // Dense slices, swing, shared notes and mixed meters must each retain one
     // release per hit, at the same gate boundary used by the live sequencer.
-    for (int mode = 0; mode < 8; ++mode)
+    for (int mode = 0; mode < 12; ++mode)
     {
         BeatScholarLinuxProcessor processor;
         auto& state = processor.projectState();
@@ -6766,6 +9274,14 @@ void testMidiExportGatesFollowPlayback(const juce::File& output)
                     beat.slices[slice].enabled = false;
             }
         }
+        if (mode >= 8)
+        {
+            state.kit.pads[0].midiNote = 60;
+            state.kit.pads[1].midiNote = 61;
+            pattern.lanes[0].muted = mode == 8 || mode == 10;
+            pattern.lanes[0].solo = mode >= 9;
+            pattern.lanes[1].solo = mode == 11;
+        }
         bsl::TransportFrame frame;
         frame.sampleRate = 1920.0; // 120 BPM: one sample per MIDI tick.
         frame.bpm = 120.0;
@@ -6785,6 +9301,16 @@ void testMidiExportGatesFollowPlayback(const juce::File& output)
             const auto& m = midi.getTrack(0)->getEventPointer(i)->message;
             if (m.isNoteOn()) exportedOns.emplace_back(static_cast<int>(m.getTimeStamp()), m.getChannel(), m.getNoteNumber());
             if (m.isNoteOff()) exportedOffs.emplace_back(static_cast<int>(m.getTimeStamp()), m.getChannel(), m.getNoteNumber());
+        }
+        if (mode >= 8)
+        {
+            // Independent expectations also catch a shared export/playback error.
+            const std::size_t expectedCount = mode == 10 ? 0 : mode == 11 ? 2 : 1;
+            check(exportedOns.size() == expectedCount,
+                  "MIDI export honors lane mute/solo in case " + juce::String(mode));
+            if ((mode == 8 || mode == 9) && exportedOns.size() == 1)
+                check(std::get<2>(exportedOns.front()) == (mode == 8 ? 61 : 60),
+                      "MIDI export retains only the audible lane note");
         }
         std::vector<std::tuple<int, int, int>> expectedOns;
         for (std::size_t i = 0; i < played.size(); ++i)
@@ -7147,9 +9673,9 @@ void testDenseOfflineBlockKeepsEveryHit()
     for (std::size_t index = 0; index < state.kit.pads.size(); ++index)
     {
         auto& pad = state.kit.pads[index];
-        // Match the replay input map: sequencer output notes also select the
-        // native fixed-map sampler, rather than directly addressing a pad.
+        // This unremapped fixture uses the same sampler and MIDI output map.
         pad.midiNote = static_cast<std::uint8_t>(inputNotes[index]);
+        pad.samplerNote = pad.midiNote;
         pad.customSamples[0] = state.kit.pads[0].customSamples[0];
         pad.oneShot = true;
     }
@@ -7244,6 +9770,9 @@ void testFactorySamplesRespectXdgDataHome(const juce::File& output)
     const auto xdg = output.getChildFile("xdg-root");
     const auto samples = xdg.getChildFile("BeatScholarLinux/Factory/Samples");
     check(samples.createDirectory().wasOk(), "create isolated XDG sample directory");
+    // Remove only files created by this test's later reference-order phase.
+    samples.getChildFile("test_INST-BD_TYPE-Body_NAME-GR8 Body.wav").deleteFile();
+    samples.getChildFile("test_INST-BD_TYPE-Body_NAME-Akustick.wav").deleteFile();
     const auto fixture = makeBypassTestProject(0);
     juce::MemoryOutputStream wav;
     check(juce::Base64::convertFromBase64(wav, juce::String(fixture.kit.pads[0].customSamples[0].base64.value())), "decode synthetic XDG sample");
@@ -7259,7 +9788,131 @@ void testFactorySamplesRespectXdgDataHome(const juce::File& output)
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
     processor->setRateAndBufferSizeDetails(48000, 64);
     processor->prepareToPlay(48000, 64);
+    const juce::String firstName("test_INST-BD_TYPE-Body_NAME-A.wav");
+    const juce::String secondName("test_INST-BD_TYPE-Body_NAME-B.wav");
+    check(samples.getChildFile(firstName).replaceWithData(wav.getData(), wav.getDataSize()), "write first arrow sample");
+    check(samples.getChildFile(secondName).replaceWithData(wav.getData(), wav.getDataSize()), "write second arrow sample");
+    check(samples.getChildFile("SRC-Syn_Inst-BD_TYPE-Body_KIT-5_NAME-Chad Thud.flac")
+              .replaceWithData(wav.getData(), wav.getDataSize()),
+          "write extracted resource absent from original Kick Body picker");
+    check(processor->setFactorySample(0, 0, firstName), "select initial arrow sample");
+    processor->projectState().ui.selectedPad = 0;
+    {
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        const auto otherLayer = processor->projectState().kit.pads[0].factorySampleIds[1];
+        for (const auto direction : { -1, 1 })
+        {
+            check(BeatScholarLinuxEditorTestAccess::dragSampleArrowRemainsUnpressed(*editor, direction),
+                  "arrow focus and drag never latch the sample selector pressed");
+            check(processor->projectState().kit.pads[0].factorySampleIds[0] == firstName.toStdString(),
+                  "arrow drag released over label cancels sample navigation");
+        }
+        BeatScholarLinuxEditorTestAccess::clickSampleArrow(*editor, 1);
+        check(processor->projectState().kit.pads[0].factorySampleIds[0] == secondName.toStdString(),
+              "right sample arrow advances without opening menu");
+        BeatScholarLinuxEditorTestAccess::clickSampleArrow(*editor, -1);
+        check(processor->projectState().kit.pads[0].factorySampleIds[0] == firstName.toStdString(),
+              "left sample arrow returns to previous sample");
+        BeatScholarLinuxEditorTestAccess::clickSampleArrow(*editor, -1);
+        check(processor->projectState().kit.pads[0].factorySampleIds[0].empty(),
+              "left from first sample selects None");
+        BeatScholarLinuxEditorTestAccess::clickSampleArrow(*editor, -1);
+        check(processor->projectState().kit.pads[0].factorySampleIds[0] == secondName.toStdString(),
+              "left from None wraps to last sample like original");
+        BeatScholarLinuxEditorTestAccess::clickSampleArrow(*editor, 1);
+        check(processor->projectState().kit.pads[0].factorySampleIds[0].empty(),
+              "right from last sample wraps to None like original");
+        BeatScholarLinuxEditorTestAccess::clickSampleArrow(*editor, 1);
+        check(processor->projectState().kit.pads[0].factorySampleIds[0] == firstName.toStdString(),
+              "right from None selects first sample");
+        check(processor->projectState().kit.pads[0].factorySampleIds[1] == otherLayer,
+              "sample arrows preserve other layer");
+    }
+    // Reference order is curated, not alphabetical: GR8 Body precedes Akustick.
+    const juce::String referenceFirst("test_INST-BD_TYPE-Body_NAME-GR8 Body.wav");
+    const juce::String referenceNext("test_INST-BD_TYPE-Body_NAME-Akustick.wav");
+    check(samples.getChildFile(referenceFirst).replaceWithData(wav.getData(), wav.getDataSize()), "write reference first sample");
+    check(samples.getChildFile(referenceNext).replaceWithData(wav.getData(), wav.getDataSize()), "write reference next sample");
+    check(processor->setFactorySample(0, 0, {}), "start reference navigation at None");
+    {
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        BeatScholarLinuxEditorTestAccess::clickSampleArrow(*editor, 1);
+        check(processor->projectState().kit.pads[0].factorySampleIds[0] == referenceFirst.toStdString(),
+              "reference first sample takes precedence over alphabetical extras");
+        BeatScholarLinuxEditorTestAccess::clickSampleArrow(*editor, 1);
+        check(processor->projectState().kit.pads[0].factorySampleIds[0] == referenceNext.toStdString(),
+              "reference navigation skips unavailable entries in captured order");
+        BeatScholarLinuxEditorTestAccess::clickSampleArrow(*editor, 1);
+        check(processor->projectState().kit.pads[0].factorySampleIds[0] == firstName.toStdString(),
+              "unlisted samples remain accessible after reference samples");
+    }
     check(processor->setFactorySample(0, 0, "xdg-synthetic.wav"), "factory sample chooser loads from XDG_DATA_HOME");
+    check(processor->setFactorySample(0, 1, "xdg-synthetic.wav"), "load second layer before selecting None");
+    check(processor->setFactorySample(0, 0, {}), "None clears first factory layer");
+    check(processor->projectState().kit.pads[0].factorySampleIds[0].empty()
+              && processor->projectState().kit.pads[0].factorySampleIds[1] == "xdg-synthetic.wav",
+          "None leaves the other factory layer selected");
+    check(processor->setFactorySample(0, 1, {}), "None clears second factory layer");
+    juce::AudioBuffer<float> silent(2, 64);
+    juce::MidiBuffer midi;
+    processor->triggerPad(0, 1.0f);
+    processor->processBlock(silent, midi);
+    check(silent.getMagnitude(0, 64) == 0.0f, "two None layers produce silence rather than fallback sound");
+    juce::MemoryBlock saved;
+    processor->getStateInformation(saved);
+    auto restored = std::make_unique<BeatScholarLinuxProcessor>();
+    restored->setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+    restored->setRateAndBufferSizeDetails(48000, 64);
+    restored->prepareToPlay(48000, 64);
+    check(restored->projectState().kit.pads[0].factorySampleIds[0].empty()
+              && restored->projectState().kit.pads[0].factorySampleIds[1].empty(),
+          "None selections survive host state save and recreation");
+    restored->triggerPad(0, 1.0f);
+    midi.clear();
+    restored->processBlock(silent, midi);
+    check(silent.getMagnitude(0, 64) == 0.0f,
+          "recreated processor does not replace None with default samples");
+    check(restored->setFactorySample(0, 0, "xdg-synthetic.wav")
+              && restored->setFactorySample(0, 1, "xdg-synthetic.wav"),
+          "recreated processor can populate both layers after None");
+    restored->triggerPad(0, 1.0f);
+    midi.clear();
+    restored->processBlock(silent, midi);
+    check(silent.getMagnitude(0, 64) > 0.0f,
+          "selecting a sample after None restores audible output");
+    check(!processor->setFactorySample(0, 0, "missing.wav"), "missing sample is not treated as None");
+    // Sample arrows audition pads; run these after the isolated silence checks.
+    // Extracted resources absent from the original picker must not extend its
+    // arrow cycle. Unlisted user files still participate in that cycle.
+    for (const auto* hidden : {
+             "SRC-808_INST-Clap_TYPE-Hit_NAME-GR8 Clap.flac",
+             "SRC-808_INST-HH_TYPE-Closed_NAME-GR8 Hat 2.flac",
+             "SRC-ND_INST-FX_TYPE-Zap_NAME-Zip.flac",
+             "SRC-ND_INST-FX3_TYPE-Foley_NAME-AlienCricket.flac",
+             "SRC-ND_INST-FX3_TYPE-Foley_NAME-Samurai.flac" })
+        check(samples.getChildFile(hidden).replaceWithData(wav.getData(), wav.getDataSize()),
+              "write extracted resource absent from original picker");
+    for (const auto pad : { 3, 4, 14, 15 })
+    {
+        const juce::String allowed = pad == 3 ? "test_INST-Clap_TYPE-Hit_NAME-User Fixture.wav"
+            : pad == 4 ? "test_INST-HH_TYPE-Closed_NAME-User Fixture.wav"
+                       : "test_INST-FX_TYPE-Zap_NAME-User Fixture.wav";
+        check(samples.getChildFile(allowed).replaceWithData(wav.getData(), wav.getDataSize()),
+              "write user sample for filtered arrow cycle");
+        check(processor->setFactorySample(pad, 0, {}), "start filtered arrow cycle at None");
+        processor->projectState().ui.selectedPad = pad;
+        auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+        BeatScholarLinuxEditorTestAccess::clickSampleArrow(*editor, 1);
+        check(processor->projectState().kit.pads[pad].factorySampleIds[0] == allowed.toStdString(),
+              "filtered arrow cycle retains unlisted user sample for pad " + juce::String(pad));
+        BeatScholarLinuxEditorTestAccess::clickSampleArrow(*editor, 1);
+        check(processor->projectState().kit.pads[pad].factorySampleIds[0].empty(),
+              "filtered arrow cycle excludes unused extracted resources for pad " + juce::String(pad));
+        BeatScholarLinuxEditorTestAccess::clickSampleArrow(*editor, -1);
+        check(processor->projectState().kit.pads[pad].factorySampleIds[0] == allowed.toStdString(),
+              "filtered reverse arrow cycle returns to user sample for pad " + juce::String(pad));
+    }
+    processor->projectState().ui.selectedPad = 0;
     if (previous.isEmpty()) unsetenv("XDG_DATA_HOME");
     else setenv("XDG_DATA_HOME", previous.toRawUTF8(), 1);
 }
@@ -7367,6 +10020,8 @@ void testRenderedLevelMetersAndLayout(const juce::File& output)
     pad.customSamples[0].name = "meter-signal.wav";
     pad.customSamples[0].sha256 = juce::SHA256(bytes).toHexString().toStdString();
     pad.customSamples[0].base64 = juce::Base64::toBase64(bytes.getData(), bytes.getSize()).toStdString();
+    pad.gain = 1.5452543497085571f;
+    const auto presetGain = pad.gain;
     processor->markProjectDirty();
     processor->publishProjectStateIfNeeded();
     processor->setRateAndBufferSizeDetails(48000, 64);
@@ -7378,6 +10033,27 @@ void testRenderedLevelMetersAndLayout(const juce::File& output)
     check(volume != nullptr && volume->getSliderStyle() == juce::Slider::LinearVertical
           && pan != nullptr && pan->getSliderStyle() == juce::Slider::LinearHorizontal,
           "manual Level section has a vertical fader and horizontal pan slider");
+    if (volume != nullptr)
+    {
+        check(std::abs(volume->getMaximum() - 1.9952623844146729) < 1e-12,
+              "pad Level upper endpoint matches original +6 dB gain");
+        check(std::abs(volume->valueToProportionOfLength(1.0)
+                       - std::pow(1.0 / 1.9952623844146729, 0.3344777524471283)) < 1e-12,
+              "pad Level unity position follows original nonlinear gain scale");
+        check(std::abs(volume->proportionOfLengthToValue(0.9180639982223511)
+                       - 1.5452543497085571) < 1e-6,
+              "pad Level travel reproduces captured original gain sample");
+        check(pad.gain == presetGain && volume->getValue() == static_cast<double>(presetGain),
+              "opening editor preserves preset linear gain");
+        volume->setValue(volume->proportionOfLengthToValue(0.9180639982223511),
+                         juce::sendNotificationSync);
+        check(std::abs(pad.gain - 1.5452543497085571f) < 1e-6f,
+              "pad Level travel writes captured original gain to the project");
+        volume->setValue(volume->getMaximum(), juce::sendNotificationSync);
+        check(std::abs(pad.gain - 1.9952623844146729f) < 1e-6f,
+              "pad Level reaches original +6 dB endpoint through editor callback");
+        volume->setValue(presetGain, juce::sendNotificationSync);
+    }
     juce::AudioBuffer<float> audio(2, 64);
     juce::MidiBuffer midi;
     processor->processBlock(audio, midi);
@@ -7552,6 +10228,14 @@ void testSeparateDriveAndDistControls(const juce::File& output)
         check(std::abs(drive->proportionOfLengthToValue(position) - decibels) < 1e-6,
               "Drive mouse travel converts back to the native dB value");
     }
+    // Original VST3 TrackFX_FormatParamValueNormalized capture, 2026-11-23.
+    // The reference formats dB to two decimal places.
+    const std::array<std::pair<double, double>, 8> capturedDriveValues {{{0.0, 0.0},
+        {0.01, 0.0}, {0.1, 0.60}, {0.25, 4.07}, {0.5, 12.0},
+        {0.75, 18.72}, {0.9, 22.03}, {1.0, 24.0}}};
+    for (const auto& [position, decibels] : capturedDriveValues)
+        check(std::abs(drive->proportionOfLengthToValue(position) - decibels) < 0.0051,
+              "Drive travel matches captured original parameter formatting");
     drive->setValue(6.0, juce::dontSendNotification);
     saveVisual(*editor, output, "drive-native-6db.png");
     drive->setValue(18.0, juce::dontSendNotification);
@@ -7566,6 +10250,15 @@ void testSeparateDriveAndDistControls(const juce::File& output)
           "manual parallel distortion Gain fader is available");
     if (gain != nullptr)
     {
+        check(gain->getMinimum() == 0.0 && gain->getMaximum() == 1.0,
+              "parallel Gain matches original normalized range");
+        for (double position : {0.0, 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0})
+        {
+            check(std::abs(gain->proportionOfLengthToValue(position) - position) < 1e-9,
+                  "parallel Gain travel matches captured original linear values");
+            check(std::abs(gain->valueToProportionOfLength(position) - position) < 1e-9,
+                  "parallel Gain marker matches captured original linear values");
+        }
         gain->setValue(0.82, juce::sendNotificationSync);
         check(std::all_of(processor->projectState().kit.pads.begin(), processor->projectState().kit.pads.end(),
                   [](const auto& sound) { return std::abs(sound.distortionDrive - 0.82f) < 1e-6f; }),
@@ -7617,11 +10310,179 @@ void testSeparateDriveAndDistControls(const juce::File& output)
 }
 }
 
+void testOneShotAutomation()
+{
+    for (const bool hostClock : { false, true })
+    for (const bool enabled : { false, true })
+    {
+        const auto savedMode = renderSequencedGateCase(48000, 511, enabled, hostClock);
+        const auto automatedMode = renderSequencedGateCase(48000, 511, enabled, hostClock, nullptr, true);
+        check(savedMode == automatedMode,
+              "One Shot automation overrides opposite saved mode in hosted and standalone audio");
+    }
+    BeatScholarLinuxProcessor processor;
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+    {
+        auto* parameter = processor.parameters().getParameter(
+            "pad" + juce::String(static_cast<int>(pad + 1)) + "OneShot");
+        check(parameter != nullptr, "every pad exposes One Shot automation");
+        if (parameter == nullptr) continue;
+        check(parameter->getNumSteps() == 2, "One Shot is boolean");
+        check(processor.getParameters().indexOf(parameter) == 397 + static_cast<int>(pad),
+              "One Shot appends after existing parameters");
+        for (const bool enabled : { false, true })
+        {
+            parameter->setValueNotifyingHost(enabled ? 1.0f : 0.0f);
+            juce::MemoryBlock saved;
+            processor.getStateInformation(saved);
+            bsl::ProjectState decoded;
+            check(bsl::statecodec::decode(saved.getData(), saved.getSize(), decoded)
+                      && decoded.kit.pads[pad].oneShot == enabled,
+                  "automated One Shot is included in saved project");
+            parameter->setValueNotifyingHost(enabled ? 0.0f : 1.0f);
+            processor.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+            check((parameter->getValue() >= 0.5f) == enabled, "One Shot restores from project");
+        }
+        processor.syncAutomatedValuesToProject();
+        processor.projectEditor().checkpoint(bsl::HistoryParameters::padOneShot, pad);
+        parameter->setValueNotifyingHost(0.0f);
+        check(processor.restoreProjectHistory(false) && parameter->getValue() == 1.0f,
+              "One Shot undo restores the selected pad parameter");
+        check(processor.restoreProjectHistory(true) && parameter->getValue() == 0.0f,
+              "One Shot redo restores the selected pad parameter");
+        processor.projectEditor().checkpoint();
+        parameter->setValueNotifyingHost(1.0f);
+        check(processor.restoreProjectHistory(false) && parameter->getValue() == 1.0f,
+              "unrelated undo preserves One Shot automation");
+    }
+}
+
+void testSwingReferenceAutomation()
+{
+    BeatScholarLinuxProcessor processor;
+    auto* parameter = processor.parameters().getParameter("swingReference");
+    check(parameter != nullptr, "SwingRef is exposed to the host");
+    if (parameter == nullptr) return;
+    check(parameter->getNumSteps() == 3 && parameter->isDiscrete(), "SwingRef exposes three discrete choices");
+    check(processor.getParameters().indexOf(parameter) == 396, "SwingRef appends without shifting existing parameters");
+    const std::array values { 0.0f, 0.25f, 0.2501f, 0.5f, 0.7499f, 0.75f, 1.0f };
+    const std::array indices { 0, 0, 1, 1, 1, 2, 2 };
+    const std::array labels { "1/8", "1/4", "1/2" };
+    for (std::size_t i = 0; i < values.size(); ++i)
+    {
+        check(parameter->getText(values[i], 32) == labels[indices[i]], "SwingRef text matches captured original thresholds");
+        parameter->setValueNotifyingHost(values[i]);
+        juce::MemoryBlock saved;
+        processor.getStateInformation(saved);
+        bsl::ProjectState decoded;
+        check(bsl::statecodec::decode(saved.getData(), saved.getSize(), decoded)
+                  && static_cast<int>(decoded.global.swingReference) == indices[i],
+              "host SwingRef automation is included in saved state");
+        processor.syncAutomatedValuesToProject();
+        check(static_cast<int>(processor.projectState().global.swingReference) == indices[i],
+              "SwingRef automation reaches the editor project state");
+        parameter->setValueNotifyingHost(0.5f);
+        processor.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
+        check(parameter->getValue() == static_cast<float>(indices[i]) * 0.5f,
+              "saved SwingRef restores the host parameter");
+    }
+    parameter->setValueNotifyingHost(0.5f);
+    processor.syncAutomatedValuesToProject();
+    processor.projectEditor().checkpoint(bsl::HistoryParameters::swingReference);
+    parameter->setValueNotifyingHost(1.0f);
+    processor.syncAutomatedValuesToProject();
+    check(processor.restoreProjectHistory(false) && parameter->getValue() == 0.5f,
+          "SwingRef undo restores the host parameter");
+    check(processor.restoreProjectHistory(true) && parameter->getValue() == 1.0f,
+          "SwingRef redo restores the host parameter");
+    processor.projectEditor().checkpoint();
+    parameter->setValueNotifyingHost(0.0f);
+    check(processor.restoreProjectHistory(false) && parameter->getValue() == 0.0f,
+          "unrelated project undo preserves current SwingRef automation");
+}
+
 int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI initialiser;
     const juce::File output(argc > 1 ? argv[1] : "/tmp/beat-scholar-editor-tests");
     check(output.createDirectory().wasOk(), "create screenshot directory");
+    if (argc > 2 && juce::String(argv[2]) == "--lower-panel-reference")
+    {
+        testOriginalLowerPanelFrames(output.getChildFile("lower-panel"));
+        testCustomSampleAndMasterVisualStates(output);
+        testRenderedLevelMetersAndLayout(output);
+        std::cout << "Lower panel reference failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc > 2 && juce::String(argv[2]) == "--zoom-reference")
+    {
+        testOriginalZoomGeometry(output.getChildFile("original-zoom"));
+        testOriginalZoomRailGestures(output.getChildFile("zoom-rail"));
+        testSectors(output);
+        testPartialSliceOutlines(output);
+        testReferenceLaneSpacing(output);
+        testMixedMeterGeometry(output);
+        testTutorialContinuousZoomAndProportionalScroll(output);
+        testManualModifierWheelZoom();
+        testZoomButtonsAndScrollRails(output);
+        testDenseLaneControlsMatchTheirVisibleTargets(output);
+        testCommandDragPansBlankGrid(output);
+        testSubdivisionDragReference(output.getChildFile("subdivision-drag"));
+        std::cout << "Zoom reference failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc > 2 && juce::String(argv[2]) == "--randomizer-files")
+    {
+        RandomizerFileMenuTests randomizerFiles(output);
+        randomizerFiles.start([] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
+        juce::MessageManager::getInstance()->runDispatchLoop();
+        std::cout << "Randomizer file menu failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc > 2 && juce::String(argv[2]) == "--playback-lighting")
+    {
+        testPadGlowFollowsRenderedAudio(output.getChildFile("pad-glow"));
+        testHeldSliceActivityDoesNotFillQueue();
+        testPlaybackLightingFollowsHostTriggers(output.getChildFile("custom"));
+        testPlaybackLightingFollowsHostTriggers(output.getChildFile("factory"), true);
+        std::cout << "Playback lighting failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc > 2 && juce::String(argv[2]) == "--one-shot-automation")
+    {
+        testOneShotAutomation();
+        testSwingReferenceAutomation();
+        std::cout << "One Shot automation failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc > 2 && juce::String(argv[2]) == "--swing-reference-automation")
+    {
+        testSwingReferenceAutomation();
+        std::cout << "Swing reference automation failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc > 2 && juce::String(argv[2]) == "--pad-mix-automation")
+    {
+        testPadMixAutomationExposure();
+    testPadFilterAutomation();
+    testPadDynamicsAutomation();
+    testPadDriveAutomation();
+    testMasterRoomReturnAutomation();
+    testMasterReverbReturnAutomation();
+    testPadAuxGainAutomation();
+    testSharedDistortionAutomation();
+    testPadLengthAutomation();
+    testPadAttackAutomation();
+    testPadRemainingEnvelopeAutomation();
+    testPadEnableAutomation();
+    testMasterFilterEnableAutomation();
+    testMasterFilterAutomationExposure();
+    testMasterDynamicsAutomationExposure();
+    testPadAux3AutomationExposure();
+    testPadAmbienceAutomationExposure();
+        std::cout << "Pad mix automation failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
     if (argc > 2 && juce::String(argv[2]) == "--slice-outlines")
     {
         testPartialSliceOutlines(output);
@@ -7646,6 +10507,24 @@ int main(int argc, char** argv)
         std::cout << "Captured host gate failures: " << failures << '\n';
         return failures == 0 ? 0 : 1;
     }
+    if (argc > 2 && juce::String(argv[2]) == "--randomizer-stroke")
+    {
+        testRandomizerPaintStroke(output);
+        std::cout << "Randomizer stroke failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc > 2 && juce::String(argv[2]) == "--randomizer-init")
+    {
+        testRandomizerInitUndoAndHostRecall(output);
+        std::cout << "Randomizer Init failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc > 2 && juce::String(argv[2]) == "--randomizer-modules")
+    {
+        testDisabledRandomizerModules(output);
+        std::cout << "Randomizer module failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
     testFunctionalRepairs(output);
     if (argc > 2 && juce::String(argv[2]) == "--functional-repairs")
     {
@@ -7663,6 +10542,7 @@ int main(int argc, char** argv)
     testDefaultVelocityDragUndo();
     testHostRecallCancelsStalePatternInteractions();
     testBeatDragPublishesEachChangeAndOwnsOneUndo();
+    testSubdivisionDragReference(output.getChildFile("subdivision-drag"));
     testRandomizerPaintStroke(output);
     testRandomizerPanelRecall();
     testRandomizerInitUndoAndHostRecall(output);
@@ -7685,6 +10565,9 @@ int main(int argc, char** argv)
     captureTutorialFactorySoundSelection(output);
     testTutorialPatternAddTile(output);
     testArrangementOverflowAndContextActions(output);
+    testOriginalLowerPanelFrames(output.getChildFile("lower-panel"));
+    testOriginalZoomGeometry(output.getChildFile("original-zoom"));
+    testOriginalZoomRailGestures(output.getChildFile("zoom-rail"));
     testTutorialContinuousZoomAndProportionalScroll(output);
     testManualModifierWheelZoom();
     testZoomButtonsAndScrollRails(output);
@@ -7705,7 +10588,10 @@ int main(int argc, char** argv)
     testReferenceMapStripColours();
     testReferenceToolbarLayout(output);
     testReferenceVelocityColours(output);
+    testHeldSliceActivityDoesNotFillQueue();
+    testPadGlowFollowsRenderedAudio(output.getChildFile("pad-glow"));
     testPlaybackLightingFollowsHostTriggers(output);
+    testPlaybackLightingFollowsHostTriggers(output.getChildFile("factory-lighting"), true);
     testMidiExportUsesTheActiveTempo(output);
     testStandaloneRestoresMultiOutputAsStereo();
     testQueuedPatternsSurviveStructuralEdits();
@@ -7713,6 +10599,25 @@ int main(int argc, char** argv)
     testOutgoingMidiReleasesOnTransportChanges();
     testPadResonanceAltReset();
     testMasterResonanceAltReset();
+    testOneShotAutomation();
+    testSwingReferenceAutomation();
+    testPadMixAutomationExposure();
+    testPadFilterAutomation();
+    testPadDynamicsAutomation();
+    testPadDriveAutomation();
+    testMasterRoomReturnAutomation();
+    testMasterReverbReturnAutomation();
+    testPadAuxGainAutomation();
+    testSharedDistortionAutomation();
+    testPadLengthAutomation();
+    testPadAttackAutomation();
+    testPadRemainingEnvelopeAutomation();
+    testPadEnableAutomation();
+    testMasterFilterEnableAutomation();
+    testMasterFilterAutomationExposure();
+    testMasterDynamicsAutomationExposure();
+    testPadAux3AutomationExposure();
+    testPadAmbienceAutomationExposure();
     testDocumentedPadBypassAutomation(output);
     testModuleSwitchesReachEditorAndProcessor(output);
     testSamplerDisableClearsVoicesAndTails();
@@ -7739,6 +10644,7 @@ int main(int argc, char** argv)
     testEmbeddedLayerVisualStateAndHistory(output);
     testRandomizerTabRestoresSoundPanel();
     testRandomizerTriggerModuleToggleIsIndependent(output);
+    testDisabledRandomizerModules(output);
     testRandomizerFillEmptyIsClickToggle(output);
     testRandomizerPadSelectionIsUndoable();
     testRandomizerAllSelectsOnlyCurrentSlicePage();

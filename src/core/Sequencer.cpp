@@ -141,10 +141,10 @@ void forEachEvent(const ProjectState& state, const TransportFrame& transport,
                                              ? transport.swingPercent : state.global.swingPercent;
                     const double swungPosition = Sequencer::applySwing(straightPosition,
                                                             swing,
-                                                            state.global.swingReference);
+                                                            transport.swingReference.value_or(state.global.swingReference));
                     const double localSample = swungPosition * samplesPerQuarter;
                     const double gateSamples = (Sequencer::applySwing(straightPosition + subdivisionLength * sliceGateRatio,
-                                                            swing, state.global.swingReference)
+                                                            swing, transport.swingReference.value_or(state.global.swingReference))
                                                 - swungPosition) * samplesPerQuarter;
                     const double timelineStart = std::isfinite(transport.patternPhaseQuarterNotes)
                                                      ? transport.patternPhaseQuarterNotes
@@ -234,7 +234,7 @@ std::size_t Sequencer::renderBatch(const ProjectState& state,
     const double swing = std::isfinite(transport.swingPercent)
                              ? transport.swingPercent : state.global.swingPercent;
     const auto warped = [&](double position) {
-        return applySwing(position, swing, state.global.swingReference) * samplesPerQuarter;
+        return applySwing(position, swing, transport.swingReference.value_or(state.global.swingReference)) * samplesPerQuarter;
     };
     const double timelineStart = std::isfinite(transport.patternPhaseQuarterNotes)
         ? transport.patternPhaseQuarterNotes * samplesPerQuarter
@@ -286,14 +286,14 @@ std::size_t Sequencer::renderBatch(const ProjectState& state,
                         const auto& slice = slices[sliceIndex];
                         if (!slice.enabled) continue;
                         const double straight = beatStart + static_cast<double>(sliceIndex) * subdivisionLength;
-                        const double swungPosition = applySwing(straight, swing, state.global.swingReference);
+                        const double swungPosition = applySwing(straight, swing, transport.swingReference.value_or(state.global.swingReference));
                         const double absolute = cycleStart + swungPosition * samplesPerQuarter;
                         const double relative = absolute - timelineStart;
                         if (relative >= upper()) break;
                         if (absolute < 0.0 || relative < lower) continue;
                         const auto offset = static_cast<std::int32_t>(std::floor(relative + 0.5));
                         const double gateSamples = (applySwing(straight + subdivisionLength * sliceGateRatio,
-                            swing, state.global.swingReference) - swungPosition) * samplesPerQuarter;
+                            swing, transport.swingReference.value_or(state.global.swingReference)) - swungPosition) * samplesPerQuarter;
                         // Positional identity is stable when earlier beats/cycles are skipped.
                         const auto ordinal = ((static_cast<std::size_t>(cycle - firstCycle) * totalBeats
                             + beatIndex) * maximumLaneCount + laneIndex) * maximumSubdivision + sliceIndex;

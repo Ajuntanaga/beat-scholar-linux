@@ -189,10 +189,17 @@ ProjectState ProjectState::makeDefault()
 {
     ProjectState state;
 
+    // samplerNote addresses the native sampler through its fixed input map
+    // (padIndexForInputMidiNote), so it must be that map's note for the pad,
+    // not 36 + index. The editable output note keeps its linear default.
+    constexpr std::array<std::uint8_t, padCount> samplerNotes {
+        36, 38, 37, 39, 42, 46, 49, 51, 57, 55, 43, 41, 54, 40, 53, 56
+    };
     for (std::size_t index = 0; index < state.kit.pads.size(); ++index)
     {
         state.kit.pads[index].name = padNames[index];
         state.kit.pads[index].midiNote = static_cast<std::uint8_t>(36 + index);
+        state.kit.pads[index].samplerNote = samplerNotes[index];
     }
 
     PatternState pattern;
@@ -245,6 +252,7 @@ ProjectState ProjectState::makeMainInit()
     {
         state.kit.pads[pad].name = names[pad];
         state.kit.pads[pad].midiNote = outputNotes[pad];
+        state.kit.pads[pad].samplerNote = outputNotes[pad];
         state.kit.pads[pad].rootNote = 36;
         state.kit.pads[pad].driveEnabled = true;
         state.kit.pads[pad].independentDistortion = true;
@@ -290,7 +298,7 @@ bool ProjectState::isValid() const
     };
     if (!unit(master.cutoff)
         || !std::isfinite(master.resonance) || master.resonance < 0.0f || master.resonance > 1.0f
-        || !unit(master.delay) || !unit(master.distortionReturn) || !unit(master.distortion) || !unit(master.reverb)
+        || !unit(master.delay) || !unit(master.roomReturn) || !unit(master.reverbReturn) || !unit(master.distortionReturn) || !unit(master.distortion) || !unit(master.reverb)
         || !unit(master.room)
         || !std::isfinite(master.crush) || master.crush < 0.0f || master.crush > 1.0f
         || !std::isfinite(master.compression) || master.compression < 0.0f
@@ -308,11 +316,13 @@ bool ProjectState::isValid() const
                        && value.find('\0') == std::string::npos);
         };
         if (!basenameOnly(pad.factorySampleIds[0]) || !basenameOnly(pad.factorySampleIds[1])
-            || pad.midiNote > 127 || pad.rootNote > 127
+            || pad.midiNote > 127 || pad.samplerNote > 127 || pad.rootNote > 127
             || !unit(pad.layerMix) || !std::isfinite(pad.gain) || pad.gain < 0.0f
             || pad.gain > 4.0f || !std::isfinite(pad.pan) || pad.pan < -1.0f || pad.pan > 1.0f
             || !std::isfinite(pad.attackSeconds) || pad.attackSeconds < 0.0f
             || pad.attackSeconds > 10.0f || !unit(pad.attackNormalized) || !unit(pad.damp)
+            || !std::isfinite(pad.decaySeconds) || pad.decaySeconds < 0.0f
+            || pad.decaySeconds > 10.0f || !unit(pad.sustainLevel)
             || !std::isfinite(pad.releaseSeconds) || pad.releaseSeconds < 0.0f
             || pad.releaseSeconds > 10.0f
             || !std::isfinite(pad.pitchSemitones) || pad.pitchSemitones < -12.0f

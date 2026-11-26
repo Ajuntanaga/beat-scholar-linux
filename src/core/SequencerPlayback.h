@@ -44,36 +44,37 @@ struct PlaybackStep
 };
 using PatternPlaybackPlan = std::vector<PlaybackStep>;
 
-// Disabled slices still take part in the visible playhead progression. Keep
-// them out of PatternPlaybackPlan so adding UI activity cannot perturb the
-// native equal-time note ordering above.
-struct SilentSliceStep
+// Every slice participates in visible progression, including rests and the
+// final 2% beyond a note's MIDI gate. Keep this independent of note ordering.
+struct VisualSliceStep
 {
     double start = 0;
+    double end = 0;
     std::size_t laneIndex = 0;
     std::size_t beatIndex = 0;
     std::size_t sliceIndex = 0;
 };
-using PatternSilentSlicePlan = std::vector<SilentSliceStep>;
+using PatternVisualSlicePlan = std::vector<VisualSliceStep>;
 
-struct SilentSliceEvent
+struct VisualSliceEvent
 {
     int sampleOffset = 0;
+    std::int64_t endSampleOffset = 0; // May extend beyond this callback.
     std::size_t ordinal = 0;
     std::size_t laneIndex = 0;
     std::size_t beatIndex = 0;
     std::size_t sliceIndex = 0;
-    auto operator<=>(const SilentSliceEvent& other) const noexcept
+    auto operator<=>(const VisualSliceEvent& other) const noexcept
     {
         return std::tie(sampleOffset, ordinal)
             <=> std::tie(other.sampleOffset, other.ordinal);
     }
-    bool operator==(const SilentSliceEvent& other) const noexcept = default;
+    bool operator==(const VisualSliceEvent& other) const noexcept = default;
 };
 
-struct SilentSliceCursor
+struct VisualSliceCursor
 {
-    SilentSliceEvent after;
+    VisualSliceEvent after;
     bool started = false;
     bool exhausted = false;
 };
@@ -85,13 +86,13 @@ class SequencerPlayback
 public:
     static PatternPlaybackPlan preparePattern(const PatternState&);
     static std::vector<PatternPlaybackPlan> prepareProject(const ProjectState&);
-    static PatternSilentSlicePlan prepareSilentPattern(const PatternState&);
-    static std::vector<PatternSilentSlicePlan> prepareSilentProject(const ProjectState&);
-    static std::size_t renderSilentBatch(const ProjectState&, const TransportFrame&,
+    static PatternVisualSlicePlan prepareVisualPattern(const PatternState&);
+    static std::vector<PatternVisualSlicePlan> prepareVisualProject(const ProjectState&);
+    static std::size_t renderVisualBatch(const ProjectState&, const TransportFrame&,
                                          std::size_t patternIndex,
-                                         std::span<const SilentSliceStep>,
-                                         std::span<SilentSliceEvent>,
-                                         SilentSliceCursor&) noexcept;
+                                         std::span<const VisualSliceStep>,
+                                         std::span<VisualSliceEvent>,
+                                         VisualSliceCursor&) noexcept;
     void reset() noexcept { notes_ = {}; }
     std::size_t renderBatch(const ProjectState&, const TransportFrame&, std::size_t patternIndex,
                             std::span<const PlaybackStep>, std::span<PlaybackEvent>, PlaybackCursor&) noexcept;

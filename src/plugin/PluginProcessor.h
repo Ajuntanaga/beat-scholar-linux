@@ -71,6 +71,8 @@ public:
     void markProjectDirty() noexcept { explicitRevision_.fetch_add(1, std::memory_order_relaxed); }
     void publishProjectStateIfNeeded();
     bool restoreProjectHistory(bool redo);
+    void syncAutomatedValuesToProject() { copyParameterValuesToState(projectEditor_.state()); }
+    static juce::String padControlId(std::size_t pad, std::size_t control);
     int takeRequestedPatternForUi() noexcept;
     void selectPatternFromUi(std::size_t index);
     std::uint64_t restoredStateRevision() const noexcept
@@ -80,18 +82,22 @@ public:
     // Message-thread consumer; peaks are accumulated by the callback until read.
     float takePadPeak(std::size_t pad) noexcept { return padPeaks_[pad].exchange(0.0f, std::memory_order_relaxed); }
     float takeOutputPeak(std::size_t channel) noexcept { return outputPeaks_[channel].exchange(0.0f, std::memory_order_relaxed); }
+    // Latest rendered RMS, not a peak hold. The independent UI timer shapes it.
+    float padGlowRms(std::size_t pad) const noexcept { return padGlowRms_[pad].load(std::memory_order_relaxed); }
     struct PlaybackActivity
     {
         bsl::PatternId pattern = 0;
         std::size_t lane = 0, beat = 0, slice = 0, pad = 0;
         std::uint64_t frame = 0, epoch = 0;
         bool flashPad = true;
+        std::uint64_t endFrame = 0; // Zero for pad-only trigger events.
     };
     // Single message-thread consumer; the audio callback never waits for the UI.
     bool takePlaybackActivity(PlaybackActivity&) noexcept;
     int playbackActivityCount() const noexcept { return activityFifo_.getNumReady(); }
     std::uint64_t playbackActivityFrame() const noexcept { return activityFrame_.load(std::memory_order_acquire); }
     std::uint64_t playbackActivityEpoch() const noexcept { return activityEpoch_.load(std::memory_order_acquire); }
+    void requestPlaybackActivityRefresh() noexcept { activityRefreshRequested_.store(true, std::memory_order_release); }
     bsl::ProjectState& projectState() noexcept { return projectEditor_.state(); }
     bsl::ProjectEditor& projectEditor() noexcept { return projectEditor_; }
     juce::AudioProcessorValueTreeState& parameters() noexcept { return parameters_; }
@@ -114,10 +120,14 @@ private:
     bsl::AmbienceConvolution ambience_;
     bsl::AudioEngine audioEngine_;
     std::array<std::atomic<float>, bsl::padCount> padPeaks_ {};
+    std::array<std::atomic<float>, bsl::padCount> padGlowRms_ {};
     std::array<std::atomic<float>, 2> outputPeaks_ {};
     bsl::AudioBlock scratch_;
     juce::AudioProcessorValueTreeState parameters_;
+    std::array<std::array<std::atomic<float>*, 1>, bsl::padCount> padEnableParameters_ {};
+    std::array<std::atomic<float>*, bsl::padCount> padOneShotParameters_ {};
     std::array<std::array<std::atomic<float>*, 4>, bsl::padCount> padBypassParameters_ {};
+    std::array<std::array<std::atomic<float>*, 19>, bsl::padCount> padControlParameters_ {};
     struct PadAudition { std::uint8_t pad; float velocity; };
     // The editor produces auditions on the message thread; audio consumes them.
     static constexpr int auditionQueueSize = 256;
@@ -128,16 +138,18 @@ private:
     std::array<PlaybackActivity, activityQueueSize> pendingActivity_ {};
     std::atomic<std::uint64_t> activityFrame_ { 0 }, activityEpoch_ { 0 };
     std::uint64_t audioActivityFrame_ = 0;
-    void publishPlaybackActivity(const PlaybackActivity&) noexcept;
+    std::atomic<bool> activityRefreshRequested_ { false };
+    std::array<PlaybackActivity, bsl::maximumLaneCount> lastVisualActivities_ {};
+    bool publishPlaybackActivity(const PlaybackActivity&) noexcept;
     juce::MidiBuffer incomingMidi_;
     std::array<bsl::PlaybackEvent, maximumSequencerEvents> sequencerEvents_ {};
-    std::array<bsl::SilentSliceEvent, maximumSequencerEvents> silentSliceEvents_ {};
+    std::array<bsl::VisualSliceEvent, maximumSequencerEvents> visualSliceEvents_ {};
     bsl::PatternTriggerCollector patternTriggerCollector_;
     std::array<bsl::PatternRenderSegment,
                bsl::PatternScheduler::maximumPendingTriggers + 1> renderSegments_ {};
     std::array<bsl::ProjectState, 3> stateSnapshots_;
     std::array<std::vector<bsl::PatternPlaybackPlan>, 3> playbackPlans_;
-    std::array<std::vector<bsl::PatternSilentSlicePlan>, 3> silentSlicePlans_;
+    std::array<std::vector<bsl::PatternVisualSlicePlan>, 3> visualSlicePlans_;
     std::atomic<int> publishedStateIndex_ { 0 };
     std::atomic<int> readingStateIndex_ { -1 };
     std::atomic<bsl::PatternId> audioPattern_ { 0 };

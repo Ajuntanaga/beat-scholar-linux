@@ -651,6 +651,57 @@ void testPadMetersTrackRenderedAudio()
           "multi-output pad metering does not invent master output");
 }
 
+void testPadGlowRmsTracksWholeBlock()
+{
+    bsl::AudioEngine engine;
+    prepareDryEngine(engine, 48000, 3);
+    engine.setPadSample(0, {48000, {std::vector<float>(128, 0.25f),
+                                  std::vector<float>(128, 0.75f)}});
+    auto pad = dryPadSettings();
+    pad.pan = -1.0f;
+    pad.gain = 0.0f;
+    engine.setPadSettings(0, pad);
+    settleMainGain(engine, 48000);
+    auto block = makeBlock(34, 8);
+    const std::array<bsl::TimedNoteEvent, 1> events {{{4, 36, 1.0f, true, 0}}};
+    engine.process(block, 8, events);
+    check(std::abs(engine.padGlowRms(0) - 0.25f * std::sqrt(0.5f)) < 1e-6f,
+          "pad glow uses left-channel RMS, includes silent frames and spans render chunks");
+    check(engine.padPeaks()[0] == 0.0f && engine.padGlowRms(0) > 0.0f,
+          "original pad glow is pre pad output gain, not a post-output peak");
+    engine.noteOn(36, 1.0f);
+    engine.process(block, 8);
+    check(std::abs(engine.padGlowRms(0) - 0.5f) < 1e-6f,
+          "pad glow squares the summed voices, not individual voice energies");
+    check(engine.padGlowRms(1) == 0.0f, "pad glow does not leak to another pad");
+    pad.muted = true;
+    engine.setPadSettings(0, pad);
+    engine.process(block, 8);
+    check(engine.padGlowRms(0) == 0.0f, "silent blocks replace previous pad glow RMS");
+    engine.process(block, 0);
+    check(engine.padGlowRms(0) == 0.0f, "empty blocks do not divide pad glow energy by zero");
+    engine.reset();
+    check(engine.padGlowRms(0) == 0.0f, "reset clears pad glow RMS");
+
+    pad.muted = false;
+    pad.gain = 1.0f;
+    engine.setPadSettings(0, pad);
+    settleMainGain(engine, 48000);
+    engine.beginBlock(block, 8);
+    engine.noteOn(36, 1.0f);
+    engine.renderRange(block, 0, 4);
+    engine.endBlock(block);
+    engine.stopMidiChannel(1, true);
+    engine.renderRange(block, 4, 8);
+    engine.endBlock(block);
+    check(block[0][0] > 0.0f && block[0][4] == 0.0f,
+          "mid-block All Sound Off preserves earlier audio and silences subsequent frames");
+    check(std::abs(engine.padGlowRms(0) - 0.25f * std::sqrt(0.5f)) < 1e-6f,
+          "mid-block All Sound Off preserves earlier glow energy and the full-block denominator");
+    check(engine.padPeaks()[0] > 0.0f,
+          "mid-block All Sound Off preserves the pad meter peak of earlier frames");
+}
+
 void testStereoPlaybackUsesNormalizedPhaseAtUnity()
 {
     bsl::AudioEngine engine;
@@ -1149,6 +1200,44 @@ void testAmbienceReturnStartupAndReset()
             }
             check(matches, "ambience returns preserve measured startup, settled gain, bypass and reset");
         }
+        // Original Room return cut reaches silence after 100 ms while the
+        // independent Plate return and dry buses are unchanged.
+        master.roomReturn = 0.0f;
+        engine.setMasterSettings(master);
+        float roomValue = 1.9952623844146729f;
+        const float roomStep = -roomValue / static_cast<float>(rampFrames);
+        bool cutMatches = true;
+        for (std::size_t start = 0; start < rampFrames + 100; start += blockSize)
+        {
+            const auto frames = std::min(blockSize, rampFrames + 100 - start);
+            engine.process(block, frames);
+            for (std::size_t frame = 0; frame < frames; ++frame)
+            {
+                roomValue = start + frame + 1 < rampFrames ? roomValue + roomStep : 0.0f;
+                cutMatches &= std::abs(block[0][frame] - 1.4125375f * roomValue) < 0.000001f;
+                cutMatches &= std::abs(block[1][frame] - 1.9952623f * 1.9952623844146729f) < 0.000001f;
+                cutMatches &= block[2][frame] == 0.0f;
+            }
+        }
+        check(cutMatches, "Room return follows native 100 ms output fade independently of Plate and dry buses");
+        master.reverbReturn = 0.0f;
+        engine.setMasterSettings(master);
+        float plateValue = 1.9952623844146729f;
+        const float plateStep = -plateValue / static_cast<float>(rampFrames);
+        bool plateCutMatches = true;
+        for (std::size_t start = 0; start < rampFrames + 100; start += blockSize)
+        {
+            const auto frames = std::min(blockSize, rampFrames + 100 - start);
+            engine.process(block, frames);
+            for (std::size_t frame = 0; frame < frames; ++frame)
+            {
+                plateValue = start + frame + 1 < rampFrames ? plateValue + plateStep : 0.0f;
+                plateCutMatches &= block[0][frame] == 0.0f;
+                plateCutMatches &= std::abs(block[1][frame] - 1.9952623f * plateValue) < 0.000001f;
+                plateCutMatches &= block[2][frame] == 0.0f;
+            }
+        }
+        check(plateCutMatches, "Reverb return follows native 100 ms output fade independently of Room and dry buses");
     }
 }
 
@@ -1301,6 +1390,191 @@ void testNativeLengthFloatAccumulation()
                 }
             }
         }
+}
+
+void testLengthAutomationKeepsActiveVoiceRate()
+{
+    for (const double rate : { 44100.0, 48000.0 })
+    {
+        bsl::AudioEngine automated, unchanged, shortened;
+        auto settings = dryPadSettings();
+        settings.lengthEnvelopeEnabled = true;
+        for (auto* engine : { &automated, &unchanged, &shortened })
+        {
+            prepareDryEngine(*engine, rate);
+            engine->setPadSample(0, { rate, { std::vector<float>(24000, 0.25f) } });
+            engine->setPadSettings(0, settings);
+            engine->noteOn(36, 1.0f);
+            auto initial = makeBlock(34, 128);
+            engine->process(initial, 128);
+        }
+        settings.damp = 0.85f;
+        automated.setPadSettings(0, settings);
+        shortened.setPadSettings(0, settings);
+        auto current = makeBlock(34, 512), baseline = makeBlock(34, 512);
+        automated.process(current, 512);
+        unchanged.process(baseline, 512);
+        check(current == baseline, "Length automation preserves the active voice fade rate");
+        for (auto* engine : { &automated, &shortened })
+        {
+            engine->stopMidiChannel(1, true);
+            engine->noteOn(36, 1.0f);
+        }
+        automated.process(current, 512);
+        shortened.process(baseline, 512);
+        check(current == baseline, "next voice uses the automated Length value");
+    }
+}
+
+void testOneShotAutomationKeepsActiveVoiceEnvelope()
+{
+    for (const bool initialMode : { false, true })
+    {
+        bsl::AudioEngine automated, unchanged, nextMode;
+        auto settings = dryPadSettings();
+        settings.lengthEnvelopeEnabled = true;
+        settings.oneShot = initialMode;
+        for (auto* engine : { &automated, &unchanged, &nextMode })
+        {
+            prepareDryEngine(*engine, 48000.0);
+            engine->setPadSample(0, { 48000.0, { std::vector<float>(24000, 0.25f) } });
+            engine->setPadSettings(0, settings);
+            engine->noteOn(36, 1.0f);
+            auto initial = makeBlock(34, 128);
+            engine->process(initial, 128);
+        }
+        settings.oneShot = !initialMode;
+        automated.setPadSettings(0, settings);
+        nextMode.setPadSettings(0, settings);
+        auto current = makeBlock(34, 512), baseline = makeBlock(34, 512);
+        automated.process(current, 512);
+        unchanged.process(baseline, 512);
+        check(current == baseline, "One Shot automation preserves the active Length envelope mode");
+        for (auto* engine : { &automated, &unchanged, &nextMode })
+        {
+            engine->stopMidiChannel(1, true);
+            engine->noteOn(36, 1.0f);
+        }
+        automated.process(current, 512);
+        nextMode.process(baseline, 512);
+        check(current == baseline, "next voice uses the automated One Shot envelope mode");
+        unchanged.process(baseline, 512);
+        check(current != baseline, "One Shot mode change has an audible effect on new voices");
+    }
+}
+
+void testAttackAutomationKeepsActiveVoiceRate()
+{
+    for (const double rate : { 44100.0, 48000.0 })
+    {
+        bsl::AudioEngine automated, unchanged, shortened;
+        auto settings = dryPadSettings();
+        settings.attackSeconds = 0.25f;
+        for (auto* engine : { &automated, &unchanged, &shortened })
+        {
+            prepareDryEngine(*engine, rate);
+            engine->setPadSample(0, { rate, { std::vector<float>(24000, 0.25f) } });
+            engine->setPadSettings(0, settings);
+            engine->noteOn(36, 1.0f);
+            auto initial = makeBlock(34, 128);
+            engine->process(initial, 128);
+        }
+        settings.attackSeconds = 0.85f;
+        automated.setPadSettings(0, settings);
+        shortened.setPadSettings(0, settings);
+        auto current = makeBlock(34, 512), baseline = makeBlock(34, 512);
+        automated.process(current, 512);
+        unchanged.process(baseline, 512);
+        check(current == baseline, "Attack automation preserves the active voice fade rate");
+        for (auto* engine : { &automated, &shortened })
+        {
+            engine->stopMidiChannel(1, true);
+            engine->noteOn(36, 1.0f);
+        }
+        automated.process(current, 512);
+        shortened.process(baseline, 512);
+        check(current == baseline, "next voice uses the automated Attack value");
+    }
+}
+
+void testReleaseAutomationKeepsActiveVoiceRate()
+{
+    for (const double rate : { 44100.0, 48000.0 })
+        for (const bool changeDuringRelease : { false, true })
+        {
+            bsl::AudioEngine automated, unchanged, shortened;
+            auto settings = dryPadSettings();
+            settings.oneShot = false;
+            settings.releaseSeconds = 0.85f;
+            for (auto* engine : { &automated, &unchanged, &shortened })
+            {
+                prepareDryEngine(*engine, rate);
+                engine->setPadSample(0, { rate, { std::vector<float>(24000, 0.25f) } });
+                engine->setPadSettings(0, settings);
+                engine->noteOn(36, 1.0f);
+                auto initial = makeBlock(34, 128);
+                engine->process(initial, 128);
+                if (changeDuringRelease)
+                {
+                    engine->noteOff(36);
+                    engine->process(initial, 128);
+                }
+            }
+            settings.releaseSeconds = 0.025f;
+            automated.setPadSettings(0, settings);
+            shortened.setPadSettings(0, settings);
+            if (!changeDuringRelease)
+                for (auto* engine : { &automated, &unchanged, &shortened })
+                    engine->noteOff(36);
+            auto current = makeBlock(34, 512), baseline = makeBlock(34, 512);
+            automated.process(current, 512);
+            unchanged.process(baseline, 512);
+            check(current == baseline, changeDuringRelease
+                ? "Release automation preserves an already releasing voice"
+                : "Release automation before note-off preserves the note-on value");
+            // A fresh voice must use the changed value, and produce a different
+            // tail from a fresh voice with the old value.
+            for (auto* engine : { &automated, &unchanged, &shortened })
+            {
+                engine->stopMidiChannel(1, true);
+                engine->noteOn(36, 1.0f);
+                auto initial = makeBlock(34, 128);
+                engine->process(initial, 128);
+                engine->noteOff(36);
+            }
+            automated.process(current, 512);
+            shortened.process(baseline, 512);
+            check(current == baseline, "next voice uses the automated Release value");
+            unchanged.process(baseline, 512);
+            check(current != baseline, "new Release value changes the next voice tail");
+        }
+}
+
+void testDecaySustainStages()
+{
+    for (const double rate : { 44100.0, 48000.0 })
+    {
+        bsl::AudioEngine engine, baseline;
+        auto settings = dryPadSettings();
+        for (auto* item : { &engine, &baseline })
+        {
+            prepareDryEngine(*item, rate);
+            item->setPadSample(0, { rate, { std::vector<float>(24000, 0.25f) } });
+            item->setPadSettings(0, settings);
+        }
+        settings.decaySeconds = 0.01f;
+        settings.sustainLevel = 0.25f;
+        engine.setPadSettings(0, settings);
+        engine.noteOn(36, 1.0f);
+        baseline.noteOn(36, 1.0f);
+        auto output = makeBlock(34, 1024), reference = makeBlock(34, 1024);
+        engine.process(output, 1024);
+        baseline.process(reference, 1024);
+        check(output[0][100] < reference[0][100] * 0.9f,
+              "Decay lowers the envelope before sustain");
+        check(std::abs(output[0][800] - reference[0][800] * 0.25f) < 1.0e-7f,
+              "Sustain holds the requested plateau after decay");
+    }
 }
 
 void testNativeLengthFloatDuration()
@@ -2913,6 +3187,42 @@ void testNativePadFilterResponseAndEffectOrder()
     }
 }
 
+void testNativePanAutomation()
+{
+    bsl::AudioEngine automated, baseline;
+    bsl::PadPlaybackSettings settings;
+    settings.lengthEnvelopeEnabled = false;
+    settings.highPassEnabled = false;
+    settings.filterEnabled = false;
+    for (auto* engine : { &automated, &baseline })
+    {
+        engine->prepare(48000.0, 4096);
+        engine->setRoutingMode(bsl::RoutingMode::multi);
+        engine->setPadSettings(0, settings);
+        setDspInput(*engine, 0, { 48000.0, { std::vector<float>(8192, 0.25f) } });
+        engine->noteOn(36, 1.0f);
+        auto lead = makeBlock(34, 16);
+        engine->process(lead, 16);
+    }
+    settings.pan = 0.9f;
+    automated.setPadSettings(0, settings);
+    auto result = makeBlock(34, 3000);
+    auto reference = makeBlock(34, 3000);
+    automated.process(result, 3000);
+    baseline.process(reference, 3000);
+    // Channel ratios from the original 48 kHz centre -> .95 capture.
+    constexpr std::array<std::size_t, 5> offsets { 0, 100, 500, 1000, 2999 };
+    constexpr std::array<float, 5> left { .999705315f, .969812334f, .842096984f, .666256487f, .110957898f };
+    constexpr std::array<float, 5> right { 1.00029457f, 1.02930272f, 1.13616586f, 1.24743819f, 1.40985394f };
+    for (std::size_t i = 0; i < offsets.size(); ++i)
+    {
+        const auto frame = offsets[i];
+        check(std::abs(result[2][frame] / reference[2][frame] - left[i]) < 2e-6f
+              && std::abs(result[3][frame] / reference[3][frame] - right[i]) < 2e-6f,
+              "pan automation matches original smoothed channel ratios");
+    }
+}
+
 void testNativePadHighPassResponse()
 {
     // Analytical impulse of H(s)=s^2/(s+w)^2 (Q=.5), bilinear transformed.
@@ -2959,6 +3269,31 @@ void testNativePadHighPassResponse()
             }
             check(matches, "pad HPF matches native cutoff range and Q .5 biquad across rates, blocks and stereo");
         }
+    // Golden impulse response uses the original's captured per-sample
+    // coefficients for the first eight frames of a 0 -> .65 change at 48 kHz.
+    {
+        bsl::AudioEngine engine;
+        engine.prepare(48000.0, 16);
+        engine.setRoutingMode(bsl::RoutingMode::multi);
+        bsl::PadPlaybackSettings settings;
+        settings.lengthEnvelopeEnabled = false;
+        settings.filterEnabled = false;
+        engine.setPadSettings(0, settings);
+        std::vector<float> input(16);
+        input[1] = 1.0f;
+        setDspInput(engine, 0, { 48000.0, { input, input } });
+        engine.noteOn(36, 1.0f);
+        auto before = makeBlock(34, 1);
+        engine.process(before, 1);
+        settings.highPass = .65f;
+        engine.setPadSettings(0, settings);
+        auto after = makeBlock(34, 8);
+        engine.process(after, 8);
+        constexpr std::array<float, 8> expected { 9.9866926670e-01f, -2.6587247849e-03f, -2.6531326585e-03f, -2.6474283077e-03f, -2.6416121982e-03f, -2.6356850285e-03f, -2.6296484284e-03f, -2.6235019322e-03f };
+        for (std::size_t i = 0; i < expected.size(); ++i)
+            check(std::abs(after[2][i] - expected[i] * centre) < 2e-7f,
+                  "active HPF automation follows original per-sample frequency ramp");
+    }
     bsl::PadState pad;
     pad.highPass=.5f;
     pad.hpfBypass=true;
@@ -3807,6 +4142,61 @@ void testSharedEffectsIgnoreVoiceSubdivision()
     }
 }
 
+void testAmbienceSendAutomationRamp()
+{
+    struct Capture final : bsl::AmbienceProcessor
+    {
+        std::array<std::array<float, 128>, 4> inputs {};
+        void reset() noexcept override { inputs = {}; }
+        void process(float* a, float* b, float* c, float* d, std::size_t n) noexcept override
+        {
+            const std::array<float*, 4> buses { a, b, c, d };
+            for (std::size_t bus = 0; bus < 4; ++bus)
+            {
+                std::copy_n(buses[bus], n, inputs[bus].begin());
+                std::fill_n(buses[bus], n, 0.0f);
+            }
+        }
+    };
+    for (const double rate : { 48000.0, 96000.0 })
+        for (const std::size_t block : { 17u, 128u })
+        {
+            bsl::AudioEngine engine;
+            engine.prepare(rate, block);
+            engine.setRoutingMode(bsl::RoutingMode::multi);
+            Capture capture;
+            engine.setAmbienceProcessor(&capture);
+            auto pad = dryPadSettings();
+            pad.room = pad.reverb = 1.0f;
+            engine.setPadSettings(0, pad);
+            setDspInput(engine, 0, { rate, { std::vector<float>(static_cast<std::size_t>(rate), 0.2f) } });
+            engine.noteOn(36, 1.0f);
+            auto first = makeBlock(34, block);
+            engine.process(first, block);
+            check(std::abs(capture.inputs[0][0] - first[2][0]) < 1.0e-6f,
+                  "ambience send snaps to its initial value on first hit");
+            pad.room = pad.reverb = 0.0f;
+            engine.setPadSettings(0, pad);
+            const auto duration = static_cast<std::size_t>(rate * 0.1);
+            float gain = 1.0f;
+            const float step = -1.0f / static_cast<float>(duration);
+            std::size_t remaining = duration;
+            float error = 0.0f;
+            for (std::size_t offset = 0; offset < duration + block; offset += block)
+            {
+                auto output = makeBlock(34, block);
+                engine.process(output, block);
+                for (std::size_t i = 0; i < block; ++i)
+                {
+                    if (remaining > 0) gain = --remaining == 0 ? 0.0f : gain + step;
+                    for (std::size_t bus = 0; bus < 4; ++bus)
+                        error = std::max(error, std::abs(capture.inputs[bus][i] - output[2 + bus % 2][i] * gain));
+                }
+            }
+            check(error < 1.0e-6f, "Room and Reverb sends fade over 100 ms across rates and block boundaries");
+        }
+}
+
 void testDistortionSendIdleTransitionsAndAutomation()
 {
     // Multi exposes the exact post-pad signal separately from the shared return.
@@ -4021,6 +4411,7 @@ int main()
     testNativeVelocityPanPrecision();
     testMonoRetriggerAndOverlappingNoteOffs();
     testPadMetersTrackRenderedAudio();
+    testPadGlowRmsTracksWholeBlock();
     testStereoPlaybackUsesNormalizedPhaseAtUnity();
     testMixedSampleRatesPreserveDurationAndStereoContent();
     testMultiModeRoutesEachPadToItsOwnAux();
@@ -4039,6 +4430,11 @@ int main()
     testPitchAndDampAlterPlaybackWithoutAllocationContractChanges();
     testNativeLengthUsesLoadedSampleDuration();
     testNativeLengthFloatAccumulation();
+    testLengthAutomationKeepsActiveVoiceRate();
+    testOneShotAutomationKeepsActiveVoiceEnvelope();
+    testAttackAutomationKeepsActiveVoiceRate();
+    testReleaseAutomationKeepsActiveVoiceRate();
+    testDecaySustainStages();
     testNativeLengthFloatDuration();
     testNativeLengthTailPrecision();
     testGatedPlaybackDoesNotUseOneShotLength();
@@ -4068,6 +4464,7 @@ int main()
     testPadVolumeSmoothingAndRetrigger();
     testNativeMasterFilterResponseAndBypass();
     testNativePadFilterResponseAndEffectOrder();
+    testNativePanAutomation();
     testNativePadHighPassResponse();
     testNativeEnvelopePrecedesHighPass();
     testTwoFactoryLayersMixContinuously();
@@ -4087,6 +4484,7 @@ int main()
     testRoutingTransitionsDiscardFrozenMasterTail();
     testSharedDistortionBus();
     testSharedEffectsIgnoreVoiceSubdivision();
+    testAmbienceSendAutomationRamp();
     testDistortionSendIdleTransitionsAndAutomation();
     testDistortionHostBoundaryCleanup();
     testDistortionResponseLifecycleAndPartitioning();

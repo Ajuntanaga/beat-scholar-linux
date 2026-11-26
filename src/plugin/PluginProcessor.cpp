@@ -13,6 +13,24 @@
 
 namespace {
 
+class SwingReferenceParameter final : public juce::AudioParameterChoice
+{
+public:
+    SwingReferenceParameter()
+        : AudioParameterChoice(juce::ParameterID { "swingReference", 1 }, "SwingRef",
+                               juce::StringArray { "1/8", "1/4", "1/2" }, 1)
+    {
+        range_.interval = 1.0f;
+    }
+    const juce::NormalisableRange<float>& getNormalisableRange() const override { return range_; }
+private:
+    // Captured original formatting keeps the lower tie at 1/8 and the upper at 1/2.
+    juce::NormalisableRange<float> range_ { 0.0f, 2.0f,
+        [](float, float, float v) { return v * 2.0f; },
+        [](float, float, float v) { return v * 0.5f; },
+        [](float, float, float v) { return v <= 0.5f ? 0.0f : v < 1.5f ? 1.0f : 2.0f; } };
+};
+
 // Native sampler conversion preserves the MIDI midpoint in fourteen-bit space.
 // Both incoming MIDI and internal sequencer notes use this conversion.
 float samplerVelocity(int velocity) noexcept
@@ -22,6 +40,18 @@ float samplerVelocity(int velocity) noexcept
     return static_cast<float>(expanded) / 16383.0f;
 }
 
+constexpr std::array padControlMembers {
+    &bsl::PadState::gain, &bsl::PadState::pan, &bsl::PadState::pitchSemitones,
+    &bsl::PadState::fineCents, &bsl::PadState::highPass, &bsl::PadState::cutoff,
+    &bsl::PadState::resonance, &bsl::PadState::compression, &bsl::PadState::crush, &bsl::PadState::driveGainDb, &bsl::PadState::auxGain, &bsl::PadState::room, &bsl::PadState::reverb, &bsl::PadState::distortionMix, &bsl::PadState::damp, &bsl::PadState::attackSeconds, &bsl::PadState::decaySeconds, &bsl::PadState::sustainLevel, &bsl::PadState::releaseSeconds
+};
+constexpr std::array padControlHistory {
+    bsl::HistoryParameters::padGain, bsl::HistoryParameters::padPan,
+    bsl::HistoryParameters::padPitch, bsl::HistoryParameters::padFine,
+    bsl::HistoryParameters::padHighPass, bsl::HistoryParameters::padCutoff,
+    bsl::HistoryParameters::padResonance, bsl::HistoryParameters::padCompression,
+    bsl::HistoryParameters::padCrush, bsl::HistoryParameters::padDrive, bsl::HistoryParameters::padAuxGain, bsl::HistoryParameters::padRoom, bsl::HistoryParameters::padReverb, bsl::HistoryParameters::padAux3, bsl::HistoryParameters::padLength, bsl::HistoryParameters::padAttack, bsl::HistoryParameters::padDecay, bsl::HistoryParameters::padSustain, bsl::HistoryParameters::padRelease
+};
 constexpr int totalOutputChannels = 34;
 constexpr std::array<const char*, 4> padBypassNames { "Lpf", "Hpf", "Drive", "Crush" };
 constexpr std::array<const char*, 4> padBypassLabels { "LPF", "HPF", "Drive", "Crush" };
@@ -29,6 +59,14 @@ constexpr std::array<const char*, 4> padBypassLabels { "LPF", "HPF", "Drive", "C
 juce::String padBypassId(std::size_t pad, std::size_t effect)
 {
     return "pad" + juce::String(static_cast<int>(pad + 1)) + padBypassNames[effect] + "Bypass";
+}
+
+constexpr std::array padEnableMembers { &bsl::PadState::filterEnabled };
+constexpr std::array<const char*, 1> padEnableNames { "Filter" };
+
+juce::String padEnableId(std::size_t pad, std::size_t effect)
+{
+    return "pad" + juce::String(static_cast<int>(pad + 1)) + padEnableNames[effect] + "Enabled";
 }
 
 std::optional<bsl::SampleData> decodeSampleBytes(const void* data, std::size_t size)
@@ -115,6 +153,12 @@ juce::AudioProcessor::BusesProperties BeatScholarLinuxProcessor::makeBuses()
     return result;
 }
 
+juce::String BeatScholarLinuxProcessor::padControlId(std::size_t pad, std::size_t control)
+{
+    constexpr std::array suffixes { "Gain", "Pan", "Pitch", "Fine", "HighPass", "Cutoff", "Resonance", "Compression", "Crush", "Drive", "AuxGain", "Room", "Reverb", "Aux3", "Length", "Attack", "Decay", "Sustain", "Release" };
+    return "pad" + juce::String(static_cast<int>(pad + 1)) + suffixes.at(control);
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout BeatScholarLinuxProcessor::makeParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
@@ -125,7 +169,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout BeatScholarLinuxProcessor::m
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID { "routing", 1 }, "Routing", juce::StringArray { "Stereo", "Multi" }, 0));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "masterGain", 1 }, "Master Gain", juce::NormalisableRange<float> { 0.0f, 1.5f, 0.0001f }, 1.0f));
+        juce::ParameterID { "masterGain", 1 }, "Master Gain", juce::NormalisableRange<float> { 0.0f, 1.9952623844146729f, 0.0f, 0.3344777524471283f }, 1.0f));
     // Append the documented host-only switches so existing parameter indices
     // and IDs retain their meaning in saved DAW projects.
     for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
@@ -134,6 +178,187 @@ juce::AudioProcessorValueTreeState::ParameterLayout BeatScholarLinuxProcessor::m
                 juce::ParameterID { padBypassId(pad, effect), 1 },
                 "Pad " + juce::String(static_cast<int>(pad + 1)) + " "
                     + padBypassLabels[effect] + " Bypass", false));
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+    {
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID { padControlId(pad, false), 1 },
+            "Pad " + juce::String(static_cast<int>(pad + 1)) + " Volume",
+            juce::NormalisableRange<float> { 0.0f, 1.9952623844146729f, 0.0f, 0.3344777524471283f }, 1.0f));
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID { padControlId(pad, true), 1 },
+            "Pad " + juce::String(static_cast<int>(pad + 1)) + " Pan",
+            juce::NormalisableRange<float> { -1.0f, 1.0f }, 0.0f));
+    }
+    // Append pitch controls after the existing pad mix parameters.
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        for (std::size_t control = 2; control < 4; ++control)
+            layout.add(std::make_unique<juce::AudioParameterFloat>(
+                juce::ParameterID { padControlId(pad, control), 1 },
+                "Pad " + juce::String(static_cast<int>(pad + 1)) + (control == 2 ? " Pitch Tune" : " Pitch Fine"),
+                control == 2 ? juce::NormalisableRange<float> { -12.0f, 12.0f, 1.0f }
+                             : juce::NormalisableRange<float> { -100.0f, 100.0f }, 0.0f));
+    // Keep all previous parameter indices stable when adding filter automation.
+    constexpr std::array filterLabels { " HPF", " Filter Cutoff", " Filter Reso" };
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        for (std::size_t filter = 0; filter < 3; ++filter)
+            layout.add(std::make_unique<juce::AudioParameterFloat>(
+                juce::ParameterID { padControlId(pad, filter + 4), 1 },
+                "Pad " + juce::String(static_cast<int>(pad + 1)) + filterLabels[filter],
+                juce::NormalisableRange<float> { 0.0f, 1.0f },
+                filter == 0 ? 0.0f : filter == 1 ? 1.0f : bsl::defaultFilterResonance,
+                juce::AudioParameterFloatAttributes()
+                    .withStringFromValueFunction([filter](float value, int) {
+                        if (filter == 2) return juce::String(bsl::filterResonanceQ(value), 2);
+                        const auto hz = filter == 0 ? bsl::padHighPassCutoffHz(value) : bsl::filterCutoffHz(value);
+                        return hz < 1000.0f ? juce::String(juce::roundToInt(hz)) + " Hz"
+                                            : juce::String(hz / 1000.0f, 2) + " kHz";
+                    })
+                    .withValueFromStringFunction([filter](const juce::String& text) {
+                        const auto value = text.getFloatValue();
+                        if (filter == 2) return std::clamp((value - 0.1f) / 2.4f, 0.0f, 1.0f);
+                        const auto hz = value * (text.containsIgnoreCase("khz") ? 1000.0f : 1.0f);
+                        return filter == 0 ? bsl::normalizedPadHighPassCutoff(hz) : bsl::normalizedFilterCutoff(hz);
+                    })));
+    // Append without changing previously published parameter indices.
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        for (std::size_t control = 7; control < 9; ++control)
+            layout.add(std::make_unique<juce::AudioParameterFloat>(
+                juce::ParameterID { padControlId(pad, control), 1 },
+                "Pad " + juce::String(static_cast<int>(pad + 1))
+                    + (control == 7 ? " Compressor" : " BitCrush"),
+                juce::NormalisableRange<float> { 0.0f, 1.0f }, 0.0f));
+    juce::NormalisableRange<float> driveGainRange(1.0f, juce::Decibels::decibelsToGain(24.0f));
+    driveGainRange.setSkewForCentre(juce::Decibels::decibelsToGain(12.0f));
+    const juce::NormalisableRange<float> driveDbRange(0.0f, 24.0f,
+        [driveGainRange](float, float, float position) {
+            return juce::Decibels::gainToDecibels(driveGainRange.convertFrom0to1(position));
+        },
+        [driveGainRange](float, float, float decibels) {
+            return driveGainRange.convertTo0to1(juce::Decibels::decibelsToGain(decibels));
+        });
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID { padControlId(pad, 9), 1 },
+            "Pad " + juce::String(static_cast<int>(pad + 1)) + " Drive Gain",
+            driveDbRange, 0.0f,
+            juce::AudioParameterFloatAttributes()
+                .withStringFromValueFunction([](float value, int) { return juce::String(value, 2) + " dB"; })
+                .withValueFromStringFunction([](const juce::String& text) { return text.getFloatValue(); })));
+    // Native Aux4 is an independent parallel gain send (0..100 percent).
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID { padControlId(pad, 10), 1 },
+            "Pad " + juce::String(static_cast<int>(pad + 1)) + " Aux4",
+            juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f,
+            juce::AudioParameterFloatAttributes()
+                .withStringFromValueFunction([](float value, int) { return juce::String(value * 100.0f, 1) + "%"; })
+                .withValueFromStringFunction([](const juce::String& text) { return text.getFloatValue() / 100.0f; })));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "masterRoomReturn", 1 }, "Room Return",
+        juce::NormalisableRange<float>(0.0f, 1.0f), 1.0f,
+        juce::AudioParameterFloatAttributes()
+            .withStringFromValueFunction([](float value, int) { return juce::String(value * 100.0f, 1) + "%"; })
+            .withValueFromStringFunction([](const juce::String& text) { return text.getFloatValue() / 100.0f; })));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "masterReverbReturn", 1 }, "Reverb Return",
+        juce::NormalisableRange<float>(0.0f, 1.0f), 1.0f,
+        juce::AudioParameterFloatAttributes()
+            .withStringFromValueFunction([](float value, int) { return juce::String(value * 100.0f, 1) + "%"; })
+            .withValueFromStringFunction([](const juce::String& text) { return text.getFloatValue() / 100.0f; })));
+    // Append raw ambience sends after existing return parameters.
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        for (std::size_t control = 11; control < 13; ++control)
+            layout.add(std::make_unique<juce::AudioParameterFloat>(
+                juce::ParameterID { padControlId(pad, control), 1 },
+                "Pad " + juce::String(static_cast<int>(pad + 1)) + (control == 11 ? " Room" : " Reverb"),
+                juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f,
+                juce::AudioParameterFloatAttributes()
+                    .withStringFromValueFunction([](float value, int) { return juce::String(value * 100.0f, 1) + "%"; })
+                    .withValueFromStringFunction([](const juce::String& text) { return text.getFloatValue() / 100.0f; })));
+    // Append Aux3 after ambience sends to keep existing host indices stable.
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID { padControlId(pad, 13), 1 },
+            "Pad " + juce::String(static_cast<int>(pad + 1)) + " Aux3",
+            juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f,
+            juce::AudioParameterFloatAttributes()
+                .withStringFromValueFunction([](float value, int) { return juce::String(value * 100.0f, 1) + "%"; })
+                .withValueFromStringFunction([](const juce::String& text) { return text.getFloatValue() / 100.0f; })));
+    for (const auto* id : { "masterCrush", "masterCompression" })
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID { id, 1 }, juce::String(id) == "masterCrush" ? "Master Crush" : "Master Compression",
+            juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f));
+    for (int control = 0; control < 2; ++control)
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID { control == 0 ? "masterCutoff" : "masterResonance", 1 },
+            control == 0 ? "Master Filter Cutoff" : "Master Filter Reso",
+            juce::NormalisableRange<float>(0.0f, 1.0f),
+            control == 0 ? 1.0f : bsl::defaultFilterResonance,
+            juce::AudioParameterFloatAttributes()
+                .withStringFromValueFunction([control](float value, int) {
+                    if (control == 1) return juce::String(bsl::filterResonanceQ(value), 2);
+                    const auto hz = bsl::filterCutoffHz(value);
+                    return hz < 1000.0f ? juce::String(juce::roundToInt(hz)) + " Hz"
+                                       : juce::String(hz / 1000.0f, 2) + " kHz";
+                })
+                .withValueFromStringFunction([control](const juce::String& text) {
+                    const auto value = text.getFloatValue();
+                    if (control == 1) return std::clamp((value - 0.1f) / 2.4f, 0.0f, 1.0f);
+                    return bsl::normalizedFilterCutoff(value * (text.containsIgnoreCase("khz") ? 1000.0f : 1.0f));
+                })));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "masterDistortionDrive", 1 }, "Master DistDrive",
+        juce::NormalisableRange<float>(0.0f, 1.0f), 0.5f,
+        juce::AudioParameterFloatAttributes()
+            .withStringFromValueFunction([](float value, int) { return juce::String(value, 2); })
+            .withValueFromStringFunction([](const juce::String& text) { return text.getFloatValue(); })));
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID { "masterFilterEnabled", 1 }, "Master Filter Enable", true,
+        juce::AudioParameterBoolAttributes()
+            .withStringFromValueFunction([](bool value, int) { return value ? juce::String("On") : juce::String("Off"); })
+            .withValueFromStringFunction([](const juce::String& text) { return text.equalsIgnoreCase("On") || text.getIntValue() != 0; })));
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        for (std::size_t effect = 0; effect < padEnableMembers.size(); ++effect)
+            layout.add(std::make_unique<juce::AudioParameterBool>(
+                juce::ParameterID { padEnableId(pad, effect), 1 },
+                "Pad " + juce::String(static_cast<int>(pad + 1)) + " " + padEnableNames[effect] + " Enable", true,
+                juce::AudioParameterBoolAttributes()
+                    .withStringFromValueFunction([](bool value, int) { return value ? juce::String("On") : juce::String("Off"); })
+                    .withValueFromStringFunction([](const juce::String& text) { return text.equalsIgnoreCase("On") || text.getIntValue() != 0; })));
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID { padControlId(pad, 14), 1 },
+            "Pad " + juce::String(static_cast<int>(pad + 1)) + " Length",
+            juce::NormalisableRange<float> { 0.0f, 1.0f }, 0.0f,
+            juce::AudioParameterFloatAttributes()
+                .withStringFromValueFunction([](float value, int) { return juce::String(value, 2); })
+                .withValueFromStringFunction([](const juce::String& text) { return text.getFloatValue(); })));
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID { padControlId(pad, 15), 1 },
+            "Pad " + juce::String(static_cast<int>(pad + 1)) + " Attack",
+            juce::NormalisableRange<float> { 0.0f, 1.0f, 0.01f }, 0.0f,
+            juce::AudioParameterFloatAttributes()
+                .withStringFromValueFunction([](float value, int) { return juce::String(value, 2); })
+                .withValueFromStringFunction([](const juce::String& text) { return text.getFloatValue(); })));
+    for (std::size_t control = 16; control < 19; ++control)
+        for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        {
+            const auto id = padControlId(pad, control);
+            layout.add(std::make_unique<juce::AudioParameterFloat>(
+                juce::ParameterID { id, 1 },
+                "Pad " + juce::String(static_cast<int>(pad + 1)) + " "
+                    + (control == 16 ? "Decay" : control == 17 ? "Sustain" : "Release"),
+                juce::NormalisableRange<float> { 0.0f, 1.0f, 0.01f }, control == 18 ? 0.03f : 1.0f,
+                juce::AudioParameterFloatAttributes()
+                    .withStringFromValueFunction([](float value, int) { return juce::String(value, 2); })
+                    .withValueFromStringFunction([](const juce::String& text) { return text.getFloatValue(); })));
+        }
+    layout.add(std::make_unique<SwingReferenceParameter>());
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        layout.add(std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID { "pad" + juce::String(static_cast<int>(pad + 1)) + "OneShot", 1 },
+            "Pad " + juce::String(static_cast<int>(pad + 1)) + " One Shot", true));
     return layout;
 }
 
@@ -144,6 +369,15 @@ BeatScholarLinuxProcessor::BeatScholarLinuxProcessor()
     for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
         for (std::size_t effect = 0; effect < padBypassNames.size(); ++effect)
             padBypassParameters_[pad][effect] = parameters_.getRawParameterValue(padBypassId(pad, effect));
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        for (std::size_t control = 0; control < 19; ++control)
+            padControlParameters_[pad][control] = parameters_.getRawParameterValue(padControlId(pad, control));
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        for (std::size_t effect = 0; effect < padEnableMembers.size(); ++effect)
+            padEnableParameters_[pad][effect] = parameters_.getRawParameterValue(padEnableId(pad, effect));
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        padOneShotParameters_[pad] = parameters_.getRawParameterValue(
+            "pad" + juce::String(static_cast<int>(pad + 1)) + "OneShot");
     // Defaults belong only to a new instance. Audio re-preparation must never
     // replace an intentionally empty or partially populated restored kit.
     loadFactoryDefaultsIfAvailable();
@@ -155,7 +389,7 @@ BeatScholarLinuxProcessor::BeatScholarLinuxProcessor()
     {
         stateSnapshots_[index] = projectEditor_.state();
         playbackPlans_[index] = bsl::SequencerPlayback::prepareProject(stateSnapshots_[index]);
-        silentSlicePlans_[index] = bsl::SequencerPlayback::prepareSilentProject(stateSnapshots_[index]);
+        visualSlicePlans_[index] = bsl::SequencerPlayback::prepareVisualProject(stateSnapshots_[index]);
     }
     const auto& state = projectEditor_.state();
     lastPublishedActivePattern_ = state.patterns[state.activePattern].runtimeId;
@@ -215,7 +449,7 @@ void BeatScholarLinuxProcessor::publishProjectStateIfNeeded()
     stateSnapshots_[static_cast<std::size_t>(target)] = projectEditor_.state();
     const auto& snapshot = stateSnapshots_[static_cast<std::size_t>(target)];
     playbackPlans_[static_cast<std::size_t>(target)] = bsl::SequencerPlayback::prepareProject(snapshot);
-    silentSlicePlans_[static_cast<std::size_t>(target)] = bsl::SequencerPlayback::prepareSilentProject(snapshot);
+    visualSlicePlans_[static_cast<std::size_t>(target)] = bsl::SequencerPlayback::prepareVisualProject(snapshot);
     const auto activePattern = snapshot.patterns[snapshot.activePattern].runtimeId;
     publishedStateIndex_.store(target, std::memory_order_release);
     if (activePattern != lastPublishedActivePattern_)
@@ -251,16 +485,59 @@ bool BeatScholarLinuxProcessor::restoreProjectHistory(bool redo)
             samples[pad].customRates[layer] = sound.customSamples[layer].sampleRate;
         }
     }
+    syncAutomatedValuesToProject();
     if (!(redo ? projectEditor_.redo() : projectEditor_.undo())) return false;
     const auto& state = projectEditor_.state();
     const auto parameters = projectEditor_.restoredParameters();
+    if (parameters == bsl::HistoryParameters::swingReference)
+    {
+        auto* reference = parameters_.getParameter("swingReference");
+        reference->setValueNotifyingHost(reference->convertTo0to1(static_cast<float>(state.global.swingReference)));
+    }
+    if (parameters == bsl::HistoryParameters::kit)
+        parameters_.getParameter("masterFilterEnabled")->setValueNotifyingHost(state.master.filterEnabled ? 1.0f : 0.0f);
+    if (parameters == bsl::HistoryParameters::masterCutoff || parameters == bsl::HistoryParameters::kit)
+        parameters_.getParameter("masterCutoff")->setValueNotifyingHost(state.master.cutoff);
+    if (parameters == bsl::HistoryParameters::masterResonance || parameters == bsl::HistoryParameters::kit)
+        parameters_.getParameter("masterResonance")->setValueNotifyingHost(state.master.resonance);
+    if (parameters == bsl::HistoryParameters::masterCrush || parameters == bsl::HistoryParameters::kit)
+        parameters_.getParameter("masterCrush")->setValueNotifyingHost(state.master.crush);
+    if (parameters == bsl::HistoryParameters::masterCompression || parameters == bsl::HistoryParameters::kit)
+        parameters_.getParameter("masterCompression")->setValueNotifyingHost(state.master.compression);
+    if (parameters == bsl::HistoryParameters::masterDistortionDrive || parameters == bsl::HistoryParameters::kit)
+        parameters_.getParameter("masterDistortionDrive")->setValueNotifyingHost(state.kit.pads[0].distortionDrive);
     if (parameters == bsl::HistoryParameters::masterGain || parameters == bsl::HistoryParameters::kit)
         if (auto* master = parameters_.getParameter("masterGain"))
             master->setValueNotifyingHost(master->convertTo0to1(state.master.gain));
+    if (parameters == bsl::HistoryParameters::kit)
+        if (auto* room = parameters_.getParameter("masterRoomReturn"))
+            room->setValueNotifyingHost(state.master.roomReturn);
+    if (parameters == bsl::HistoryParameters::kit)
+        if (auto* reverb = parameters_.getParameter("masterReverbReturn"))
+            reverb->setValueNotifyingHost(state.master.reverbReturn);
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+        for (int control = 0; control < 19; ++control)
+            if (parameters == bsl::HistoryParameters::kit
+                || (pad == projectEditor_.restoredPad()
+                    && parameters == padControlHistory[control]))
+            {
+                auto* parameter = parameters_.getParameter(padControlId(pad, control));
+                parameter->setValueNotifyingHost(parameter->convertTo0to1(
+                    control == 15 && state.kit.pads[pad].attackSeconds == 0.0f
+                        ? state.kit.pads[pad].attackNormalized : state.kit.pads[pad].*padControlMembers[control]));
+            }
     std::array<bool, bsl::padCount> changedSamples {};
     for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
     {
         const auto& sound = state.kit.pads[pad];
+        if (parameters == bsl::HistoryParameters::kit
+            || (parameters == bsl::HistoryParameters::padOneShot && pad == projectEditor_.restoredPad()))
+            parameters_.getParameter("pad" + juce::String(static_cast<int>(pad + 1)) + "OneShot")
+                ->setValueNotifyingHost(sound.oneShot ? 1.0f : 0.0f);
+        if (parameters == bsl::HistoryParameters::kit)
+            for (std::size_t effect = 0; effect < padEnableMembers.size(); ++effect)
+                parameters_.getParameter(padEnableId(pad, effect))->setValueNotifyingHost(
+                    sound.*padEnableMembers[effect] ? 1.0f : 0.0f);
         const std::array bypass { sound.lpfBypass, sound.hpfBypass, sound.driveBypass, sound.crushBypass };
         for (std::size_t effect = 0; effect < bypass.size(); ++effect)
             if (parameters == bsl::HistoryParameters::kit)
@@ -309,6 +586,7 @@ void BeatScholarLinuxProcessor::prepareToPlay(double sampleRate, int maximumExpe
     scratch_.assign(totalOutputChannels,
                     std::vector<float>(static_cast<std::size_t>(std::max(1, maximumExpectedSamplesPerBlock))));
     for (auto& peak : padPeaks_) peak.store(0.0f, std::memory_order_relaxed);
+    for (auto& rms : padGlowRms_) rms.store(0.0f, std::memory_order_relaxed);
     for (auto& peak : outputPeaks_) peak.store(0.0f, std::memory_order_relaxed);
     sequencerPlayback_.reset();
     sequencerMidiChannels_ = {};
@@ -324,12 +602,13 @@ void BeatScholarLinuxProcessor::prepareToPlay(double sampleRate, int maximumExpe
     publishProjectStateIfNeeded();
 }
 
-void BeatScholarLinuxProcessor::publishPlaybackActivity(const PlaybackActivity& activity) noexcept
+bool BeatScholarLinuxProcessor::publishPlaybackActivity(const PlaybackActivity& activity) noexcept
 {
     int start1, size1, start2, size2;
     activityFifo_.prepareToWrite(1, start1, size1, start2, size2);
     if (size1 != 0) pendingActivity_[static_cast<std::size_t>(start1)] = activity;
     activityFifo_.finishedWrite(size1);
+    return size1 != 0;
 }
 
 bool BeatScholarLinuxProcessor::takePlaybackActivity(PlaybackActivity& activity) noexcept
@@ -344,6 +623,7 @@ bool BeatScholarLinuxProcessor::takePlaybackActivity(PlaybackActivity& activity)
 void BeatScholarLinuxProcessor::releaseResources()
 {
     resetRequest_.request();
+    for (auto& rms : padGlowRms_) rms.store(0.0f, std::memory_order_relaxed);
 }
 
 bool BeatScholarLinuxProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -367,10 +647,13 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         || static_cast<std::size_t>(samplesInBlock) > scratch_.front().size())
     {
         buffer.clear();
+        for (auto& rms : padGlowRms_) rms.store(0.0f, std::memory_order_relaxed);
         return;
     }
 
     const bool resetRequested = resetRequest_.consume();
+    if (activityRefreshRequested_.exchange(false, std::memory_order_acquire) || resetRequested)
+        lastVisualActivities_.fill({});
     if (resetRequested)
     {
         audioEngine_.reset();
@@ -462,6 +745,7 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     frame.playing = (standalone || wrapperType == juce::AudioProcessor::wrapperType_Undefined)
         && standalonePlaying_.load();
     frame.swingPercent = parameters_.getRawParameterValue("swing")->load();
+    frame.swingReference = static_cast<bsl::SwingReference>(static_cast<int>(parameters_.getRawParameterValue("swingReference")->load()));
     // AudioProcessorPlayer supplies device time, not musical transport.
     // Its clock keeps advancing while paused and its isPlaying stays false.
     if (!standalone)
@@ -516,18 +800,49 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     {
         const auto& sound = state.kit.pads[pad];
         auto settings = bsl::makePadPlaybackSettings(sound);
+        settings.oneShot = padOneShotParameters_[pad]->load() >= 0.5f;
         const auto& bypass = padBypassParameters_[pad];
         // Read cached atomics directly: no string construction, model mutation,
         // or allocation on the audio thread. Automation preserves knob values.
-        settings.filterEnabled = sound.filterEnabled && bypass[0]->load() < 0.5f;
+        settings.filterEnabled = padEnableParameters_[pad][0]->load() >= 0.5f && bypass[0]->load() < 0.5f;
         settings.highPassEnabled = bypass[1]->load() < 0.5f;
         settings.driveEnabled = sound.driveEnabled && bypass[2]->load() < 0.5f;
-        settings.crush = bypass[3]->load() >= 0.5f ? 0.0f : sound.crush;
+        settings.crush = bypass[3]->load() >= 0.5f ? 0.0f : padControlParameters_[pad][8]->load();
+        settings.gain = padControlParameters_[pad][0]->load();
+        settings.pan = padControlParameters_[pad][1]->load();
+        settings.pitchSemitones = padControlParameters_[pad][2]->load();
+        settings.fineCents = padControlParameters_[pad][3]->load();
+        settings.highPass = padControlParameters_[pad][4]->load();
+        settings.cutoff = padControlParameters_[pad][5]->load();
+        settings.resonance = padControlParameters_[pad][6]->load();
+        settings.compression = padControlParameters_[pad][7]->load();
+        settings.driveGainDb = padControlParameters_[pad][9]->load();
+        settings.auxGain = padControlParameters_[pad][10]->load();
+        settings.room = padControlParameters_[pad][11]->load();
+        settings.reverb = padControlParameters_[pad][12]->load();
+        settings.distortionMix = padControlParameters_[pad][13]->load();
+        settings.damp = padControlParameters_[pad][14]->load();
+        settings.attackSeconds = padControlParameters_[pad][15]->load();
+        settings.attackNormalized = settings.attackSeconds;
+        settings.decaySeconds = padControlParameters_[pad][16]->load();
+        settings.sustainLevel = padControlParameters_[pad][17]->load();
+        settings.releaseSeconds = padControlParameters_[pad][18]->load();
+        // Old own-format projects used this field for an insert mix. Keep that
+        // route on recall; a changed Aux3 control explicitly selects the send.
+        settings.independentDistortion = sound.independentDistortion
+            || settings.distortionMix != sound.distortionMix;
         audioEngine_.setPadSettings(pad, settings);
     }
     auto masterSettings = bsl::makeMasterPlaybackSettings(
         state.master, parameters_.getRawParameterValue("masterGain")->load());
-    masterSettings.distortionDrive = state.kit.pads[0].distortionDrive;
+    masterSettings.roomReturn = parameters_.getRawParameterValue("masterRoomReturn")->load();
+    masterSettings.reverbReturn = parameters_.getRawParameterValue("masterReverbReturn")->load();
+    masterSettings.cutoff = parameters_.getRawParameterValue("masterCutoff")->load();
+    masterSettings.resonance = parameters_.getRawParameterValue("masterResonance")->load();
+    masterSettings.crush = parameters_.getRawParameterValue("masterCrush")->load();
+    masterSettings.compression = parameters_.getRawParameterValue("masterCompression")->load();
+    masterSettings.filterEnabled = parameters_.getRawParameterValue("masterFilterEnabled")->load() >= 0.5f;
+    masterSettings.distortionDrive = parameters_.getRawParameterValue("masterDistortionDrive")->load();
     audioEngine_.setMasterSettings(masterSettings);
     audioEngine_.setModuleEnables(state.global.auxEnabled, state.global.masterEnabled);
     audioEngine_.beginBlock(scratch_, static_cast<std::size_t>(samplesInBlock));
@@ -634,7 +949,8 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
             {
                 const auto& event = sequencerEvents_[index].event;
                 const int offset = event.sampleOffset + baseOffset;
-                const auto samplerPad = state.padIndexForInputMidiNote(event.note);
+                const auto samplerPad = state.padIndexForInputMidiNote(
+                    state.kit.pads[event.padIndex].samplerNote);
                 consumeInputThrough(offset);
                 advanceAudio(offset);
                 auto& midiChannel = sequencerMidiChannels_[sequencerEvents_[index].laneIndex][event.note];
@@ -673,26 +989,37 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                 }
             }
         }
-        // Visual rests are scanned only after the audible plan is complete.
+        // Visual intervals are scanned only after the audible plan is complete.
         // This leaves native equal-time MIDI/note ownership order bit-identical
         // and gives real hits priority if the bounded UI queue is nearly full.
-        const auto& silentPlans = silentSlicePlans_[static_cast<std::size_t>(snapshotIndex)];
-        const auto silentPlan = patternIndex < silentPlans.size()
-            ? std::span<const bsl::SilentSliceStep>(silentPlans[patternIndex])
-            : std::span<const bsl::SilentSliceStep>();
-        bsl::SilentSliceCursor silentCursor;
-        while (!silentCursor.exhausted)
+        const auto& visualPlans = visualSlicePlans_[static_cast<std::size_t>(snapshotIndex)];
+        const auto visualPlan = patternIndex < visualPlans.size()
+            ? std::span<const bsl::VisualSliceStep>(visualPlans[patternIndex])
+            : std::span<const bsl::VisualSliceStep>();
+        bsl::VisualSliceCursor visualCursor;
+        while (!visualCursor.exhausted)
         {
-            const auto count = bsl::SequencerPlayback::renderSilentBatch(
-                state, playbackFrame, patternIndex, silentPlan, silentSliceEvents_, silentCursor);
+            const auto count = bsl::SequencerPlayback::renderVisualBatch(
+                state, playbackFrame, patternIndex, visualPlan, visualSliceEvents_, visualCursor);
             for (std::size_t index = 0; index < count; ++index)
             {
-                const auto& rest = silentSliceEvents_[index];
-                const int offset = rest.sampleOffset + baseOffset;
-                publishPlaybackActivity({ state.patterns[patternIndex].runtimeId,
-                    rest.laneIndex, rest.beatIndex, rest.sliceIndex, 0,
+                const auto& interval = visualSliceEvents_[index];
+                const int offset = interval.sampleOffset + baseOffset;
+                const PlaybackActivity activity { state.patterns[patternIndex].runtimeId,
+                    interval.laneIndex, interval.beatIndex, interval.sliceIndex, 0,
                     audioActivityFrame_ + static_cast<std::uint64_t>(offset),
-                    activityEpoch_.load(std::memory_order_relaxed), false });
+                    activityEpoch_.load(std::memory_order_relaxed), false,
+                    audioActivityFrame_ + static_cast<std::uint64_t>(baseOffset + interval.endSampleOffset) };
+                auto& previous = lastVisualActivities_[interval.laneIndex];
+                const auto endDifference = std::max(activity.endFrame, previous.endFrame)
+                    - std::min(activity.endFrame, previous.endFrame);
+                // A held sector needs one notification, not one per audio block.
+                // Re-publish changed timing and editor refreshes; tolerate the
+                // one-sample rounding variation in block-relative endpoints.
+                if (activity.pattern != previous.pattern || activity.epoch != previous.epoch
+                    || activity.beat != previous.beat || activity.slice != previous.slice
+                    || endDifference > 1)
+                    if (publishPlaybackActivity(activity)) previous = activity;
             }
         }
     };
@@ -731,9 +1058,13 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         auto previous = meter.load(std::memory_order_relaxed);
         while (previous < peak && !meter.compare_exchange_weak(previous, peak, std::memory_order_relaxed)) {}
     };
-    if (state.global.samplerEnabled)
-        for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+    {
+        if (state.global.samplerEnabled)
             publishPeak(padPeaks_[pad], audioEngine_.padPeaks()[pad]);
+        const auto rms = state.global.samplerEnabled ? audioEngine_.padGlowRms(pad) : 0.0f;
+        padGlowRms_[pad].store(std::isfinite(rms) ? rms : 0.0f, std::memory_order_relaxed);
+    }
     for (std::size_t channel = 0; channel < 2; ++channel)
     {
         float peak = 0.0f;
@@ -786,14 +1117,44 @@ void BeatScholarLinuxProcessor::setStateInformation(const void* data, int size)
 void BeatScholarLinuxProcessor::copyParameterValuesToState(bsl::ProjectState& state) const
 {
     state.global.swingPercent = parameters_.getRawParameterValue("swing")->load();
+    state.global.swingReference = static_cast<bsl::SwingReference>(static_cast<int>(parameters_.getRawParameterValue("swingReference")->load()));
     state.global.beatsPerMinute = parameters_.getRawParameterValue("bpm")->load();
     state.global.multiOutput = wrapperType != juce::AudioProcessor::wrapperType_Standalone
         && parameters_.getRawParameterValue("routing")->load() >= 0.5f;
+    state.master.filterEnabled = parameters_.getRawParameterValue("masterFilterEnabled")->load() >= 0.5f;
+    state.master.cutoff = parameters_.getRawParameterValue("masterCutoff")->load();
+    state.master.resonance = parameters_.getRawParameterValue("masterResonance")->load();
+    state.master.crush = parameters_.getRawParameterValue("masterCrush")->load();
+    state.master.compression = parameters_.getRawParameterValue("masterCompression")->load();
     state.master.gain = parameters_.getRawParameterValue("masterGain")->load();
+    state.master.roomReturn = parameters_.getRawParameterValue("masterRoomReturn")->load();
+    state.master.reverbReturn = parameters_.getRawParameterValue("masterReverbReturn")->load();
     for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
     {
         auto& sound = state.kit.pads[pad];
+        sound.oneShot = padOneShotParameters_[pad]->load() >= 0.5f;
+        for (std::size_t effect = 0; effect < padEnableMembers.size(); ++effect)
+            sound.*padEnableMembers[effect] = padEnableParameters_[pad][effect]->load() >= 0.5f;
+        sound.distortionDrive = parameters_.getRawParameterValue("masterDistortionDrive")->load();
         const auto& bypass = padBypassParameters_[pad];
+        sound.gain = padControlParameters_[pad][0]->load();
+        sound.pan = padControlParameters_[pad][1]->load();
+        // Preserve imported precision when the host value still represents
+        // that saved value; only actual automation should replace it.
+        for (std::size_t control = 2; control < 19; ++control)
+        {
+            auto& value = sound.*padControlMembers[control];
+            const auto* parameter = parameters_.getParameter(padControlId(pad, control));
+            const auto represented = parameter->convertFrom0to1(parameter->convertTo0to1(
+                control == 15 && value == 0.0f ? sound.attackNormalized : value));
+            const auto automated = padControlParameters_[pad][control]->load();
+            if (automated != represented)
+            {
+                if (control == 13) sound.independentDistortion = true;
+                value = automated;
+                if (control == 15) sound.attackNormalized = automated;
+            }
+        }
         sound.lpfBypass = bypass[0]->load() >= 0.5f;
         sound.hpfBypass = bypass[1]->load() >= 0.5f;
         sound.driveBypass = bypass[2]->load() >= 0.5f;
@@ -808,15 +1169,38 @@ void BeatScholarLinuxProcessor::syncParametersFromProject()
         state.global.multiOutput = false;
     if (auto* swing = parameters_.getParameter("swing"))
         swing->setValueNotifyingHost(swing->convertTo0to1(static_cast<float>(state.global.swingPercent)));
+    auto* reference = parameters_.getParameter("swingReference");
+    reference->setValueNotifyingHost(reference->convertTo0to1(static_cast<float>(state.global.swingReference)));
     if (auto* bpm = parameters_.getParameter("bpm"))
         bpm->setValueNotifyingHost(bpm->convertTo0to1(static_cast<float>(state.global.beatsPerMinute)));
     if (auto* routing = parameters_.getParameter("routing"))
         routing->setValueNotifyingHost(state.global.multiOutput ? 1.0f : 0.0f);
     if (auto* master = parameters_.getParameter("masterGain"))
         master->setValueNotifyingHost(master->convertTo0to1(state.master.gain));
+    if (auto* room = parameters_.getParameter("masterRoomReturn"))
+        room->setValueNotifyingHost(state.master.roomReturn);
+    if (auto* reverb = parameters_.getParameter("masterReverbReturn"))
+        reverb->setValueNotifyingHost(state.master.reverbReturn);
+    parameters_.getParameter("masterDistortionDrive")->setValueNotifyingHost(state.kit.pads[0].distortionDrive);
+    parameters_.getParameter("masterFilterEnabled")->setValueNotifyingHost(state.master.filterEnabled ? 1.0f : 0.0f);
+    parameters_.getParameter("masterCutoff")->setValueNotifyingHost(state.master.cutoff);
+    parameters_.getParameter("masterResonance")->setValueNotifyingHost(state.master.resonance);
+    parameters_.getParameter("masterCrush")->setValueNotifyingHost(state.master.crush);
+    parameters_.getParameter("masterCompression")->setValueNotifyingHost(state.master.compression);
     for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
     {
         const auto& sound = state.kit.pads[pad];
+        parameters_.getParameter("pad" + juce::String(static_cast<int>(pad + 1)) + "OneShot")
+            ->setValueNotifyingHost(sound.oneShot ? 1.0f : 0.0f);
+        for (int control = 0; control < 19; ++control)
+        {
+            auto* parameter = parameters_.getParameter(padControlId(pad, control));
+            parameter->setValueNotifyingHost(parameter->convertTo0to1(control == 15 && sound.attackSeconds == 0.0f
+                ? sound.attackNormalized : sound.*padControlMembers[control]));
+        }
+        for (std::size_t effect = 0; effect < padEnableMembers.size(); ++effect)
+            parameters_.getParameter(padEnableId(pad, effect))->setValueNotifyingHost(
+                sound.*padEnableMembers[effect] ? 1.0f : 0.0f);
         const std::array bypass { sound.lpfBypass, sound.hpfBypass, sound.driveBypass, sound.crushBypass };
         for (std::size_t effect = 0; effect < bypass.size(); ++effect)
             parameters_.getParameter(padBypassId(pad, effect))
@@ -897,11 +1281,11 @@ bool BeatScholarLinuxProcessor::setFactorySample(std::size_t pad, std::size_t la
                                                   const juce::String& sampleId)
 {
     if (pad >= bsl::padCount || layer >= 2 || (layer == 1 && pad > 1)
-        || sampleId.isEmpty() || juce::File(sampleId).getFileName() != sampleId)
+        || (sampleId.isNotEmpty() && juce::File(sampleId).getFileName() != sampleId))
         return false;
     const auto file = bsl::dataRoot().getChildFile("Factory/Samples")
                           .getChildFile(sampleId);
-    if (!file.existsAsFile())
+    if (sampleId.isNotEmpty() && !file.existsAsFile())
         return false;
     projectEditor_.checkpoint();
     auto& state = projectEditor_.state().kit.pads[pad];

@@ -27,13 +27,25 @@ struct Palette
     juce::uint32 panel = colour::panel;
     juce::uint32 panelRaised = colour::panelRaised;
     juce::uint32 header = colour::header;
+    juce::uint32 lowerHeader = 0xff232357U;
+    juce::uint32 lowerBorder = 0xff323262U;
+    juce::uint32 lowerBodyCentre = 0xff2b2b54U;
+    juce::uint32 lowerBodyEdge = 0xff0f0f31U;
+    juce::uint32 lowerBodyFrame = 0x6644447aU;
+    juce::uint32 gridBandCentre = 0xff3a3476U;
+    juce::uint32 gridBandEdge = 0xff12113bU;
     juce::uint32 grid = colour::grid;
     juce::uint32 border = colour::border;
     juce::uint32 patternCanvas = 0xff14142fU;
     juce::uint32 barHeaderDivider = 0xff303055U;
     juce::uint32 laneControlIdle = 0xff141430U;
+    juce::uint32 laneControlBorder = 0xff282850U;
+    juce::uint32 laneControlText = 0xffc4c4c4U;
     juce::uint32 arrangementCard = 0xff232357U;
+    juce::uint32 verticalScrollGutter = 0xff141428U;
     juce::uint32 horizontalScrollThumb = 0xff323264U;
+    juce::uint32 zoomRail = 0xff343463U;
+    juce::uint32 zoomThumb = 0xffd7dbf6U;
     juce::uint32 emptyBeatOutline = 0xff3c3c64U;
     juce::uint32 populatedBeatOutline = 0xffc8c8f0U;
     juce::uint32 borderBright = colour::borderBright;
@@ -48,12 +60,12 @@ struct Palette
 
 [[nodiscard]] juce::Font font(float height, bool heavy = false);
 void drawInstrumentGlyph(juce::Graphics&, juce::Rectangle<float> icon, int pad,
-                         juce::Colour tint, float stroke);
+                         juce::Colour tint, float stroke, bool kitTile = false);
 
 class BeatScholarLookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
-    BeatScholarLookAndFeel();
+    explicit BeatScholarLookAndFeel(bool factorySampleMenu = false);
     void setDarkMode(bool);
     [[nodiscard]] const Palette& palette() const noexcept { return palette_; }
 
@@ -89,6 +101,7 @@ public:
 
 private:
     Palette palette_;
+    const bool factorySampleMenu_;
     bool darkMode_ = false;
     static void drawTriangle(juce::Graphics&, juce::Rectangle<float>, bool pointsRight,
                              juce::Colour);

@@ -333,6 +333,20 @@ void testNegativeSwingAdvancesOffGridEvents()
                   && events[2].gateFrames == 2881 && events[3].gateFrames == 8761,
               "slice gates follow swung boundaries, including the final beat boundary");
     }
+    for (const auto reference : { bsl::SwingReference::quarter, bsl::SwingReference::half })
+    {
+        frame.swingReference = reference;
+        auto saved = state;
+        saved.global.swingReference = reference;
+        auto restoredFrame = frame;
+        restoredFrame.swingReference.reset();
+        const auto automated = bsl::Sequencer::render(state, frame);
+        check(automated == bsl::Sequencer::render(saved, restoredFrame),
+              "live swing reference matches restored reference without modifying project state");
+        check(automated != events, "live swing reference changes note and gate timing");
+        check(state.global.swingReference == bsl::SwingReference::eighth,
+              "live swing reference leaves the shared snapshot unchanged");
+    }
     const auto straight = bsl::Sequencer::applySwing(0.25, 0.0, bsl::SwingReference::eighth);
     const auto pushed = bsl::Sequencer::applySwing(0.25, -100.0, bsl::SwingReference::eighth);
     check(std::abs(straight - 0.25) < 1.0e-12, "zero swing preserves beat position");
@@ -471,6 +485,36 @@ void testRandomizerIsDeterministicAndRespectsFillEmpty()
             check(slice.velocity >= 0.2f && slice.velocity <= 0.7f,
                   "randomizer velocity stays in the configured range");
         }
+}
+
+void testRandomizerFillEmptyProtectsHitsWithTriggeringDisabled()
+{
+    // Original 1.6.2, 2026-11-26: Fill Empty still protects an existing Kick
+    // with Step Triggering off; disabling Fill Empty lets Drum Selection replace it.
+    bsl::RandomizerSettings settings;
+    settings.selectedPads = { 1 };
+    settings.noteSelectionEnabled = true;
+    settings.slicingEnabled = false;
+    settings.triggeringEnabled = false;
+    settings.velocityEnabled = false;
+    settings.fillEmptyOnly = true;
+
+    auto beat = bsl::BeatState::withSubdivision(2, 0, 0.8f);
+    beat.slices[0].enabled = true;
+    beat.slices[1].enabled = false;
+    const auto emptySlice = beat.slices[1];
+    bsl::Randomizer::apply(beat, settings, 42u);
+    check(beat.slices[0].enabled && beat.slices[0].padIndex == 0,
+          "fill-empty protects an existing hit even with Step Triggering disabled");
+    check(beat.slices[1] == emptySlice,
+          "disabled Step Triggering leaves empty slices unchanged with fill-empty on");
+
+    settings.fillEmptyOnly = false;
+    bsl::Randomizer::apply(beat, settings, 42u);
+    check(beat.slices[0].enabled && beat.slices[0].padIndex == 1,
+          "Drum Selection replaces existing hits when fill-empty is off");
+    check(beat.slices[1] == emptySlice,
+          "disabled Step Triggering leaves empty slices unchanged with fill-empty off");
 }
 
 void testRandomizerDefaultsEmptyPadSelectionToKick()
@@ -781,6 +825,17 @@ void testPadIdentityIsIndependentOfMidiMapping()
         if (std::find(inputNotes.begin(), inputNotes.end(), note) == inputNotes.end())
             check(!state.padIndexForInputMidiNote(static_cast<std::uint8_t>(note)),
                   "unmapped input notes do not trigger a pad");
+    // The sampler note a pad sends must resolve back to that same pad, for the
+    // plain default as well as the native Init state.
+    const auto plain = bsl::ProjectState::makeDefault();
+    const auto init = bsl::ProjectState::makeMainInit();
+    for (std::size_t pad = 0; pad < bsl::padCount; ++pad)
+    {
+        check(plain.padIndexForInputMidiNote(plain.kit.pads[pad].samplerNote) == std::optional<std::size_t> { pad },
+              "default kit sampler note resolves to its own pad");
+        check(init.padIndexForInputMidiNote(init.kit.pads[pad].samplerNote) == std::optional<std::size_t> { pad },
+              "Init kit sampler note resolves to its own pad");
+    }
 }
 
 void testLaneRandomizationUsesOneUndoCheckpointAndStableBeatSeeds()
@@ -992,6 +1047,7 @@ int main()
     testUndoRedoRestoresCanonicalProjectState();
     testBeatTransformsPreserveNotesAndVelocities();
     testRandomizerIsDeterministicAndRespectsFillEmpty();
+    testRandomizerFillEmptyProtectsHitsWithTriggeringDisabled();
     testRandomizerDefaultsEmptyPadSelectionToKick();
     testFillEmptySpacingFollowsPreservedHits();
     testLaneRandomizerSpacingCrossesBeatBoundaries();

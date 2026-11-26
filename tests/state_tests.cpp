@@ -117,12 +117,15 @@ void testAuxiliaryReturnRecallAndCompatibility()
     source.kit.pads[0].auxGain = 0.5f;
     source.kit.pads[0].delay = 0.3f; // Preserve older own-format echo controls.
     source.master.distortionReturn = 0.25f;
+    source.master.roomReturn = 0.4f;
+    source.master.reverbReturn = 0.3f;
     source.master.delay = 0.4f;
     bsl::KitState kit;
     bsl::MasterState master;
     const auto kitJson = bsl::statecodec::encodeKitJson(source.kit, source.master);
     check(bsl::statecodec::decodeKitJson(kitJson, kit, master)
               && kit.pads[0].auxGain == 0.5f && master.distortionReturn == 0.25f
+              && master.roomReturn == 0.4f && master.reverbReturn == 0.3f
               && kit.pads[0].delay == 0.3f && master.delay == 0.4f,
           "kit recall preserves native auxiliary controls independently of older own-format echo");
     for (const bool isKit : { false, true })
@@ -133,6 +136,8 @@ void testAuxiliaryReturnRecallAndCompatibility()
         if (pads == nullptr) continue;
         for (auto& pad : *pads) pad.getDynamicObject()->removeProperty("auxGain");
         old.getProperty("master", {}).getDynamicObject()->removeProperty("distortionReturn");
+        old.getProperty("master", {}).getDynamicObject()->removeProperty("roomReturn");
+        old.getProperty("master", {}).getDynamicObject()->removeProperty("reverbReturn");
         auto restored = source;
         const auto json = juce::JSON::toString(old);
         const bool decoded = isKit
@@ -140,6 +145,7 @@ void testAuxiliaryReturnRecallAndCompatibility()
             : bsl::statecodec::decodePresetJson(json, restored);
         check(decoded && restored.kit.pads[0].auxGain == 0.0f
                   && restored.master.distortionReturn == 1.0f
+                  && restored.master.roomReturn == 1.0f && restored.master.reverbReturn == 1.0f
                   && restored.kit.pads[0].delay == 0.3f && restored.master.delay == 0.4f,
               "missing new controls preserve older own-format playback defaults");
     }
@@ -149,6 +155,14 @@ void testAuxiliaryReturnRecallAndCompatibility()
         invalid.kit.pads[0].auxGain = value;
         check(!invalid.isValid() && bsl::statecodec::encodePresetJson(invalid).isEmpty(),
               "invalid Aux4 levels are rejected before publication");
+        invalid = source;
+        invalid.master.roomReturn = value;
+        check(!invalid.isValid() && bsl::statecodec::encodePresetJson(invalid).isEmpty(),
+              "invalid Room return levels are rejected before publication");
+        invalid = source;
+        invalid.master.reverbReturn = value;
+        check(!invalid.isValid() && bsl::statecodec::encodePresetJson(invalid).isEmpty(),
+              "invalid Reverb return levels are rejected before publication");
         invalid = source;
         invalid.master.distortionReturn = value;
         check(!invalid.isValid() && bsl::statecodec::encodePresetJson(invalid).isEmpty(),
@@ -195,6 +209,8 @@ void testNativeStateRoundTripIncludesProjectAndEmbeddedSample()
     source.kit.pads[2].filterEnabled = false;
     source.kit.pads[2].attackNormalized = 0.35f;
     source.kit.pads[2].releaseSeconds = 0.125f;
+    source.kit.pads[2].decaySeconds = 0.85f;
+    source.kit.pads[2].sustainLevel = 0.15f;
     source.kit.pads[2].rootNote = 61;
     source.kit.pads[2].driveEnabled = true;
     source.kit.pads[2].driveGainDb = 8.0f;
@@ -233,10 +249,24 @@ void testNativeStateRoundTripIncludesProjectAndEmbeddedSample()
     check(bsl::statecodec::decode(encoded.getData(), encoded.getSize(), restored),
           "native state decodes successfully");
     check(restored.isValid(), "decoded project validates before publication");
+    auto oversizedEnvelope = source;
+    oversizedEnvelope.kit.pads[2].attackSeconds = 2.0f;
+    oversizedEnvelope.kit.pads[2].decaySeconds = 2.0f;
+    oversizedEnvelope.kit.pads[2].releaseSeconds = 2.0f;
+    const auto oversizedEncoded = bsl::statecodec::encode(oversizedEnvelope);
+    auto normalizedEnvelope = restored;
+    check(bsl::statecodec::decode(oversizedEncoded.getData(), oversizedEncoded.getSize(), normalizedEnvelope)
+              && normalizedEnvelope.kit.pads[2].attackSeconds == 1.0f
+              && normalizedEnvelope.kit.pads[2].decaySeconds == 1.0f
+              && normalizedEnvelope.kit.pads[2].releaseSeconds == 1.0f,
+          "native envelope recall normalizes durations to the original control range");
+
     check(restored.ui.presetFile == source.ui.presetFile
           && restored.ui.kitFile == source.ui.kitFile
           && restored.ui.randomizerFile == source.ui.randomizerFile,
           "content identity survives the host-state envelope");
+    check(restored.kit.pads[2].decaySeconds == 0.85f && restored.kit.pads[2].sustainLevel == 0.15f,
+          "Decay and Sustain survive host state recall");
     check(restored.kit.pads[2].releaseSeconds == 0.125f, "release duration survives host state recall");
     check(restored.global.swingPercent == -37.5, "global settings round trip");
     check(std::abs(restored.global.defaultVelocity - 0.63f) < 1.0e-6f
@@ -636,7 +666,7 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
         {"name":"Kick","Layers":[{"Sample":{"Binary":{"name":"kick.flac"}}}],
          "Params":{"LayerMix":0.25,"OneShot":"On","Mono":"On","Pan":0.5,"Length":0.8,
                    "Volume":"0.00 dB","Hipass":"120 Hz",
-                   "ADSR":{"Attack":"35%","Release":0.12},"Note":"C4",
+                   "ADSR":{"Attack":"35%","Decay":0.85,"Sustain":0.15,"Release":0.12},"Note":"C4",
                    "Pitch":{"Root":"E3","Tune":"-2","Fine":"7"},
                    "Compressor":0.3,"BitCrush":0.1,
                    "Filter":{"Enable":"Off","Cutoff":"6.0 kHz","Reso":"1.5"},
@@ -662,6 +692,49 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
     })json";
     auto state = bsl::ProjectState::makeDefault();
     check(bsl::statecodec::importLegacyPresetJson(json, state), "legacy preset JSON imports");
+    auto lowNoteState = state;
+    auto highNoteState = state;
+    check(bsl::statecodec::importLegacyPresetJson(
+              json.replace("\"Note\":\"C4\"", "\"Note\":\"C2\""), lowNoteState)
+              && bsl::statecodec::importLegacyPresetJson(
+                  json.replace("\"Note\":\"C4\"", "\"Note\":\"B6\""), highNoteState)
+              && bsl::statecodec::encodePresetJson(lowNoteState)
+                  == bsl::statecodec::encodePresetJson(highNoteState),
+          "native pad Note control does not change sampler, output or slice identity on reload");
+    auto lowNoteKit = lowNoteState.kit;
+    auto highNoteKit = highNoteState.kit;
+    auto lowNoteMaster = lowNoteState.master;
+    auto highNoteMaster = highNoteState.master;
+    check(bsl::statecodec::importLegacyKitJson(juce::JSON::toString(juce::JSON::parse(
+              json.replace("\"Note\":\"C4\"", "\"Note\":\"C2\"")).getProperty("Sampler", {})),
+              lowNoteKit, lowNoteMaster)
+              && bsl::statecodec::importLegacyKitJson(juce::JSON::toString(juce::JSON::parse(
+                  json.replace("\"Note\":\"C4\"", "\"Note\":\"B6\"")).getProperty("Sampler", {})),
+                  highNoteKit, highNoteMaster)
+              && lowNoteKit.pads[0].samplerNote == highNoteKit.pads[0].samplerNote
+              && lowNoteKit.pads[0].midiNote == highNoteKit.pads[0].midiNote,
+          "native kit import also keeps the Note control separate from MIDI routing");
+    auto percentageState = state;
+    check(bsl::statecodec::importLegacyPresetJson(
+              json.replace("\"Sustain\":0.15", "\"Sustain\":\"15%\""), percentageState)
+              && percentageState.kit.pads.front().sustainLevel == 1.0f,
+          "legacy percentage sustain restores as a bounded number");
+
+    auto percentageEnvelope = state;
+    check(bsl::statecodec::importLegacyPresetJson(
+              json.replace("\"Decay\":0.85", "\"Decay\":\"15%\"")
+                  .replace("\"Release\":0.12", "\"Release\":\"15%\""), percentageEnvelope)
+              && percentageEnvelope.kit.pads.front().decaySeconds == 1.0f
+              && percentageEnvelope.kit.pads.front().releaseSeconds == 1.0f,
+          "legacy percentage durations restore as bounded numbers, not unit percentages");
+
+    auto oversizedEnvelope = state;
+    check(bsl::statecodec::importLegacyPresetJson(
+              json.replace("\"Decay\":0.85", "\"Decay\":2.0")
+                  .replace("\"Release\":0.12", "\"Release\":2.0"), oversizedEnvelope)
+              && oversizedEnvelope.kit.pads.front().decaySeconds == 1.0f
+              && oversizedEnvelope.kit.pads.front().releaseSeconds == 1.0f,
+          "legacy envelope recall normalizes durations to the original control range");
     check(state.isValid(), "legacy preset is validated before publication");
     for (const auto& entry : { std::pair { "1/8", bsl::SwingReference::eighth },
                                std::pair { "1/4", bsl::SwingReference::quarter },
@@ -772,7 +845,7 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
     for (int note = 0; note < 128; ++note)
     {
         auto* entry = new juce::DynamicObject();
-        entry->setProperty("number", note == 60 || note == 37 ? 72 : note);
+        entry->setProperty("number", note == 36 || note == 37 ? 72 : note);
         entry->setProperty("type", 0);
         mappings.add(juce::var(entry));
     }
@@ -783,6 +856,9 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
     check(bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(mapped), mappedState)
               && mappedState.kit.pads[0].midiNote == 72 && mappedState.kit.pads[1].midiNote == 72,
           "legacy explicit output map preserves duplicate output pitches");
+    check(mappedState.kit.pads[0].samplerNote == 36
+              && mappedState.kit.pads[1].samplerNote == 38,
+          "native output mapping preserves independent sampler note identities");
     check(mappedState.patterns[0].lanes[0].beats[0].slices[0].padIndex == 0
               && mappedState.patterns[0].lanes[0].beats[1].slices[0].padIndex == 1,
           "legacy output remapping preserves sequencer pad ownership");
@@ -849,9 +925,12 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
     check(std::abs(state.kit.pads.front().pitchSemitones + 2.0f) < 1.0e-6f,
           "legacy sound processing imports");
     check(!state.kit.pads.front().filterEnabled && state.kit.pads.front().driveEnabled
-              && state.kit.pads.front().midiNote == 60
+              && state.kit.pads.front().midiNote == 36
               && state.kit.pads.front().rootNote == 52
-              && std::abs(state.kit.pads.front().attackNormalized - 0.35f) < 1.0e-6f
+              && state.kit.pads.front().attackNormalized == 1.0f
+              && state.kit.pads.front().attackSeconds == 1.0f
+              && std::abs(state.kit.pads.front().decaySeconds - 0.85f) < 1.0e-6f
+              && std::abs(state.kit.pads.front().sustainLevel - 0.15f) < 1.0e-6f
               && std::abs(state.kit.pads.front().releaseSeconds - 0.12f) < 1.0e-6f
               && std::abs(state.kit.pads.front().driveGainDb - 9.5f) < 1.0e-6f
               && std::abs(state.kit.pads.front().distortionMix - 0.55f) < 1.0e-6f
@@ -870,8 +949,10 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
               && std::abs(state.master.cutoff - 0.8118819632f) < 1.0e-6f
               && std::abs(state.master.resonance - 7.0f / 12.0f) < 1.0e-6f,
           "legacy Delay sets the Aux3 return while native Aux4 creates no echo");
-    check(std::abs(state.kit.pads[0].reverb - 0.018f) < 1e-6f
-              && std::abs(state.kit.pads[0].room - 0.101192885f) < 1e-6f
+    check(std::abs(state.kit.pads[0].reverb - 0.2f) < 1e-6f
+              && std::abs(state.kit.pads[0].room - 0.4f) < 1e-6f
+              && std::abs(state.master.roomReturn - 0.4f) < 1e-6f
+              && std::abs(state.master.reverbReturn - 0.3f) < 1e-6f
               && std::abs(state.kit.pads[0].distortionDrive - 0.2f) < 1e-6f,
           "legacy Aux1 is Room and Aux2 is Reverb, with their respective return levels");
     auto nativeRecall = bsl::ProjectState::makeDefault();
@@ -879,7 +960,9 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
               && nativeRecall.kit.pads[0].room == state.kit.pads[0].room
               && nativeRecall.kit.pads[0].reverb == state.kit.pads[0].reverb
               && nativeRecall.kit.pads[0].auxGain == state.kit.pads[0].auxGain
-              && nativeRecall.master.distortionReturn == state.master.distortionReturn,
+              && nativeRecall.master.distortionReturn == state.master.distortionReturn
+              && nativeRecall.master.roomReturn == state.master.roomReturn
+              && nativeRecall.master.reverbReturn == state.master.reverbReturn,
           "native preset roundtrip preserves all four auxiliary mappings");
     check(std::abs(state.kit.pads[1].resonance - 7.0f / 24.0f) < 1.0e-6f,
           "missing legacy filter preserves native default resonance Q 0.8");
@@ -1178,8 +1261,10 @@ void testLegacyAmbienceReturnTapers()
               "native ambience return fixture imports");
         const double expectedRoom = returnLevel == 0.5f ? 0.1258925468 : returnLevel;
         const double expectedReverb = returnLevel == 0.5f ? 0.0630957307 : returnLevel;
-        check(std::abs(sendGain(kit.pads[0].room) / sendGain(0.5f) - expectedRoom) < 1e-6
-                  && std::abs(sendGain(kit.pads[0].reverb) / sendGain(0.5f) - expectedReverb) < 1e-6,
+        check(kit.pads[0].room == 0.5f && master.roomReturn == returnLevel
+                  && std::abs(sendGain(std::pow(master.roomReturn, 1.5f)) - expectedRoom) < 1e-6
+                  && kit.pads[0].reverb == 0.5f && master.reverbReturn == returnLevel
+                  && std::abs(sendGain(master.reverbReturn * master.reverbReturn) - expectedReverb) < 1e-6,
               "imported zero, half and full returns match captured original wet gains");
     }
 }

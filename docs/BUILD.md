@@ -7,7 +7,7 @@ audio, font, OpenGL, and X11 development packages.
 On Debian or Ubuntu, the package names used by the cloud build are:
 
 ```text
-build-essential cmake ninja-build pkg-config
+build-essential cmake ninja-build pkg-config python3-venv
 libasound2-dev libfontconfig1-dev libfreetype6-dev libgl1-mesa-dev libgtk-3-dev
 libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev
 libxrandr-dev libxrender-dev
@@ -120,22 +120,25 @@ it does not migrate license files or extract audio. Keep migrated content local.
 
 The **Linux validation** workflow replaces the CPU build-and-test portion of
 Modal. It runs only through Actions → Linux validation → Run workflow in this
-private repository. Before running, verify the account's remaining included
+repository. Before running, verify the account's remaining included
 Actions minutes and set an Actions spending limit of $0 in GitHub billing.
 The required confirmation is an operator acknowledgement, not an automated
 billing check. A timeout limits runtime; it does not guarantee a free run.
 
-The workflow uses a standard Ubuntu runner, two compile jobs, a 60-minute job
-limit, pinned JUCE and pluginval, and synthetic test content. It builds both
-VST3 and standalone, runs CTest (including editor screenshots and actual VST3
-MIDI checks), pluginval at strictness 10, and the standalone settings/recall
+The workflow uses a standard Ubuntu runner, a 60-minute job limit, two-way
+compilation parallelism, pinned JUCE and pluginval, and synthetic test content.
+It builds both VST3 and standalone, runs CTest (including editor screenshots
+and actual VST3 MIDI checks), pluginval at strictness 10, and the standalone settings/recall
 check. The factory playback suite explicitly skips without private content.
 A standalone failure fails the workflow; it is not treated as a successful audit.
 
 Reports can optionally be uploaded for one day. Uploads are off by default to
 avoid consuming artifact storage; run logs remain available in Actions.
-No candidate binaries, factory content, original binaries, licenses or native
-captures are uploaded by this workflow. There is no dependency cache or scheduled
+The workflow excludes factory content, original binaries and native captures.
+Only when `upload_candidate` is ticked does the run save, for one day, the
+source-built candidate binaries, test helpers, two third-party licence files and
+synthetic editor previews. Anyone with repository read access can download that
+artifact while retained. There is no dependency cache or scheduled
 run. It never installs a plugin or connects to the workstation's REAPER session.
 Cloud checks do not establish reference-video identity or physical audio quality.
 

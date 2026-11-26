@@ -459,6 +459,7 @@ void testCapturedCallbackReleaseLifecycle()
     };
     for (const auto& test : cases)
         for (const std::size_t capacity : { 1U, 16U })
+        for (const bool automatedReference : { false, true })
         {
             auto state = bsl::ProjectState::makeDefault();
             for (auto& lane : state.patterns[0].lanes)
@@ -466,7 +467,8 @@ void testCapturedCallbackReleaseLifecycle()
                     for (auto& slice : beat.slices) slice.enabled = false;
             state.patterns[0].lanes[0].beats[0].slices.assign(3, { 0, 1.0f, true });
             state.global.swingPercent = test.swing;
-            state.global.swingReference = bsl::SwingReference::quarter;
+            state.global.swingReference = automatedReference ? bsl::SwingReference::half
+                                                             : bsl::SwingReference::quarter;
             const auto plan = bsl::SequencerPlayback::preparePattern(state.patterns[0]);
             bsl::SequencerPlayback playback;
             std::vector<std::pair<int, bool>> observed;
@@ -474,6 +476,7 @@ void testCapturedCallbackReleaseLifecycle()
             for (int base = 0; base < 28800; base += test.quantum)
             {
                 bsl::TransportFrame frame { 48000.0, 100.0, base, test.quantum, true };
+                if (automatedReference) frame.swingReference = bsl::SwingReference::quarter;
                 frame.quarterNotePosition = static_cast<double>(base) / 48000.0 * 100.0 / 60.0;
                 frame.patternPhaseQuarterNotes = frame.quarterNotePosition;
                 bsl::PlaybackCursor cursor;
@@ -699,66 +702,99 @@ void testChannelChangeRetainsHeldNoteReleases()
     }
 }
 
-void testSilentSliceVisualTimingIsSeparateAndBounded()
+void testVisualSliceTimingIsSeparateAndBounded()
 {
-    auto state = bsl::ProjectState::makeDefault();
-    state.global.sequencerEnabled = true;
-    state.global.swingPercent = 50.0;
-    state.global.swingReference = bsl::SwingReference::quarter;
-    auto& pattern = state.patterns[0];
-    pattern.bars = { bsl::BarState::make(1, 4) };
-    pattern.lanes = { bsl::LaneState::make(1) };
-    auto& beat = pattern.lanes[0].beats[0];
-    beat = bsl::BeatState::withSubdivision(4, 0, 1.0f);
-    beat.slices[1].enabled = false;
-    beat.slices[3].enabled = false;
-
-    const auto audible = bsl::SequencerPlayback::preparePattern(pattern);
-    const auto silent = bsl::SequencerPlayback::prepareSilentPattern(pattern);
-    check(audible.size() == 2 && silent.size() == 2,
-          "silent visual plan is separate from the audible note plan");
-
-    // This frame is a scheduled pattern segment whose local phase starts at
-    // zero despite a non-zero host position. Capacity one exercises the
-    // callback-safe cursor without dropping either rest.
-    bsl::TransportFrame frame { 48000.0, 120.0, 240000, 24000, true };
-    frame.quarterNotePosition = 10.0;
-    frame.patternPhaseQuarterNotes = 0.0;
-    std::array<bsl::SilentSliceEvent, 1> storage;
-    bsl::SilentSliceCursor cursor;
-    std::vector<bsl::SilentSliceEvent> observed;
-    while (!cursor.exhausted)
+    for (const bool automatedReference : { false, true })
     {
-        const auto count = bsl::SequencerPlayback::renderSilentBatch(
-            state, frame, 0, silent, storage, cursor);
-        observed.insert(observed.end(), storage.begin(), storage.begin()
-            + static_cast<std::ptrdiff_t>(count));
-    }
-    const auto expectedOffset = [&](double position) {
-        const auto swung = bsl::Sequencer::applySwing(position, 50.0,
-                                                       bsl::SwingReference::quarter);
-        return static_cast<int>(std::floor(swung * 24000.0));
-    };
-    check(observed.size() == 2
-              && observed[0].sampleOffset == expectedOffset(0.25)
-              && observed[0].beatIndex == 0 && observed[0].sliceIndex == 1
-              && observed[1].sampleOffset == expectedOffset(0.75)
-              && observed[1].beatIndex == 0 && observed[1].sliceIndex == 3,
-          "silent slices follow swing and segment-local pattern phase in bounded batches");
+        auto state = bsl::ProjectState::makeDefault();
+        state.global.sequencerEnabled = true;
+        state.global.swingPercent = 50.0;
+        state.global.swingReference = bsl::SwingReference::quarter;
+        auto& pattern = state.patterns[0];
+        pattern.bars = { bsl::BarState::make(1, 4) };
+        pattern.lanes = { bsl::LaneState::make(1) };
+        auto& beat = pattern.lanes[0].beats[0];
+        beat = bsl::BeatState::withSubdivision(4, 0, 1.0f);
+        beat.slices[1].enabled = false;
+        beat.slices[3].enabled = false;
+        const auto audible = bsl::SequencerPlayback::preparePattern(pattern);
+        const auto visual = bsl::SequencerPlayback::prepareVisualPattern(pattern);
+        check(audible.size() == 2 && visual.size() == 4
+                  && audible[0].end == 0.25 * 0.98 && visual[0].end == 0.25,
+              "visual intervals include rests and extend beyond unchanged MIDI gates");
 
-    frame.playing = false;
-    cursor = {};
-    check(bsl::SequencerPlayback::renderSilentBatch(state, frame, 0, silent,
-                                                     storage, cursor) == 0
-              && cursor.exhausted,
-          "stopped transport emits no silent-slice activity");
+        bsl::TransportFrame frame { 48000.0, 120.0, 240000, 24000, true };
+        if (automatedReference) frame.swingReference = bsl::SwingReference::eighth;
+        frame.quarterNotePosition = 10.0;
+        frame.patternPhaseQuarterNotes = 0.0;
+        const auto collect = [&] {
+            std::array<bsl::VisualSliceEvent, 1> storage;
+            bsl::VisualSliceCursor cursor;
+            std::vector<bsl::VisualSliceEvent> observed;
+            while (!cursor.exhausted)
+            {
+                const auto count = bsl::SequencerPlayback::renderVisualBatch(
+                    state, frame, 0, visual, storage, cursor);
+                observed.insert(observed.end(), storage.begin(), storage.begin()
+                    + static_cast<std::ptrdiff_t>(count));
+            }
+            return observed;
+        };
+        const auto boundary = [&](double position) {
+            return bsl::Sequencer::applySwing(position, 50.0,
+                automatedReference ? bsl::SwingReference::eighth : bsl::SwingReference::quarter) * 24000.0;
+        };
+        const auto observed = collect();
+        check(observed.size() == 4, "capacity-one visual cursor retains sounding and silent intervals");
+        for (std::size_t i = 0; i < observed.size(); ++i)
+            check(std::abs(observed[i].sampleOffset - boundary(static_cast<double>(i) / 4.0)) <= 1
+                      && std::abs(observed[i].endSampleOffset - boundary(static_cast<double>(i + 1) / 4.0)) <= 1
+                      && observed[i].sliceIndex == i,
+                  "slice start and end follow live swing and segment-local phase");
+
+        // A seek inside the 2% tail after note-off must still light the sector.
+        const double tail = (boundary(0.25 * 0.98) + boundary(0.25)) * 0.5;
+        frame.patternPhaseQuarterNotes = tail / 24000.0;
+        frame.blockSize = 16;
+        const auto seek = collect();
+        check(seek.size() == 1 && seek[0].sampleOffset == 0 && seek[0].sliceIndex == 0
+                  && std::abs(seek[0].endSampleOffset - (boundary(0.25) - tail)) <= 1,
+              "mid-slice seek lights the sounding sector even after its MIDI gate");
+        frame.patternPhaseQuarterNotes = (boundary(0.25) + boundary(0.5)) * 0.5 / 24000.0;
+        const auto rest = collect();
+        check(rest.size() == 1 && rest[0].sampleOffset == 0 && rest[0].sliceIndex == 1,
+              "mid-slice seek lights a silent sector");
+
+        frame.patternPhaseQuarterNotes = 1.0 + tail / 24000.0;
+        const auto wrap = collect();
+        check(wrap.size() == 1 && wrap[0].sliceIndex == 0
+                  && std::abs(wrap[0].endSampleOffset - seek[0].endSampleOffset) <= 1,
+              "wrapped cycle retains the same local visual endpoint");
+
+        // Existing intervals must be refreshed without rebuilding the plan.
+        frame.patternPhaseQuarterNotes = (0.25 + boundary(0.25) / 24000.0) * 0.5;
+        const auto beforeTempo = collect();
+        frame.bpm = 60.0;
+        const auto afterTempo = collect();
+        check(beforeTempo.size() == 1 && afterTempo.size() == 1
+                  && afterTempo[0].sliceIndex == 0
+                  && std::abs(afterTempo[0].endSampleOffset - 2 * beforeTempo[0].endSampleOffset) <= 1,
+              "live tempo change refreshes a held sector's remaining duration");
+        frame.swingPercent = 0.0;
+        const auto afterSwing = collect();
+        check(afterSwing.size() == 1 && afterSwing[0].sliceIndex == 1
+                  && afterSwing[0].sampleOffset == 0,
+              "live swing change selects the new current sector instead of retaining the old hold");
+        frame.playing = false;
+        check(collect().empty(), "stopped transport emits no visual intervals");
+    }
 }
 
 } // namespace
 
 int main()
 {
-    testSilentSliceVisualTimingIsSeparateAndBounded();
+    testVisualSliceTimingIsSeparateAndBounded();
     testChannelChangeRetainsHeldNoteReleases();
     testUnquantizedTriggerUsesEventOffset();
     testHostPpqOverridesSampleTimeline();

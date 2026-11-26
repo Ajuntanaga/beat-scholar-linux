@@ -33,9 +33,10 @@ void ProjectEditor::beginEdit(HistoryParameters parameters)
     ++revision_;
 }
 
-void ProjectEditor::checkpoint(HistoryParameters parameters)
+void ProjectEditor::checkpoint(HistoryParameters parameters, std::size_t pad)
 {
     beginEdit(parameters);
+    undo_.back().pad = pad;
 }
 
 std::size_t ProjectEditor::firstBeatOfBar(const PatternState& pattern, std::size_t barIndex)
@@ -284,7 +285,8 @@ bool ProjectEditor::undo()
     if (undo_.empty())
         return false;
     restoredParameters_ = undo_.back().parameters;
-    redo_.push_back({ state_, restoredParameters_ });
+    restoredPad_ = undo_.back().pad;
+    redo_.push_back({ state_, restoredParameters_, restoredPad_ });
     state_ = std::move(undo_.back().state);
     undo_.pop_back();
     ++revision_;
@@ -296,7 +298,8 @@ bool ProjectEditor::redo()
     if (redo_.empty())
         return false;
     restoredParameters_ = redo_.back().parameters;
-    undo_.push_back({ state_, restoredParameters_ });
+    restoredPad_ = redo_.back().pad;
+    undo_.push_back({ state_, restoredParameters_, restoredPad_ });
     state_ = std::move(redo_.back().state);
     redo_.pop_back();
     ++revision_;

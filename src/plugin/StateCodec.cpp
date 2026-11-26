@@ -17,6 +17,14 @@ namespace {
 constexpr int stateVersion = 2;
 constexpr int oldestSupportedStateVersion = 1;
 
+float normalizeEnvelopeDuration(float seconds)
+{
+    // Older native states allowed ten seconds; the original controls restore
+    // values above one second as one. Leave invalid values for validation.
+    return seconds > 1.0f && seconds <= 10.0f ? 1.0f : seconds;
+}
+
+
 juce::var object()
 {
     return juce::var(new juce::DynamicObject());
@@ -132,11 +140,14 @@ juce::var padToVar(const PadState& pad)
         set(result, "customSampleLayer2", encoded);
     }
     set(result, "midiNote", static_cast<int>(pad.midiNote));
+    set(result, "samplerNote", static_cast<int>(pad.samplerNote));
     set(result, "rootNote", static_cast<int>(pad.rootNote));
     set(result, "layerMix", pad.layerMix);
     set(result, "gain", pad.gain);
     set(result, "pan", pad.pan);
     set(result, "attackSeconds", pad.attackSeconds);
+    set(result, "decaySeconds", pad.decaySeconds);
+    set(result, "sustainLevel", pad.sustainLevel);
     set(result, "releaseSeconds", pad.releaseSeconds);
     set(result, "attackNormalized", pad.attackNormalized);
     set(result, "damp", pad.damp);
@@ -221,6 +232,8 @@ juce::var projectToVar(const ProjectState& state)
     set(master, "resonance", state.master.resonance);
     set(master, "delay", state.master.delay);
     set(master, "distortionReturn", state.master.distortionReturn);
+    set(master, "roomReturn", state.master.roomReturn);
+    set(master, "reverbReturn", state.master.reverbReturn);
     set(master, "distortion", state.master.distortion);
     set(master, "reverb", state.master.reverb);
     set(master, "room", state.master.room);
@@ -292,17 +305,19 @@ std::string readString(const juce::var& parent, const char* name, const std::str
 // an output pitch without becoming the same drum.
 void readLegacyOutputMapping(const juce::var& sampler, KitState& kit)
 {
+    constexpr std::array<std::uint8_t, padCount> defaultNotes {
+        36, 38, 37, 39, 42, 46, 49, 51, 57, 55, 43, 41, 54, 40, 53, 56
+    };
+    for (auto& pad : kit.pads)
+        pad.samplerNote = pad.midiNote >= 36 && pad.midiNote < 36 + padCount
+            ? defaultNotes[pad.midiNote - 36] : pad.midiNote;
     const auto mapping = get(sampler, "Mapping");
     // Native presets without a mapping table receive this default output map.
     // Apply it to note identities, not pad positions, just like an explicit map.
     if (mapping.isVoid())
     {
-        constexpr std::array<std::uint8_t, padCount> defaultNotes {
-            36, 38, 37, 39, 42, 46, 49, 51, 57, 55, 43, 41, 54, 40, 53, 56
-        };
         for (auto& pad : kit.pads)
-            if (pad.midiNote >= 36 && pad.midiNote < 36 + padCount)
-                pad.midiNote = defaultNotes[pad.midiNote - 36];
+            pad.midiNote = pad.samplerNote;
         return;
     }
     if (const auto* entries = get(mapping, "Mappings").getArray())
@@ -477,16 +492,21 @@ bool readPad(const juce::var& encoded, PadState& pad, int version)
         sample.sampleRate = readDouble(secondary, "sampleRate", 0.0);
     }
     const int midiNote = readInt(encoded, version == 1 ? "note" : "midiNote", pad.midiNote);
+    const int samplerNote = readInt(encoded, "samplerNote", midiNote);
     const int rootNote = readInt(encoded, "rootNote", pad.rootNote);
-    if (midiNote < 0 || midiNote > 127 || rootNote < 0 || rootNote > 127)
+    if (midiNote < 0 || midiNote > 127 || samplerNote < 0 || samplerNote > 127
+        || rootNote < 0 || rootNote > 127)
         return false;
     pad.midiNote = static_cast<std::uint8_t>(midiNote);
+    pad.samplerNote = static_cast<std::uint8_t>(samplerNote);
     pad.rootNote = static_cast<std::uint8_t>(rootNote);
     pad.layerMix = readFloat(encoded, "layerMix", pad.layerMix);
     pad.gain = readFloat(encoded, "gain", pad.gain);
     pad.pan = readFloat(encoded, "pan", pad.pan);
-    pad.attackSeconds = readFloat(encoded, "attackSeconds", pad.attackSeconds);
-    pad.releaseSeconds = readFloat(encoded, "releaseSeconds", pad.releaseSeconds);
+    pad.attackSeconds = normalizeEnvelopeDuration(readFloat(encoded, "attackSeconds", pad.attackSeconds));
+    pad.decaySeconds = normalizeEnvelopeDuration(readFloat(encoded, "decaySeconds", pad.decaySeconds));
+    pad.sustainLevel = readFloat(encoded, "sustainLevel", pad.sustainLevel);
+    pad.releaseSeconds = normalizeEnvelopeDuration(readFloat(encoded, "releaseSeconds", pad.releaseSeconds));
     pad.attackNormalized = readFloat(encoded, "attackNormalized", pad.attackNormalized);
     pad.damp = readFloat(encoded, "damp", pad.damp);
     pad.pitchSemitones = readFloat(encoded, "pitchSemitones", pad.pitchSemitones);
@@ -656,6 +676,14 @@ float legacyNumber(const juce::var& value, float fallback)
         return static_cast<float>(value);
     const auto text = value.toString().trim();
     return text.isEmpty() ? fallback : text.getFloatValue();
+}
+
+float legacyEnvelopeValue(const juce::var& value, float fallback)
+{
+    // Original ADSR fields parse numeric text before bounding to 0..1:
+    // "15%" restores as 1.00 rather than a unit percentage.
+    const float number = legacyNumber(value, fallback);
+    return std::isfinite(number) ? std::clamp(number, 0.0f, 1.0f) : number;
 }
 
 float percentOrUnit(const juce::var& value, float fallback)
@@ -857,14 +885,17 @@ bool readLegacyPad(const juce::var& sourcePad, PadState& pad)
     // Preserve the multiply after rounding: 86 * 0.01f differs from 0.86f.
     const float length = percentOrUnit(get(params, "Length"), 0.0f);
     pad.damp = std::clamp(std::floor(length / 0.01f + 0.5f) * 0.01f, 0.0f, 1.0f);
-    pad.attackNormalized = percentOrUnit(get(get(params, "ADSR"), "Attack"), 0.0f);
+    pad.attackNormalized = legacyEnvelopeValue(get(get(params, "ADSR"), "Attack"), 0.0f);
     pad.attackSeconds = pad.attackNormalized;
-    pad.releaseSeconds = legacyNumber(get(get(params, "ADSR"), "Release"), 0.03f);
+    pad.decaySeconds = legacyEnvelopeValue(get(get(params, "ADSR"), "Decay"), 1.0f);
+    pad.sustainLevel = legacyEnvelopeValue(get(get(params, "ADSR"), "Sustain"), 1.0f);
+    pad.releaseSeconds = legacyEnvelopeValue(get(get(params, "ADSR"), "Release"), 0.03f);
     pad.gain = legacyPadGain(get(params, "Volume"), pad.gain);
     const auto pitch = get(params, "Pitch");
-    const auto configuredNote = get(params, "Note").isVoid() ? get(sourcePad, "Note")
-                                                               : get(params, "Note");
-    pad.midiNote = static_cast<std::uint8_t>(legacyMidiNote(configuredNote, pad.midiNote));
+    // Original 1.6.2 retains Params.Note on reload without changing sampler
+    // or sequencer routing. Keep the older top-level identity separate from it;
+    // explicit output pitches are applied later from Sampler.Mapping.
+    pad.midiNote = static_cast<std::uint8_t>(legacyMidiNote(get(sourcePad, "Note"), pad.midiNote));
     pad.rootNote = static_cast<std::uint8_t>(legacyMidiNote(get(pitch, "Root"), pad.rootNote));
     pad.pitchSemitones = legacyNumber(get(pitch, "Tune"), 0.0f);
     pad.fineCents = legacyNumber(get(pitch, "Fine"), 0.0f);
@@ -893,17 +924,13 @@ bool readLegacyPad(const juce::var& sourcePad, PadState& pad)
     return true;
 }
 
-void readLegacyAuxiliaryConfiguration(const juce::var& params, KitState& kit)
+void readLegacyAuxiliaryConfiguration(const juce::var& params, KitState& kit, MasterState& master)
 {
-    const float reverbReturn = legacyControlAmount(params, "Reverb", 1.0f);
-    const float roomReturn = legacyControlAmount(params, "Room", 1.0f);
+    master.reverbReturn = legacyControlAmount(params, "Reverb", 1.0f);
+    master.roomReturn = legacyControlAmount(params, "Room", 1.0f);
     const float distortionDrive = legacyControlAmount(params, "DistDrive", 0.5f);
     for (auto& pad : kit.pads)
     {
-        // Fold native return tapers into the 12 dB/halving send controls.
-        // Original captures measure 18 dB/halving for Room and 24 for Reverb.
-        pad.reverb *= reverbReturn * reverbReturn;
-        pad.room *= std::pow(roomReturn, 1.5f);
         pad.distortionDrive = distortionDrive;
     }
 }
@@ -1045,6 +1072,8 @@ void readMaster(const juce::var& encoded, MasterState& master, int version)
     master.delay = readFloat(encoded, "delay", master.delay);
     // Older own-format states used an unconditional distortion return.
     master.distortionReturn = readFloat(encoded, "distortionReturn", 1.0f);
+    master.roomReturn = readFloat(encoded, "roomReturn", 1.0f);
+    master.reverbReturn = readFloat(encoded, "reverbReturn", 1.0f);
     master.distortion = readFloat(encoded, "distortion", master.distortion);
     master.reverb = readFloat(encoded, "reverb", master.reverb);
     master.room = readFloat(encoded, "room", master.room);
@@ -1062,6 +1091,8 @@ void writeMaster(juce::var& encoded, const MasterState& master)
     set(encoded, "resonance", master.resonance);
     set(encoded, "delay", master.delay);
     set(encoded, "distortionReturn", master.distortionReturn);
+    set(encoded, "roomReturn", master.roomReturn);
+    set(encoded, "reverbReturn", master.reverbReturn);
     set(encoded, "distortion", master.distortion);
     set(encoded, "reverb", master.reverb);
     set(encoded, "room", master.room);
@@ -1397,7 +1428,7 @@ bool importLegacyPresetJson(const juce::String& json, ProjectState& destination)
         }
     }
     readLegacyMaster(get(sampler, "Params"), candidate.master);
-    readLegacyAuxiliaryConfiguration(get(sampler, "Params"), candidate.kit);
+    readLegacyAuxiliaryConfiguration(get(sampler, "Params"), candidate.kit, candidate.master);
 
     for (auto& pattern : candidate.patterns)
         for (auto& lane : pattern.lanes)
@@ -1428,7 +1459,7 @@ bool importLegacyKitJson(const juce::String& json, KitState& kit, MasterState& m
     }
     readLegacyOutputMapping(root, candidateKit);
     readLegacyMaster(get(root, "Params"), candidateMaster);
-    readLegacyAuxiliaryConfiguration(get(root, "Params"), candidateKit);
+    readLegacyAuxiliaryConfiguration(get(root, "Params"), candidateKit, candidateMaster);
     auto validation = ProjectState::makeDefault();
     validation.kit = candidateKit;
     validation.master = candidateMaster;

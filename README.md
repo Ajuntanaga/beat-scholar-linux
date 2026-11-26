@@ -5,7 +5,7 @@ beat slices and flexible rhythm editing. It builds as a VST3 instrument and a
 standalone application, using C++20 and JUCE.
 
 This is an independent reconstruction by Ajuntanaga, being developed
-in a private repository. It is not an official Modalics product. The manual,
+in a public repository. It is not an official Modalics product. The manual,
 official visuals, and release notes guide the implementation; work on the
 original sound and interface is still in progress.
 
@@ -61,21 +61,16 @@ settings and restart recall.
 
 ## Where it stands
 
-This is a development snapshot, not a release. The latest recorded staged
-candidate is batch 58; later work includes a focused pattern-trigger check and
-corrections to the native Init investigation. The working source may include
-changes beyond that candidate.
+This is a development snapshot, not a release. The latest recorded local checks
+cover uninstalled Standalone and VST3 builds, focused wrapper checks, and 13
+registered regressions, including actual-VST3 smoke, MIDI, panic, and routing.
+These results apply to the candidate recorded in the status log; they do not
+establish complete compatibility.
 
-Batch 58 passed ten runnable suites, pluginval at strictness 10, fifteen
-actual-VST MIDI cases, and standalone checks. Private factory playback was
-skipped in that run. Those results apply to that staged candidate, not every
-subsequent source change.
-
-Recent work covers circular slice editing, pattern triggers, Main and Kit Init,
-sample playback, effects, state handling, and standalone operation. Exact native
-Init samples and hidden defaults remain unresolved. Sound and whole-interface
-visual matching are still in progress; passing regressions does not establish
-complete compatibility.
+Recent work covers playback illumination, circular slice editing, pattern
+triggers, native Init behavior, sample playback, effects, state handling, and
+standalone operation. Full sound and interface parity remain open, including
+fine visual timing and broader original-reference coverage.
 
 See [current status](docs/STATUS.md) for the measurements and limits.
 

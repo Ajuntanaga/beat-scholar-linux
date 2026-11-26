@@ -47,6 +47,8 @@ struct PadPlaybackSettings
     float layerInputGain = 1.0f;
     float pan = 0.0f;
     float attackSeconds = 0.0f;
+    float decaySeconds = 1.0f;
+    float sustainLevel = 1.0f;
     float releaseSeconds = 0.03f;
     float attackNormalized = 0.0f;
     float damp = 0.0f;
@@ -83,6 +85,8 @@ struct MasterPlaybackSettings
     float resonance = defaultFilterResonance;
     float delay = 0.0f; // Older own-format echo return.
     float distortionReturn = 1.0f;
+    float roomReturn = 1.0f; // Independent native return; old states keep folded sends.
+    float reverbReturn = 1.0f; // Independent native return; old states keep folded sends.
     float distortionDrive = 0.5f;
     float distortion = 0.0f;
     float reverb = 0.0f;
@@ -141,17 +145,21 @@ public:
                  std::span<const TimedNoteEvent> events) noexcept;
 
     [[nodiscard]] const std::array<float, padCount>& padPeaks() const noexcept { return padPeaks_; }
+    [[nodiscard]] float padGlowRms(std::size_t pad) const noexcept;
 
 private:
     std::size_t effectsStart_ {}, effectsEnd_ {};
     void renderEffects(AudioBlock& output, std::size_t start, std::size_t end) noexcept;
     std::array<float, padCount> padPeaks_ {};
+    std::array<float, padCount> padGlowEnergy_ {};
+    std::size_t padGlowFrames_ = 0;
     struct Voice
     {
         std::array<double, 2> positions {};
         std::size_t pad = padCount;
         std::uint64_t noteOnOrder = 0;
         bool keyDown = true;
+        bool oneShotEnvelope = true;
         bool sequencerOwned = false;
         std::size_t sequencerLane = 0;
         std::size_t elapsedFrames = 0;
@@ -160,10 +168,17 @@ private:
         std::uint8_t hostMidiChannel = 1;
         float velocity = 0.0f;
         float lengthEnvelope = 1.0f;
+        float lengthEnvelopeStep = -1.0f;
         float attackLevel = 0.0f;
+        float attackStep = -1.0f;
+        float decayStep = -1.0f;
+        float sustainLevel = 1.0f;
+        bool attackComplete = false;
         std::size_t releaseFramesElapsed = 0;
         float releaseStartLevel = 1.0f;
         float releaseOutputRemaining = 1.0f;
+        float releaseOutputStep = 1.0f;
+        double releaseDurationFrames = 0.0;
         float releaseInputLevel = 1.0f;
         float releaseInputStep = 0.0f;
         bool releasing = false;
@@ -171,6 +186,10 @@ private:
         std::array<std::array<float, 2>, 3> lowPassRight {};
         std::array<float, 2> highPassLeft {};
         std::array<float, 2> highPassRight {};
+        float highPassCurrent = 10.0f;
+        float highPassTarget = 10.0f;
+        float highPassStep = 0.0f;
+        std::size_t highPassRampRemaining = 0;
         float driveGainCurrent = 1.0f;
         float driveGainTarget = 1.0f;
         float driveGainStep = 0.0f;
@@ -228,10 +247,14 @@ private:
     };
     std::array<Compressor, padCount> padCompressors_;
     std::array<LinearRamp, padCount> padGains_;
+    std::array<LinearRamp, padCount> padPans_;
     std::array<LinearRamp, padCount> padAuxGains_;
     std::array<LinearRamp, padCount> padDistortionSends_;
+    std::array<LinearRamp, padCount> padRoomSends_;
+    std::array<LinearRamp, padCount> padReverbSends_;
     LinearRamp distortionReturn_;
     LinearRamp ambienceReturn_;
+    LinearRamp roomReturn_;
     std::array<bool, padCount> padDspResetPending_ {};
     Compressor masterCompressor_;
     LinearRamp masterGain_;

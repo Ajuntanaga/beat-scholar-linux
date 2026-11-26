@@ -23,7 +23,7 @@ juce::Font font(float height, bool heavy)
 }
 
 void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad,
-                         juce::Colour tint, float stroke)
+                         juce::Colour tint, float stroke, bool kitTile)
 {
     g.setColour(tint);
     if (pad >= 9 && pad <= 12)
@@ -43,8 +43,6 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         const float lineWidth = stroke * 0.65f;
         const auto shell = juce::Rectangle<float>(point(0.03f, 0.59f), point(0.97f, 0.91f));
         g.drawRoundedRectangle(shell, width * 0.025f, lineWidth);
-        g.drawLine({ point(0.05f, 0.64f), point(0.95f, 0.64f) }, lineWidth);
-        g.drawLine({ point(0.05f, 0.87f), point(0.95f, 0.87f) }, lineWidth);
         for (const float x : { 0.12f, 0.37f, 0.63f, 0.88f })
             g.drawLine({ point(x, 0.69f), point(x, 0.82f) }, stroke);
         if (sticks)
@@ -68,7 +66,7 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
             g.drawLine({ point(0.13f, 0.49f), point(0.87f, 0.49f) }, lineWidth);
         }
     };
-    const auto drawCymbal = [&g, stroke](juce::Rectangle<float> box, float tilt) {
+    const auto drawCymbal = [&g, stroke, tint, kitTile, pad](juce::Rectangle<float> box, float tilt) {
         const float slope = tilt / box.getHeight();
         const float width = std::min(box.getWidth(), box.getHeight());
         box = box.withSizeKeepingCentre(width, width);
@@ -86,8 +84,14 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         g.fillPath(disc);
         g.drawLine(centre.x, centre.y - width * 0.23f,
                    centre.x, centre.y - width * 0.15f, stroke * 0.65f);
+        // Stand brightness measured in the small original 1.6.2 kit tiles;
+        // keep the discs and the larger sample-panel drawing independent.
+        constexpr float kitStandAlpha[] { 0.28f, 0.78f, 0.44f, 0.61f, 0.26f };
+        if (kitTile && pad >= 4 && pad <= 8)
+            g.setColour(tint.withMultipliedAlpha(kitStandAlpha[pad - 4]));
         g.drawLine(centre.x, centre.y + width * 0.07f,
                    centre.x, box.getBottom(), stroke * 0.65f);
+        g.setColour(tint);
     };
     switch (pad)
     {
@@ -209,7 +213,7 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
             g.drawLine({ point(0.55f, 0.78f), point(0.64f, 0.81f) }, stroke * 0.65f);
             break;
         }
-        case 8: drawCymbal(icon, icon.getHeight() * 0.14f); break;
+        case 8: drawCymbal(icon, icon.getHeight() * (kitTile ? -0.14f : 0.14f)); break;
         case 9:
         case 10:
         case 11:
@@ -220,10 +224,10 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
                                               icon.getY() + y * icon.getHeight(),
                                               w * icon.getWidth(), h * icon.getHeight());
             };
-            const auto tom = [&g, stroke, &box](float x, float y, float w, float h,
+            const auto tom = [&g, stroke, kitTile, &box](float x, float y, float w, float h,
                                                bool selected) {
                 const auto shell = box(x, y, w, h);
-                const float rimHeight = shell.getHeight() * 0.32f;
+                const float rimHeight = shell.getHeight() * (kitTile ? 0.50f : 0.32f);
                 juce::Path body;
                 body.startNewSubPath(shell.getX(), shell.getY() + rimHeight * 0.5f);
                 body.lineTo(shell.getX(), shell.getBottom() - rimHeight * 0.5f);
@@ -345,7 +349,8 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
     }
 }
 
-BeatScholarLookAndFeel::BeatScholarLookAndFeel()
+BeatScholarLookAndFeel::BeatScholarLookAndFeel(bool factorySampleMenu)
+    : factorySampleMenu_(factorySampleMenu)
 {
     setDarkMode(false);
 }
@@ -363,19 +368,33 @@ void BeatScholarLookAndFeel::setDarkMode(bool enabled)
         palette_.panelRaised = 0xff232323;
         palette_.laneControlIdle = 0xff141414;
         palette_.arrangementCard = 0xff232323;
+        palette_.verticalScrollGutter = palette_.panel;
         palette_.horizontalScrollThumb = 0xff3c3c3c;
         palette_.header = 0xff232323;
+        palette_.lowerHeader = palette_.header;
+        palette_.lowerBorder = 0xff3c3c3c;
+        palette_.lowerBodyCentre = palette_.panel;
+        palette_.lowerBodyEdge = palette_.panel;
+        palette_.lowerBodyFrame = palette_.lowerBorder;
+        palette_.gridBandCentre = palette_.header;
+        palette_.gridBandEdge = palette_.header;
         palette_.grid = 0xff191919;
         palette_.border = 0xff3c3c3c;
         palette_.emptyBeatOutline = 0xff3c3c3c;
         palette_.populatedBeatOutline = palette_.text;
         palette_.borderBright = 0xff747474;
+        palette_.zoomRail = palette_.borderBright;
+        palette_.zoomThumb = palette_.text;
+        palette_.laneControlBorder = palette_.borderBright;
+        palette_.laneControlText = palette_.text;
     }
     setColour(juce::PopupMenu::backgroundColourId,
               juce::Colour(darkMode_ ? palette_.panelRaised : 0xff282858U));
-    setColour(juce::PopupMenu::textColourId, juce::Colour(palette_.text));
+    setColour(juce::PopupMenu::textColourId,
+              juce::Colour(factorySampleMenu_ && !darkMode_ ? 0xffffffffU : palette_.text));
     setColour(juce::PopupMenu::highlightedBackgroundColourId, juce::Colour(palette_.accent));
-    setColour(juce::PopupMenu::highlightedTextColourId, juce::Colour(palette_.text));
+    setColour(juce::PopupMenu::highlightedTextColourId,
+              juce::Colour(factorySampleMenu_ && !darkMode_ ? 0xffffffffU : palette_.text));
     setColour(juce::Label::textColourId, juce::Colour(palette_.text));
     setColour(juce::Slider::textBoxTextColourId, juce::Colour(palette_.text));
     setColour(juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
@@ -388,10 +407,14 @@ void BeatScholarLookAndFeel::setDarkMode(bool enabled)
 
 juce::Font BeatScholarLookAndFeel::getTextButtonFont(juce::TextButton& button, int buttonHeight)
 {
+    if (button.getComponentID() == "random.save.accept")
+        return font(static_cast<float>(buttonHeight) * 0.56f, true);
     if (button.getComponentID() == "toolbar.preset")
         return font(static_cast<float>(buttonHeight) * 0.625f, true);
     if (button.getComponentID() == "sound.title" || button.getComponentID() == "kit.menu")
         return font(static_cast<float>(buttonHeight) * (2.0f / 3.0f), true);
+    if (button.getComponentID() == "arrangement.toggle")
+        return font(static_cast<float>(buttonHeight) * 0.82f, true);
     return font(std::clamp(static_cast<float>(buttonHeight) * 0.42f, 9.0f, 17.0f), true);
 }
 
@@ -406,7 +429,7 @@ juce::Font BeatScholarLookAndFeel::getPopupMenuFont()
     static const auto typeface = juce::Typeface::createSystemTypefaceFor(
         BeatScholarFonts::MontserratSemiBold_ttf,
         BeatScholarFonts::MontserratSemiBold_ttfSize);
-    return juce::Font(juce::FontOptions(typeface).withHeight(17.0f));
+    return juce::Font(juce::FontOptions(typeface).withHeight(factorySampleMenu_ ? 18.0f : 17.0f));
 }
 
 void BeatScholarLookAndFeel::drawTriangle(juce::Graphics& g, juce::Rectangle<float> area,
@@ -439,7 +462,7 @@ void BeatScholarLookAndFeel::drawDice(juce::Graphics& g, juce::Rectangle<float> 
                                                    std::min(area.getWidth(), area.getHeight()));
     g.setColour(tint);
     g.fillRoundedRectangle(square, square.getWidth() * 0.12f);
-    g.setColour(juce::Colour(palette_.background));
+    g.setColour(darkMode_ ? juce::Colour(palette_.background) : juce::Colours::black);
     const float diameter = square.getWidth() * 0.14f;
     for (const auto point : { juce::Point<float>(0.27f, 0.27f), { 0.73f, 0.27f },
                               { 0.50f, 0.50f }, { 0.27f, 0.73f }, { 0.73f, 0.73f } })
@@ -451,20 +474,26 @@ void BeatScholarLookAndFeel::drawDice(juce::Graphics& g, juce::Rectangle<float> 
 void BeatScholarLookAndFeel::drawUndo(juce::Graphics& g, juce::Rectangle<float> area,
                                        bool clockwise, juce::Colour tint)
 {
-    const auto centre = area.getCentre();
-    const float radius = std::min(area.getWidth(), area.getHeight()) * 0.28f;
-    juce::Path arc;
-    const float start = clockwise ? -2.4f : -0.7f;
-    const float end = clockwise ? 0.7f : 2.4f;
-    arc.addCentredArc(centre.x, centre.y, radius, radius, 0.0f, start, end, true);
+    // Saved original GUI: a thin curved stem and a filled, angled head.
+    juce::Path stem, head;
+    stem.startNewSubPath(10.0f, 8.0f);
+    stem.cubicTo(23.0f, 5.0f, 27.0f, 17.0f, 19.0f, 23.0f);
+    head.startNewSubPath(3.0f, 11.0f);
+    head.lineTo(10.0f, 2.0f);
+    head.lineTo(12.0f, 15.0f);
+    head.closeSubPath();
+    const float side = std::min(area.getWidth(), area.getHeight()) * 0.66f;
+    auto transform = juce::AffineTransform::scale(side / 24.0f)
+        .translated(area.getCentreX() - side * 0.5f, area.getCentreY() - side * 0.5f);
+    if (clockwise)
+        transform = transform.followedBy(juce::AffineTransform::scale(-1.0f, 1.0f)
+            .translated(area.getCentreX() * 2.0f, 0.0f));
+    stem.applyTransform(transform);
+    head.applyTransform(transform);
     g.setColour(tint);
-    g.strokePath(arc, juce::PathStrokeType(std::max(1.5f, radius * 0.18f),
-                                           juce::PathStrokeType::curved,
-                                           juce::PathStrokeType::rounded));
-    auto head = juce::Rectangle<float>(radius * 0.65f, radius * 0.65f)
-                    .withCentre({ centre.x + (clockwise ? -radius : radius) * 0.72f,
-                                  centre.y - radius * 0.43f });
-    drawTriangle(g, head, !clockwise, tint);
+    g.strokePath(stem, juce::PathStrokeType(side / 16.0f,
+        juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.fillPath(head);
 }
 
 void BeatScholarLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Button& button,
@@ -473,9 +502,46 @@ void BeatScholarLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Butto
 {
     const auto id = button.getComponentID();
     auto area = button.getLocalBounds().toFloat();
+    if (id == "random.save.accept" || id == "random.save.add-category")
+    {
+        g.setColour(juce::Colour(id == "random.save.accept" ? 0xff3c3c72 : 0xff1b1b39)
+                        .brighter(isDown ? 0.15f : isMouseOver ? 0.06f : 0.0f));
+        g.fillRoundedRectangle(area.reduced(0.5f), id == "random.save.accept" ? 2.0f : 0.0f);
+        g.setColour(juce::Colour(id == "random.save.accept" ? 0xff080818 : 0xffd0d0e5));
+        g.drawRoundedRectangle(area.reduced(0.5f), id == "random.save.accept" ? 2.0f : 0.0f, 1.0f);
+        return;
+    }
+    if (id == "kit.map" || id == "sample.oneshot")
+    {
+        if (isMouseOver || isDown)
+        {
+            g.setColour(juce::Colour(palette_.text).withAlpha(isDown ? 0.12f : 0.06f));
+            g.fillRect(area);
+        }
+        return;
+    }
     if (id.startsWith("pad."))
     {
-        g.setColour(juce::Colour(palette_.panel));
+        if (palette_.panel == colour::panel)
+        {
+            // Fitted to neutral pad interiors in the original 1.6.2 captures.
+            // The shading restarts in each pad, independently of the module.
+            const juce::Colour centre(0xff181832), edge(0xff1e1e41);
+            juce::ColourGradient gradient(centre, 0.0f, 0.0f, edge, 1.0f, 0.0f, true);
+            for (int step = 1; step < 16; ++step)
+            {
+                const float radius = step / 16.0f;
+                gradient.addColour(radius, edge.interpolatedWith(centre,
+                                              std::pow(1.0f - radius, 1.241f)));
+            }
+            juce::FillType fill(gradient);
+            fill.transform = juce::AffineTransform::scale(area.getWidth() * 0.603f,
+                                                         area.getHeight() * 0.576f)
+                                 .translated(area.getCentreX(), area.getCentreY());
+            g.setFillType(fill);
+        }
+        else
+            g.setColour(juce::Colour(palette_.panel));
         g.fillRect(area);
         const bool mapping = bool(button.getProperties().getWithDefault("midiMapVisible", false));
         // The reference strip sits below the pad frame (4px at the 960px editor size).
@@ -492,10 +558,10 @@ void BeatScholarLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Butto
                         .withAlpha(mapping ? 0.20f : 1.0f));
         g.fillRect(strip);
         const float activity = std::clamp(static_cast<float>(button.getProperties().getWithDefault("playbackActivity", 0.0f)), 0.0f, 1.0f);
-        if (button.getToggleState() || activity > 0.0f)
+        // Selection changes the frame only; colour fill follows the audio level.
+        if (activity > 0.0f)
         {
-            g.setColour(button.findColour(juce::TextButton::buttonOnColourId)
-                            .withAlpha((button.getToggleState() ? 0.22f : 0.0f) + activity * 0.5f));
+            g.setColour(button.findColour(juce::TextButton::buttonOnColourId).withAlpha(activity));
             g.fillRect(button.getLocalBounds().toFloat().reduced(1.0f));
         }
         g.setColour(button.getToggleState() ? juce::Colour(palette_.text)
@@ -580,12 +646,13 @@ void BeatScholarLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Butto
             g.setColour(juce::Colour(palette_.text).withAlpha(isDown ? 0.18f : 0.07f));
             g.fillRect(area.reduced(1.0f));
         }
-        g.setColour(juce::Colour(palette_.border));
-        const auto stroke = std::max(1.0f, area.getHeight() / 26.0f);
-        g.drawRect(area.reduced(stroke * 0.5f), stroke);
-        const auto gutter = area.getHeight() * 0.72f;
-        g.fillRect(area.getX() + gutter, area.getY(), stroke, area.getHeight());
-        g.fillRect(area.getRight() - gutter - stroke, area.getY(), stroke, area.getHeight());
+        // Saved Windows reference: factory arrow cells use the subdued card
+        // fill (35,35,87), not the brighter shared control border.
+        g.setColour(juce::Colour(darkMode_ ? palette_.border : 0xff232357U));
+        // Factory selectors use filled arrow cells, without an outer outline.
+        const auto gutter = area.getHeight();
+        g.fillRect(area.removeFromLeft(gutter));
+        g.fillRect(area.removeFromRight(gutter));
         return;
     }
 
@@ -628,8 +695,36 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
     drawKeyboardFocus(g, button);
     const auto id = button.getComponentID();
     const auto area = button.getLocalBounds().toFloat();
-    auto tint = button.isEnabled() ? juce::Colour(palette_.text)
+    if (id == "random.save.add-category")
+    {
+        g.setColour(juce::Colour(0xffe7e7f7));
+        const auto cross = area.withSizeKeepingCentre(area.getHeight() * 0.6f, area.getHeight() * 0.6f);
+        g.drawLine(cross.getX(), cross.getCentreY(), cross.getRight(), cross.getCentreY(), 1.2f);
+        g.drawLine(cross.getCentreX(), cross.getY(), cross.getCentreX(), cross.getBottom(), 1.2f);
+        return;
+    }
+    auto tint = button.isEnabled() || static_cast<bool>(button.getProperties()["randomizerModuleBody"])
+                                  ? juce::Colour(palette_.text)
                                    : juce::Colour(palette_.textMuted).withAlpha(0.55f);
+    if (id == "kit.map")
+    {
+        // Compact keyboard/MAP glyph in the original kit header; the hit
+        // target stays larger than the drawing and retains keyboard focus.
+        const auto icon = area.withSizeKeepingCentre(area.getWidth() * 0.60f,
+                                                     area.getHeight() * 0.72f);
+        g.setColour(tint.withAlpha(button.getToggleState() ? 1.0f : 0.60f));
+        const float keyWidth = icon.getWidth() / 5.0f;
+        for (int key = 0; key < 5; ++key)
+            g.fillRect(icon.getX() + key * keyWidth, icon.getY(),
+                       keyWidth * 0.72f, icon.getHeight());
+        const auto label = icon.withSizeKeepingCentre(icon.getWidth(), icon.getHeight() * 0.55f);
+        g.setColour(juce::Colour(palette_.header));
+        g.fillRect(label);
+        g.setColour(tint);
+        g.setFont(font(std::max(6.0f, label.getHeight()), true));
+        g.drawText("MAP", label, juce::Justification::centred);
+        return;
+    }
     if (id == "routing.mode")
     {
         g.setColour(tint);
@@ -641,7 +736,7 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
     if (id == "arrangement.toggle")
     {
         g.setColour(juce::Colour(palette_.panel));
-        g.setFont(font(std::max(8.0f, area.getHeight() * 0.42f), true));
+        g.setFont(getTextButtonFont(button, button.getHeight()));
         g.drawFittedText(button.getButtonText(), button.getLocalBounds().reduced(4, 1),
                          juce::Justification::centred, 1);
         return;
@@ -651,9 +746,46 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
         const int pad = id.fromFirstOccurrenceOf("pad.", false, false).getIntValue();
         auto icon = area.reduced(std::max(5.0f, area.getWidth() * 0.13f),
                                  std::max(6.0f, area.getHeight() * 0.14f));
-        const float stroke = std::max(1.0f, std::min(area.getWidth(), area.getHeight()) * 0.035f);
+        float stroke = std::max(1.0f, std::min(area.getWidth(), area.getHeight()) * 0.035f);
+        if (pad == 1 || pad == 2)
+        {
+            // Original 1.6.2 kit captures 18/23: both Snare shells are about
+            // 28px wide at 1280px. Keep sample-panel sizing separate.
+            const float shift = icon.getWidth() * 0.069f;
+            const float horizontalShift = -icon.getWidth() * (pad == 1 ? 0.0276f : 0.0138f);
+            const float widthScale = pad == 1 ? 0.80f : 0.75f;
+            icon = icon.withSizeKeepingCentre(icon.getWidth() * widthScale,
+                                               icon.getHeight() * 0.80f).translated(horizontalShift, shift);
+            stroke *= 0.80f;
+        }
+        // Original 1.6.2 kit captures 18/23 (zoom-rail-original-20261126).
+        // These proportions belong to the small kit tiles; the sample-panel
+        // drawings retain their own size. Toms are shallower than square.
+        float scaleX = 1.0f, scaleY = 1.0f, shiftX = 0.0f, shiftY = 0.0f;
+        switch (pad)
+        {
+            case 0: scaleX = scaleY = 0.90f; shiftY = 3.5f; break;
+            case 3: scaleX = scaleY = 0.72f; shiftX = -1.5f; shiftY = 3.0f; break;
+            case 4: scaleX = scaleY = 0.80f; break;
+            case 6: scaleY = 0.78f; shiftX = -1.0f; break;
+            case 7: scaleX = 1.25f; scaleY = 0.86f; shiftX = -0.5f; shiftY = 2.0f; break;
+            case 8: scaleX = 0.82f; scaleY = 0.80f; shiftY = 0.5f; break;
+            case 9: case 10: case 11:
+                scaleX = 0.87f; scaleY = 0.75f; shiftY = 3.5f; break;
+            case 12: scaleX = 0.82f; scaleY = 0.84f; shiftX = -0.5f; shiftY = 3.5f; break;
+            case 13: scaleX = 0.73f; scaleY = 0.70f; shiftX = -1.5f; shiftY = 5.0f; break;
+            case 14: scaleX = scaleY = 0.67f; shiftX = -0.5f; shiftY = 3.5f; break;
+            case 15: scaleX = 0.74f; scaleY = 0.70f; shiftX = -1.0f; shiftY = 5.5f; break;
+            default: break;
+        }
+        const float tileScale = area.getHeight() / 58.0f;
+        juce::Graphics::ScopedSaveState saved(g);
+        g.addTransform(juce::AffineTransform::scale(scaleX, scaleY, icon.getCentreX(), icon.getCentreY())
+                           .translated(shiftX * tileScale, shiftY * tileScale));
         const bool mapping = bool(button.getProperties().getWithDefault("midiMapVisible", false));
-        drawInstrumentGlyph(g, icon, pad, tint.withAlpha(mapping ? 0.15f : 0.90f), stroke);
+        const auto glyphTint = darkMode_ ? tint : juce::Colour(0xffd7dbf6U);
+        const float alpha = mapping ? 0.15f : darkMode_ ? 0.90f : pad == 15 ? 0.80f : 1.0f;
+        drawInstrumentGlyph(g, icon, pad, glyphTint.withAlpha(alpha), stroke, true);
         return;
     }
     if (id == "toolbar.play")
@@ -704,30 +836,40 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
     }
     if (id == "brush.slicer")
     {
-        auto circle = area.withSizeKeepingCentre(std::min(area.getWidth(), area.getHeight()) * 0.62f,
-                                                 std::min(area.getWidth(), area.getHeight()) * 0.62f);
-        g.setColour(tint);
-        g.drawEllipse(circle, 1.7f);
-        g.drawLine(circle.getCentreX(), circle.getY(), circle.getCentreX(), circle.getCentreY(), 1.5f);
-        g.drawLine(circle.getCentreX(), circle.getCentreY(), circle.getRight(), circle.getCentreY(), 1.5f);
+        const auto side = std::min(area.getWidth(), area.getHeight());
+        const auto circle = area.withSizeKeepingCentre(side * 0.50f, side * 0.50f)
+                                .translated(0.0f, side * 0.04f);
+        g.setColour(button.getToggleState() ? tint : juce::Colour(palette_.textMuted));
+        g.drawEllipse(circle, side * 0.045f);
+        // Reference slicing tool: round head with a diagonal stem, not clock hands.
+        g.drawLine(circle.getCentreX(), circle.getCentreY(),
+                   circle.getCentreX() + side * 0.24f,
+                   circle.getCentreY() + side * 0.40f, side * 0.10f);
         return;
     }
     if (id == "brush.velocity")
     {
-        g.setColour(tint);
-        const auto bars = area.reduced(area.getWidth() * 0.22f, area.getHeight() * 0.18f);
+        g.setColour(button.getToggleState() ? tint
+            : juce::Colour(darkMode_ ? palette_.textMuted : 0xff4d4d58U));
+        const auto bars = area.reduced(area.getWidth() * 0.22f, area.getHeight() * 0.22f);
         const float gap = bars.getWidth() * 0.08f;
-        const float width = (bars.getWidth() - gap * 3.0f) / 4.0f;
-        for (int index = 0; index < 4; ++index)
+        const float width = (bars.getWidth() - gap * 2.0f) / 3.0f;
+        for (int index = 0; index < 3; ++index)
         {
-            const float height = bars.getHeight() * (0.35f + static_cast<float>(index) * 0.2f);
+            const float height = bars.getHeight() * (0.5f + static_cast<float>(index) * 0.25f);
             g.fillRect(bars.getX() + static_cast<float>(index) * (width + gap),
                        bars.getBottom() - height, width, height);
         }
         return;
     }
     if (id == "brush.dice")
-        return drawDice(g, area, tint);
+    {
+        const auto side = std::min(area.getWidth(), area.getHeight());
+        return drawDice(g, area.withSizeKeepingCentre(side * 0.75f, side * 0.75f)
+                              .translated(0.0f, side * 0.08f),
+                        button.getToggleState() ? tint
+                            : juce::Colour(darkMode_ ? palette_.textMuted : 0xff737373U));
+    }
     if ((id.startsWith("random.module.") || id == "random.fillEmpty"))
     {
         const auto diameter = std::min(area.getWidth(), area.getHeight()) * 0.65f;
@@ -735,35 +877,53 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
         g.setColour(tint);
         g.drawEllipse(dot, std::max(1.0f, diameter * 0.10f));
         if (button.getToggleState())
-            g.fillEllipse(dot.reduced(diameter * 0.24f));
+            g.fillEllipse(dot);
         return;
     }
     if (id == "sample.layer")
     {
         auto textArea = area.reduced(std::max(13.0f, area.getWidth() * 0.16f), 1.0f);
         auto arrows = area;
-        drawTriangle(g, arrows.removeFromLeft(arrows.getHeight() * 0.72f), false, tint);
-        drawTriangle(g, arrows.removeFromRight(arrows.getHeight() * 0.72f), true, tint);
+        const auto gutter = arrows.getHeight();
+        const auto inset = gutter * 0.22f;
+        drawTriangle(g, arrows.removeFromLeft(gutter).reduced(inset), false, tint);
+        drawTriangle(g, arrows.removeFromRight(gutter).reduced(inset), true, tint);
         g.setColour(tint);
-        g.setFont(font(std::max(8.0f, button.getHeight() * 0.34f), true));
+        // Matched 960px reference: sample labels have six-pixel ink height.
+        g.setFont(font(button.getHeight() * 0.68f, true));
         g.drawFittedText(button.getButtonText(), textArea.toNearestInt(),
                          juce::Justification::centred, 1, 0.80f);
         return;
     }
     if (id == "sample.folder")
     {
-        auto folder = area.reduced(area.getWidth() * 0.18f, area.getHeight() * 0.25f);
-        juce::Path path;
-        path.startNewSubPath(folder.getX(), folder.getY() + folder.getHeight() * 0.24f);
-        path.lineTo(folder.getX() + folder.getWidth() * 0.33f,
-                    folder.getY() + folder.getHeight() * 0.24f);
-        path.lineTo(folder.getX() + folder.getWidth() * 0.42f, folder.getY());
-        path.lineTo(folder.getRight(), folder.getY());
-        path.lineTo(folder.getRight(), folder.getBottom());
-        path.lineTo(folder.getX(), folder.getBottom());
-        path.closeSubPath();
+        // The reference has a dim upright tab behind the sloping open front.
+        const auto folder = area.withX(area.getWidth() * 0.25f)
+                                .withWidth(area.getWidth() * 0.57f)
+                                .withY(area.getHeight() * 0.20f)
+                                .withHeight(area.getHeight() * 0.45f);
+        const auto point = [&folder](float x, float y) {
+            return juce::Point<float>(folder.getX() + folder.getWidth() * x,
+                                      folder.getY() + folder.getHeight() * y);
+        };
+        juce::Path back;
+        back.startNewSubPath(point(0.0f, 0.0f));
+        back.lineTo(point(0.25f, 0.0f));
+        back.lineTo(point(0.50f, 0.25f));
+        back.lineTo(point(0.90f, 0.25f));
+        back.lineTo(point(0.90f, 1.0f));
+        back.lineTo(point(0.0f, 1.0f));
+        back.closeSubPath();
+        g.setColour(tint.withMultipliedAlpha(0.55f));
+        g.fillPath(back);
+        juce::Path front;
+        front.startNewSubPath(point(0.15f, 0.38f));
+        front.lineTo(point(1.0f, 0.38f));
+        front.lineTo(point(0.85f, 1.0f));
+        front.lineTo(point(0.0f, 1.0f));
+        front.closeSubPath();
         g.setColour(tint);
-        g.fillPath(path);
+        g.fillPath(front);
         return;
     }
     if (id == "sample.clear")
@@ -800,7 +960,7 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
         g.setColour(tint);
         g.drawEllipse(dot, std::max(1.0f, diameter * 0.10f));
         if (button.getToggleState())
-            g.fillEllipse(dot.reduced(diameter * 0.24f));
+            g.fillEllipse(dot);
         g.setFont(font(std::max(8.0f, area.getHeight() * 0.37f)));
         g.drawText("One Shot", content.withTrimmedLeft(diameter * 1.55f).toNearestInt(),
                    juce::Justification::centredLeft);
@@ -822,42 +982,51 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
         g.setColour(tint);
         g.strokePath(body, juce::PathStrokeType(1.4f));
         juce::Path wave;
+        // JUCE arc angles start at twelve o'clock; sound radiates right.
         wave.addArc(speaker.getRight() - speaker.getWidth() * 0.42f, speaker.getY(),
-                    speaker.getWidth() * 0.42f, speaker.getHeight(), -0.8f, 0.8f, true);
+                    speaker.getWidth() * 0.42f, speaker.getHeight(),
+                    juce::MathConstants<float>::halfPi - 0.8f,
+                    juce::MathConstants<float>::halfPi + 0.8f, true);
         g.strokePath(wave, juce::PathStrokeType(1.4f));
         return;
     }
     if (id == "kit.lock")
     {
-        auto lock = area.reduced(area.getWidth() * 0.28f, area.getHeight() * 0.18f);
+        auto lock = area.reduced(area.getWidth() * 0.30f, area.getHeight() * 0.18f);
         const auto body = lock.removeFromBottom(lock.getHeight() * 0.58f);
-        g.setColour(tint);
-        g.drawRoundedRectangle(body, 1.5f, 1.3f);
+        g.setColour(tint.withAlpha(button.getToggleState() ? 1.0f : 0.45f));
+        g.fillRoundedRectangle(body, 1.2f);
         juce::Path shackle;
+        // JUCE angles begin at twelve o'clock: this is the upper half,
+        // not the left half produced by pi..twoPi.
         shackle.addArc(lock.getX() + lock.getWidth() * 0.17f,
                        lock.getY() + lock.getHeight() * 0.18f,
                        lock.getWidth() * 0.66f, lock.getHeight() * 1.22f,
-                       juce::MathConstants<float>::pi, juce::MathConstants<float>::twoPi, true);
+                       -juce::MathConstants<float>::halfPi,
+                       juce::MathConstants<float>::halfPi, true);
+        shackle.lineTo(body.getRight() - body.getWidth() * 0.17f, body.getY());
         g.strokePath(shackle, juce::PathStrokeType(1.3f));
         return;
     }
     if (id == "master.settings")
     {
         const auto centre = area.getCentre();
-        const float outer = std::min(area.getWidth(), area.getHeight()) * 0.34f;
-        const float inner = outer * 0.34f;
-        g.setColour(tint);
-        g.drawEllipse(juce::Rectangle<float>(outer * 2.0f, outer * 2.0f).withCentre(centre), 2.0f);
-        g.fillEllipse(juce::Rectangle<float>(inner * 2.0f, inner * 2.0f).withCentre(centre));
-        for (int tooth = 0; tooth < 8; ++tooth)
+        const float outer = std::min(area.getWidth(), area.getHeight()) * 0.29f;
+        juce::Path cog;
+        for (int point = 0; point < 32; ++point)
         {
-            const float angle = juce::MathConstants<float>::twoPi * static_cast<float>(tooth) / 8.0f;
-            g.drawLine(centre.x + std::cos(angle) * outer * 0.88f,
-                       centre.y + std::sin(angle) * outer * 0.88f,
-                       centre.x + std::cos(angle) * outer * 1.28f,
-                       centre.y + std::sin(angle) * outer * 1.28f,
-                       std::max(1.5f, outer * 0.22f));
+            const float angle = juce::MathConstants<float>::twoPi * static_cast<float>(point) / 32.0f;
+            const float radius = outer * ((point % 4 == 1 || point % 4 == 2) ? 1.0f : 0.76f);
+            const auto x = centre.x + std::cos(angle) * radius;
+            const auto y = centre.y + std::sin(angle) * radius;
+            if (point == 0) cog.startNewSubPath(x, y);
+            else cog.lineTo(x, y);
         }
+        cog.closeSubPath();
+        cog.addEllipse(juce::Rectangle<float>(outer * 0.72f, outer * 0.72f).withCentre(centre));
+        cog.setUsingNonZeroWinding(false);
+        g.setColour(tint);
+        g.fillPath(cog);
         return;
     }
     if (id == "toolbar.about")
@@ -986,11 +1155,17 @@ juce::Slider::SliderLayout BeatScholarLookAndFeel::getSliderLayout(juce::Slider&
     {
         layout.sliderBounds = slider.getLocalBounds();
     }
+    else if (slider.getComponentID() == "effect.9" && slider.isVertical())
+    {
+        // Original 960px client: the small Gain rail spans about 24px.
+        const int inset = juce::roundToInt(static_cast<float>(slider.getHeight()) * 8.0f / 55.0f);
+        layout.sliderBounds = slider.getLocalBounds().reduced(0, inset);
+    }
     else if (slider.getComponentID() == "master.4")
     {
         // Keep the gain gesture range aligned with the painted stereo meters
         // at every editor size, rather than JUCE's fixed 12-pixel thumb inset.
-        const int inset = juce::roundToInt(static_cast<float>(slider.getHeight()) * 12.0f / 116.0f);
+        const int inset = juce::roundToInt(static_cast<float>(slider.getHeight()) * 12.0f / 118.0f);
         layout.sliderBounds = slider.getLocalBounds().reduced(0, inset);
     }
     else if (slider.getComponentID() == "sound.5" && slider.isVertical())
@@ -1013,10 +1188,27 @@ void BeatScholarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, i
     if (id == "toolbar.bpm" || id == "toolbar.velocity")
     {
         g.setColour(juce::Colour(palette_.text));
-        g.setFont(font(std::max(10.0f, area.getHeight() * 0.46f), true));
+        // The BPM readout is text, so JUCE's inset slider-track height must
+        // not shrink its type. Match the original toolbar at the editor scale.
+        const auto textHeight = id == "toolbar.bpm"
+            ? static_cast<float>(slider.getHeight()) * 0.55f
+            : static_cast<float>(slider.getHeight()) * 0.43f;
+        g.setFont(getPopupMenuFont().withHeight(textHeight));
         const auto suffix = id == "toolbar.bpm" ? " BPM" : "";
+        const auto textArea = id == "toolbar.bpm"
+            ? area.translated(0.0f, static_cast<float>(slider.getHeight()) * 0.125f)
+            : area.translated(-static_cast<float>(slider.getWidth()) / 24.0f,
+                              static_cast<float>(slider.getHeight()) / 7.0f);
+        juce::Graphics::ScopedSaveState savedState(g);
+        if (id == "toolbar.bpm")
+        {
+            // Matched 960px reference: the readout spans 50px at an 8px
+            // glyph height. Keep that aspect ratio independent of text fitting.
+            g.addTransform(juce::AffineTransform::scale(1.16f, 1.0f,
+                                                       textArea.getCentreX(), textArea.getCentreY()));
+        }
         g.drawFittedText(juce::String(static_cast<int>(std::lround(slider.getValue()))) + suffix,
-                         area.toNearestInt(), juce::Justification::centred, 1);
+                         textArea.toNearestInt(), juce::Justification::centred, 1);
         return;
     }
     if (id == "toolbar.swing")
@@ -1039,8 +1231,8 @@ void BeatScholarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, i
         // The editor paints the live left/right meter rails behind this thumb.
         // Repainting opaque rails here would hide their output levels.
         g.setColour(juce::Colour(palette_.text));
-        g.fillRoundedRectangle(area.withSizeKeepingCentre(area.getWidth() * 0.56f,
-                                                           area.getHeight() * (8.0f / 92.0f))
+        g.fillRoundedRectangle(area.withSizeKeepingCentre(area.getWidth() * 0.60f,
+                                                           area.getHeight() * (10.0f / 94.0f))
                                    .withCentre({ area.getCentreX(), sliderPos }),
                                area.getWidth() * 0.04f);
         return;
@@ -1056,6 +1248,18 @@ void BeatScholarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, i
                                                            area.getHeight() * (8.0f / 89.0f))
                                    .withCentre({ area.getCentreX(), sliderPos }),
                                area.getWidth() * 0.04f);
+        return;
+    }
+    if (id == "effect.9" && style == juce::Slider::LinearVertical)
+    {
+        // Saved original: a thin rail and flat thumb, not a rounded capsule.
+        const float scale = static_cast<float>(slider.getWidth()) / 54.0f;
+        const auto track = area.withSizeKeepingCentre(2.0f * scale, area.getHeight() * 0.82f);
+        g.setColour(juce::Colour(palette_.border));
+        g.fillRect(track);
+        g.setColour(juce::Colour(palette_.text));
+        g.fillRect(juce::Rectangle<float>(10.0f * scale, 2.0f * scale)
+                       .withCentre({ track.getCentreX(), sliderPos }));
         return;
     }
     if (style == juce::Slider::LinearVertical || style == juce::Slider::LinearBarVertical)
@@ -1093,8 +1297,23 @@ void BeatScholarLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int y, i
 }
 
 void BeatScholarLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height, bool,
-                                           int, int, int, int, juce::ComboBox&)
+                                           int, int, int, int, juce::ComboBox& box)
 {
+    if (box.getComponentID() == "random.save.category")
+    {
+        g.fillAll(juce::Colour(0xff292954));
+        g.setColour(juce::Colour(0xff525272));
+        g.drawRect(0, 0, width, height);
+        const auto cx = static_cast<float>(width) - static_cast<float>(height) * 0.4f;
+        const auto cy = static_cast<float>(height) * 0.5f;
+        const auto radius = static_cast<float>(height) * 0.22f;
+        juce::Path arrow;
+        arrow.addTriangle(cx - radius, cy - radius * 0.5f, cx + radius, cy - radius * 0.5f,
+                          cx, cy + radius);
+        g.setColour(juce::Colour(0xffd0d0e5));
+        g.fillPath(arrow);
+        return;
+    }
     const auto area = juce::Rectangle<float>(0.5f, 0.5f, static_cast<float>(width - 1),
                                              static_cast<float>(height - 1));
     g.setColour(juce::Colour(palette_.panel));
@@ -1108,6 +1327,13 @@ void BeatScholarLookAndFeel::drawComboBox(juce::Graphics& g, int width, int heig
 
 void BeatScholarLookAndFeel::positionComboBoxText(juce::ComboBox& box, juce::Label& label)
 {
+    if (box.getComponentID() == "random.save.category")
+    {
+        label.setBounds(0, 0, box.getWidth(), box.getHeight());
+        label.setJustificationType(juce::Justification::centred);
+        label.setFont(font(static_cast<float>(box.getHeight()) * 0.65f));
+        return;
+    }
     label.setBounds(5, 1, box.getWidth() - box.getHeight(), box.getHeight() - 2);
     label.setFont(font(std::max(9.0f, static_cast<float>(box.getHeight()) * 0.44f), true));
 }
@@ -1163,6 +1389,14 @@ void BeatScholarLookAndFeel::drawPopupMenuItem(juce::Graphics& g, const juce::Re
                                                 const juce::Drawable* icon,
                                                 const juce::Colour* textColour)
 {
+    if (factorySampleMenu_)
+    {
+        // Factory lists use JUCE's 23px rows and height-constrained text; the
+        // reference Bars/Swing menus have separate, fixed-gutter geometry.
+        juce::LookAndFeel_V4::drawPopupMenuItem(g, area, separator, active, highlighted,
+                                              ticked, submenu, text, shortcut, icon, textColour);
+        return;
+    }
     if (separator)
     {
         g.setColour(juce::Colour(darkMode_ ? palette_.border : 0xff68688aU));
