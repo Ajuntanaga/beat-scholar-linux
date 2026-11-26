@@ -692,6 +692,32 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
     })json";
     auto state = bsl::ProjectState::makeDefault();
     check(bsl::statecodec::importLegacyPresetJson(json, state), "legacy preset JSON imports");
+    auto mappedPreset = juce::JSON::parse(json);
+    auto& firstPad = mappedPreset.getProperty("Sampler", {}).getProperty("Pads", {})
+        .getProperty("Pads", {}).getArray()->getReference(0);
+    firstPad.getDynamicObject()->setProperty("Note", "E3");
+    auto namedNoteState = state;
+    check(bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(mappedPreset), namedNoteState)
+              && namedNoteState.kit.pads[0].midiNote == 52,
+          "legacy top-level pad Note restores output identity separately from Params.Note");
+    for (const juce::var badNote : { juce::var(1.0e100), juce::var(-1.0e100),
+                                   juce::var("999999999999999999999999"),
+                                   juce::var("C999999999999999999999999") })
+    {
+        firstPad.getDynamicObject()->setProperty("Note", badNote);
+        auto restored = state;
+        check(bsl::statecodec::importLegacyPresetJson(juce::JSON::toString(mappedPreset), restored)
+                  && restored.kit.pads[0].midiNote == state.kit.pads[0].midiNote,
+              "out-of-range legacy pad notes safely use the default identity");
+    }
+    for (const auto* badNumber : { "1e100", "-1e100" })
+    {
+        auto restored = state;
+        check(bsl::statecodec::importLegacyPresetJson(
+                  json.replace("\"noteNum\":36", juce::String("\"noteNum\":") + badNumber), restored)
+                  && restored.patterns[0].lanes[0].beats[0].slices[0].padIndex == 0,
+              "out-of-range legacy event numbers use the default without narrowing overflow");
+    }
     auto lowNoteState = state;
     auto highNoteState = state;
     check(bsl::statecodec::importLegacyPresetJson(

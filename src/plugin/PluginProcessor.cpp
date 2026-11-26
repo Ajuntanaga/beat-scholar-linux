@@ -382,6 +382,10 @@ BeatScholarLinuxProcessor::BeatScholarLinuxProcessor()
     // replace an intentionally empty or partially populated restored kit.
     loadFactoryDefaultsIfAvailable();
     syncParametersFromProject();
+    // MidiBuffer stores six header bytes per event in addition to its payload.
+    // Reserve the covered dense-input workload without imposing an event limit.
+    constexpr std::size_t midiInputReserveBytes = 8193 * (3 + 6);
+    incomingMidi_.ensureSize(midiInputReserveBytes);
     sequencerPlayback_.reset();
     sequencerMidiChannels_ = {};
     inputMidiGates_ = {};
@@ -403,7 +407,7 @@ std::optional<juce::String> BeatScholarLinuxProcessor::getNameForMidiNoteNumber(
     // mutex prevents its slot being reused while the string is copied; the
     // audio callback never takes this mutex.
     const std::lock_guard lock(statePublishMutex_);
-    const auto& state = stateSnapshots_[static_cast<std::size_t>(publishedStateIndex_.load(std::memory_order_acquire))];
+    const auto& state = stateSnapshots_[static_cast<std::size_t>(publishedStateIndex_.load(std::memory_order_seq_cst))];
     if (const auto pad = state.padIndexForMidiNote(static_cast<std::uint8_t>(note)))
         return juce::String(state.kit.pads[*pad].name);
     return std::nullopt;
@@ -441,8 +445,11 @@ void BeatScholarLinuxProcessor::publishProjectStateIfNeeded()
     if (editorRevision == lastPublishedEditorRevision_
         && explicitRevision == lastPublishedExplicitRevision_)
         return;
-    const int published = publishedStateIndex_.load(std::memory_order_acquire);
-    const int reading = readingStateIndex_.load(std::memory_order_acquire);
+    // The reader's claim and publication recheck must share a total order
+    // with slot selection. Acquire/release on separate atomics permits a
+    // publisher to miss a live claim and overwrite storage being read.
+    const int published = publishedStateIndex_.load(std::memory_order_seq_cst);
+    const int reading = readingStateIndex_.load(std::memory_order_seq_cst);
     int target = 0;
     while (target == published || target == reading)
         ++target;
@@ -451,7 +458,7 @@ void BeatScholarLinuxProcessor::publishProjectStateIfNeeded()
     playbackPlans_[static_cast<std::size_t>(target)] = bsl::SequencerPlayback::prepareProject(snapshot);
     visualSlicePlans_[static_cast<std::size_t>(target)] = bsl::SequencerPlayback::prepareVisualProject(snapshot);
     const auto activePattern = snapshot.patterns[snapshot.activePattern].runtimeId;
-    publishedStateIndex_.store(target, std::memory_order_release);
+    publishedStateIndex_.store(target, std::memory_order_seq_cst);
     if (activePattern != lastPublishedActivePattern_)
     {
         audioPattern_.store(activePattern, std::memory_order_release);
@@ -595,6 +602,7 @@ void BeatScholarLinuxProcessor::prepareToPlay(double sampleRate, int maximumExpe
     midiWasPlaying_ = false;
     samplerWasEnabled_ = true;
     fallbackSamplePosition_.store(0);
+    fallbackQuarterNotePosition_ = 0.0;
     patternScheduler_.reset(audioPattern_.load(std::memory_order_acquire));
     loadBuiltInPreviewKit();
     loadFactorySamples();
@@ -658,15 +666,16 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     {
         audioEngine_.reset();
         fallbackSamplePosition_.store(0, std::memory_order_release);
+        fallbackQuarterNotePosition_ = 0.0;
         patternScheduler_.reset(audioPattern_.load(std::memory_order_acquire));
     }
 
     int snapshotIndex = 0;
     do
     {
-        snapshotIndex = publishedStateIndex_.load(std::memory_order_acquire);
-        readingStateIndex_.store(snapshotIndex, std::memory_order_release);
-    } while (snapshotIndex != publishedStateIndex_.load(std::memory_order_acquire));
+        snapshotIndex = publishedStateIndex_.load(std::memory_order_seq_cst);
+        readingStateIndex_.store(snapshotIndex, std::memory_order_seq_cst);
+    } while (snapshotIndex != publishedStateIndex_.load(std::memory_order_seq_cst));
     const auto& state = stateSnapshots_[static_cast<std::size_t>(snapshotIndex)];
     // Disabling the sampler ends its voices and tails. Pausing its renderer
     // alone would replay stale audio on enable, including notes released while off.
@@ -692,7 +701,7 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         // A newer, different click arriving during this callback stays pending.
         pendingUiPattern_.compare_exchange_strong(uiPattern, 0, std::memory_order_acq_rel);
     }
-    else if (uiPattern != 0 && snapshotIndex == publishedStateIndex_.load(std::memory_order_acquire))
+    else if (uiPattern != 0 && snapshotIndex == publishedStateIndex_.load(std::memory_order_seq_cst))
     {
         // The clicked pattern may have been removed or replaced before audio
         // saw it. Keep a request only while this snapshot predates publication.
@@ -732,13 +741,20 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
 
     // Preserve input separately while rebuilding sequencer and fixed drum-input
     // output events in timestamp order below.
-    incomingMidi_.swapWith(midi);
+    // Keep the host buffer's capacity for forwarded and generated output.
+    incomingMidi_.clear();
+    incomingMidi_.addEvents(midi, 0, -1, 0);
     midi.clear();
 
     bsl::TransportFrame frame;
     frame.sampleRate = getSampleRate();
     frame.bpm = parameters_.getRawParameterValue("bpm")->load();
     frame.absoluteSampleStart = fallbackSamplePosition_.load();
+    // Preserve musical time across pause and BPM changes; device sample
+    // time alone cannot reconstruct the tempo history.
+    if (standalone || (wrapperType == juce::AudioProcessor::wrapperType_Undefined
+                       && getPlayHead() == nullptr))
+        frame.quarterNotePosition = fallbackQuarterNotePosition_;
     frame.blockSize = samplesInBlock;
     // Undefined is the unwrapped processor used by offline tools/tests.
     // Hosted wrappers require affirmative transport information from the host.
@@ -764,8 +780,8 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     const bool midiPlaying = frame.playing && state.global.sequencerEnabled;
     const bool midiDiscontinuity = midiWasPlaying_
         && (frame.absoluteSampleStart != midiExpectedSample_
-            || (std::isfinite(frame.quarterNotePosition) && std::isfinite(midiExpectedPpq_)
-                && std::abs(frame.quarterNotePosition - midiExpectedPpq_) > 1.0e-4));
+            || bsl::hostPpqDiscontinuous(midiPreviousPpq_, frame.quarterNotePosition,
+                midiPreviousPpqAdvance_, midiPreviousBlockTempoScale_ * frame.bpm));
     if (resetRequested || midiDiscontinuity || midiPlaying != midiWasPlaying_)
         activityEpoch_.fetch_add(1, std::memory_order_release);
     const bool midiStopped = midiWasPlaying_ && !midiPlaying;
@@ -773,8 +789,9 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
         inputMidiGates_ = {};
     midiWasPlaying_ = midiPlaying;
     midiExpectedSample_ = frame.absoluteSampleStart + samplesInBlock;
-    midiExpectedPpq_ = frame.quarterNotePosition
-        + static_cast<double>(samplesInBlock) * frame.bpm / (frame.sampleRate * 60.0);
+    midiPreviousPpq_ = frame.quarterNotePosition;
+    midiPreviousBlockTempoScale_ = static_cast<double>(samplesInBlock) / (frame.sampleRate * 60.0);
+    midiPreviousPpqAdvance_ = midiPreviousBlockTempoScale_ * frame.bpm;
 
 
     const bsl::SchedulerTransport schedulerTransport {
@@ -1084,14 +1101,30 @@ void BeatScholarLinuxProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
                 buffer.copyFrom(destination, 0, scratch_[static_cast<std::size_t>(source)].data(), samplesInBlock);
         }
     if (frame.playing)
+    {
         fallbackSamplePosition_.store(frame.absoluteSampleStart + samplesInBlock);
-    readingStateIndex_.store(-1, std::memory_order_release);
+        if (std::isfinite(frame.bpm) && frame.bpm > 0.0
+            && std::isfinite(frame.sampleRate) && frame.sampleRate > 0.0)
+            fallbackQuarterNotePosition_ += static_cast<double>(samplesInBlock)
+                * frame.bpm / (frame.sampleRate * 60.0);
+    }
+    readingStateIndex_.store(-1, std::memory_order_seq_cst);
 }
 
 void BeatScholarLinuxProcessor::getStateInformation(juce::MemoryBlock& destination)
 {
     auto state = projectEditor_.state();
     copyParameterValuesToState(state);
+    // MIDI switches run even with the editor closed. Save the executed
+    // selection, not merely its pending UI notification or a queued trigger.
+    const auto activeId = audioPattern_.load(std::memory_order_acquire);
+    const auto active = std::find_if(state.patterns.begin(), state.patterns.end(),
+        [activeId](const auto& pattern) { return pattern.runtimeId == activeId; });
+    // A structural UI edit can select a new pattern before timer publication.
+    // Preserve that newer selection instead of restoring the previous audio ID.
+    if (active != state.patterns.end()
+        && state.patterns[state.activePattern].runtimeId == lastPublishedActivePattern_)
+        state.activePattern = static_cast<std::size_t>(std::distance(state.patterns.begin(), active));
     destination = bsl::statecodec::encode(state);
 }
 

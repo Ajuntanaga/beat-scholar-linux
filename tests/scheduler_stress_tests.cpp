@@ -34,6 +34,14 @@ int main()
         {
             processor.stopStandalone();
             processor.playStandalone();
+            if (index % 32 == 0)
+            {
+                auto& state = processor.projectState();
+                state.patterns[0].lanes[0].beats[0] = bsl::BeatState::withSubdivision(
+                    1 + index % 7, static_cast<std::uint8_t>(index % 16), 0.8f);
+                processor.markProjectDirty();
+                processor.publishProjectStateIfNeeded();
+            }
         }
     });
 
@@ -62,6 +70,6 @@ int main()
     if (stoppedEnergy != 0.0f)
         return EXIT_FAILURE;
 
-    std::cout << "Processor stop/reset TSAN stress passed\n";
+    std::cout << "Processor stop/reset and snapshot publication TSAN stress passed\n";
     return EXIT_SUCCESS;
 }

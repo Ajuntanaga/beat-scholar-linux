@@ -137,6 +137,19 @@ void sortSteps(std::span<PlaybackStep> steps, std::size_t ideal)
     }
 }
 
+// The host hands over its own quarter-note position. A corrupt or absurd value
+// must not reach the double -> int64 cycle casts below (undefined behaviour).
+bool hostPositionUsable(const TransportFrame& frame)
+{
+    const double host = std::isfinite(frame.quarterNotePosition) ? frame.quarterNotePosition
+        : static_cast<double>(frame.absoluteSampleStart) / frame.sampleRate * frame.bpm / 60.0;
+    const double origin = std::isfinite(frame.patternPhaseQuarterNotes)
+        ? host - frame.patternPhaseQuarterNotes : 0.0;
+    const double position = host - origin;
+    return std::isfinite(host) && std::isfinite(position) && std::abs(host) < 1.0e12
+        && std::abs(position) < 1.0e12;
+}
+
 } // namespace
 
 PatternPlaybackPlan SequencerPlayback::preparePattern(const PatternState& pattern)
@@ -244,9 +257,10 @@ std::size_t SequencerPlayback::renderVisualBatch(const ProjectState& project,
         }
     };
     const bool playing = frame.playing && project.global.sequencerEnabled
-        && patternIndex < project.patterns.size() && project.isValid()
+        && patternIndex < project.patterns.size() && (cursor.started || project.isValid())
         && std::isfinite(frame.sampleRate) && frame.sampleRate > 0
-        && std::isfinite(frame.bpm) && frame.bpm > 0 && frame.blockSize > 0;
+        && std::isfinite(frame.bpm) && frame.bpm > 0 && frame.blockSize > 0
+        && hostPositionUsable(frame);
     if (playing)
     {
         const auto& pattern = project.patterns[patternIndex];
@@ -333,9 +347,10 @@ std::size_t SequencerPlayback::renderBatch(const ProjectState& project,
         }
     };
     const bool playing = frame.playing && project.global.sequencerEnabled
-        && patternIndex < project.patterns.size() && project.isValid()
+        && patternIndex < project.patterns.size() && (cursor.started || project.isValid())
         && std::isfinite(frame.sampleRate) && frame.sampleRate > 0
-        && std::isfinite(frame.bpm) && frame.bpm > 0 && frame.blockSize > 0;
+        && std::isfinite(frame.bpm) && frame.bpm > 0 && frame.blockSize > 0
+        && hostPositionUsable(frame);
     if (playing)
     {
         const auto& pattern = project.patterns[patternIndex];

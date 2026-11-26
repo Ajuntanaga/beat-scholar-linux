@@ -23,6 +23,15 @@ double referenceLength(SwingReference reference)
     return 0.5;
 }
 
+// Same guard as SequencerPlayback: the host position feeds double -> int64 casts.
+bool timelineStartUsable(const TransportFrame& transport, double samplesPerQuarter)
+{
+    const double start = std::isfinite(transport.patternPhaseQuarterNotes)
+        ? transport.patternPhaseQuarterNotes * samplesPerQuarter
+        : static_cast<double>(transport.absoluteSampleStart);
+    return std::isfinite(start) && std::abs(start) < 1.0e15;
+}
+
 std::uint8_t midiVelocity(float velocity)
 {
     return static_cast<std::uint8_t>(
@@ -88,6 +97,8 @@ std::vector<MidiEvent> Sequencer::render(const ProjectState& state,
                     [](const SliceState& slice) { return slice.enabled; }));
     const double samplesPerQuarter = transport.sampleRate * 60.0 / transport.bpm;
     const double patternSamples = pattern.durationInQuarterNotes() * samplesPerQuarter;
+    if (!std::isfinite(patternSamples) || patternSamples <= 0.0)
+        return result;
     const auto overlappingCycles = static_cast<std::size_t>(
         std::ceil(static_cast<double>(transport.blockSize) / patternSamples)) + 2;
     result.resize(std::max<std::size_t>(enabledEventsPerCycle * overlappingCycles, 1));
@@ -109,7 +120,8 @@ void forEachEvent(const ProjectState& state, const TransportFrame& transport,
     const auto& pattern = state.patterns[patternIndex];
     const double samplesPerQuarter = transport.sampleRate * 60.0 / transport.bpm;
     const double patternSamples = pattern.durationInQuarterNotes() * samplesPerQuarter;
-    if (!std::isfinite(patternSamples) || patternSamples <= 0.0)
+    if (!std::isfinite(patternSamples) || patternSamples <= 0.0
+        || !timelineStartUsable(transport, samplesPerQuarter))
         return;
 
     const bool hasSolo = std::any_of(pattern.lanes.begin(), pattern.lanes.end(),
@@ -226,7 +238,8 @@ std::size_t Sequencer::renderBatch(const ProjectState& state,
     const double samplesPerQuarter = transport.sampleRate * 60.0 / transport.bpm;
     const double duration = pattern.durationInQuarterNotes();
     const double patternSamples = duration * samplesPerQuarter;
-    if (!std::isfinite(patternSamples) || patternSamples <= 0.0)
+    if (!std::isfinite(patternSamples) || patternSamples <= 0.0
+        || !timelineStartUsable(transport, samplesPerQuarter))
     {
         cursor.exhausted = true;
         return 0;

@@ -133,6 +133,68 @@ void testTempoChangesPreserveTheQuantizationGrid()
             }
 }
 
+void testTempoRampPreservesPhaseAndPendingTrigger()
+{
+    for (const double rampPpq : { 0.55, 0.65 })
+    {
+        bsl::PatternScheduler scheduler(0);
+        std::array<bsl::PatternRenderSegment, 4> segments {};
+        const std::array triggers {
+            bsl::PatternTrigger { 6000, 3, bsl::PatternQuantization::off },
+            bsl::PatternTrigger { 6001, 1, bsl::PatternQuantization::quarter },
+        };
+        scheduler.planBlock(transport(2400, 12000, 0.1), triggers, segments);
+        auto ramp = transport(14400, 1000, rampPpq);
+        ramp.bpm = rampPpq < 0.6 ? 96.0 : 144.0;
+        auto count = scheduler.planBlock(ramp, {}, segments);
+        check(count == 1 && segments[0].patternId == 3
+                  && std::abs(segments[0].phaseQuarterNotes - (rampPpq - 0.35)) < 1.0e-10,
+              "tempo ramp retains the MIDI-started pattern origin");
+        auto next = transport(15400, 20000,
+            rampPpq + 1000.0 * ramp.bpm / (48000.0 * 60.0));
+        next.bpm = ramp.bpm;
+        count = scheduler.planBlock(next, {}, segments);
+        check(count == 1 && segments[0].patternId == 1,
+              "tempo ramp retains the pending quantized trigger");
+    }
+}
+
+void testForwardPpqOnlySeekClearsPendingTrigger()
+{
+    bsl::PatternScheduler scheduler(0);
+    std::array<bsl::PatternRenderSegment, 4> segments {};
+    const std::array triggers {
+        bsl::PatternTrigger { 0, 3, bsl::PatternQuantization::off },
+        bsl::PatternTrigger { 1, 1, bsl::PatternQuantization::whole },
+    };
+    scheduler.planBlock(transport(0, 1024, 0.1), triggers, segments);
+    const auto count = scheduler.planBlock(transport(1024, 1024, 8.0), {}, segments);
+    check(count == 1 && segments[0].patternId == 3
+              && std::abs(segments[0].phaseQuarterNotes - 8.0) < 1.0e-10,
+          "forward PPQ seek with contiguous fallback samples clears pending triggers and resets phase");
+}
+
+void testSchedulerRejectsUnrepresentablePositions()
+{
+    bsl::PatternScheduler scheduler(0);
+    std::array<bsl::PatternRenderSegment, 4> segments {};
+    const std::array trigger {
+        bsl::PatternTrigger { 0, 1, bsl::PatternQuantization::quarter }
+    };
+    for (const double ppq : { -1.0e30, 1.0e30 })
+        check(scheduler.planBlock(transport(0, 512, ppq), trigger, segments) == 0,
+              "scheduler rejects unrepresentable PPQ before converting offsets");
+    auto slow = transport(0, 512, 0.1);
+    slow.bpm = 1.0e-320;
+    check(scheduler.planBlock(slow, trigger, segments) == 0,
+          "scheduler rejects non-finite samples per quarter");
+    slow.bpm = 1.0e-20;
+    check(scheduler.planBlock(slow, trigger, segments) == 1 && scheduler.activePattern() == 0,
+          "a distant finite trigger stays pending without integer overflow");
+    check(scheduler.planBlock(transport(0, 512, 0.0), trigger, segments) == 1,
+          "scheduler recovers for a normal transport frame");
+}
+
 void testLatestTriggerForOneBoundaryWins()
 {
     bsl::PatternScheduler scheduler(0);
@@ -409,6 +471,31 @@ void testCapturedSimultaneousOrder()
             check(std::equal(observed.begin(), observed.end(), expected.begin(), expected.end()),
                 "simultaneous note order matches native with disabled slices, mute and solo");
         }
+}
+
+void testPlaybackRejectsAbsurdHostPositions()
+{
+    auto state = bsl::ProjectState::makeDefault();
+    state.patterns[0].lanes[0].beats[0] = bsl::BeatState::withSubdivision(2, 0, 0.5f);
+    const auto plans = bsl::SequencerPlayback::prepareProject(state);
+    bsl::SequencerPlayback playback;
+    std::array<bsl::PlaybackEvent, 16> events;
+    bsl::TransportFrame frame { 48000.0, 120.0, 0, 512, true };
+    frame.quarterNotePosition = 0.0;
+    frame.patternPhaseQuarterNotes = 0.0;
+    bsl::PlaybackCursor control;
+    check(playback.renderBatch(state, frame, 0, plans[0], events, control) > 0,
+          "control frame plays through the batch renderer");
+    for (const double position : { 1.0e30, -1.0e30 })
+    {
+        auto bad = frame;
+        bad.quarterNotePosition = position;
+        bad.patternPhaseQuarterNotes = position;
+        bsl::PlaybackCursor cursor;
+        playback.reset();  // the control frame left notes sounding; their releases are legitimate output
+        check(playback.renderBatch(state, bad, 0, plans[0], events, cursor) == 0 && cursor.exhausted,
+              "an absurd host position plays nothing and ends the cursor");
+    }
 }
 
 void testCapturedDenseTiming()
@@ -800,6 +887,9 @@ int main()
     testHostPpqOverridesSampleTimeline();
     testAbsoluteSampleAndBpmFallbackChoosesBoundary();
     testTempoChangesPreserveTheQuantizationGrid();
+    testTempoRampPreservesPhaseAndPendingTrigger();
+    testForwardPpqOnlySeekClearsPendingTrigger();
+    testSchedulerRejectsUnrepresentablePositions();
     testLatestTriggerForOneBoundaryWins();
     testBoundedCollectorRetainsTheLatestSameBoundaryTrigger();
     testMidBlockSplitAdvancesOldPhaseAndZerosNewPhase();
@@ -814,6 +904,7 @@ int main()
     testCapturedRemainingPatternCallbackTiming();
     testAtomicResetRequestIsConsumedExactlyOnce();
     testCapturedSimultaneousOrder();
+    testPlaybackRejectsAbsurdHostPositions();
     testCapturedDenseTiming();
     testCapturedCallbackReleaseLifecycle();
     testCapturedOverlappingLanes();

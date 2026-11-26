@@ -277,10 +277,19 @@ bool readBool(const juce::var& parent, const char* name, bool fallback)
     return value.isVoid() ? fallback : static_cast<bool>(value);
 }
 
+int checkedInt(const juce::var& value, int fallback)
+{
+    if (value.isVoid()) return fallback;
+    const double number = static_cast<double>(value);
+    if (!std::isfinite(number) || number < std::numeric_limits<int>::min()
+        || number > std::numeric_limits<int>::max())
+        return fallback;
+    return static_cast<int>(number);
+}
+
 int readInt(const juce::var& parent, const char* name, int fallback)
 {
-    const auto value = get(parent, name);
-    return value.isVoid() ? fallback : static_cast<int>(value);
+    return checkedInt(get(parent, name), fallback);
 }
 
 float readFloat(const juce::var& parent, const char* name, float fallback)
@@ -754,13 +763,13 @@ float legacyResonance(const juce::var& value, float fallback)
 int legacyMidiNote(const juce::var& value, int fallback)
 {
     if (value.isInt() || value.isInt64() || value.isDouble())
-        return std::clamp(static_cast<int>(value), 0, 127);
+        return std::clamp(checkedInt(value, fallback), 0, 127);
 
     auto text = value.toString().trim();
     if (text.isEmpty())
         return fallback;
     if (text.containsOnly("+-0123456789"))
-        return std::clamp(text.getIntValue(), 0, 127);
+        return std::clamp(checkedInt(text, fallback), 0, 127);
 
     const auto letter = static_cast<char>(std::toupper(static_cast<unsigned char>(text[0])));
     int semitone = 0;
@@ -785,7 +794,9 @@ int legacyMidiNote(const juce::var& value, int fallback)
     const auto octaveText = text.substring(octaveStart).trim();
     if (octaveText.isEmpty() || !octaveText.containsOnly("+-0123456789"))
         return fallback;
-    const int note = (octaveText.getIntValue() + 1) * 12 + semitone;
+    const int octave = checkedInt(octaveText, -1000);
+    if (octave < -1 || octave > 9) return fallback;
+    const int note = (octave + 1) * 12 + semitone;
     return note >= 0 && note <= 127 ? note : fallback;
 }
 

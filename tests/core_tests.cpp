@@ -5,9 +5,12 @@
 #include "content/FactoryResourceScanner.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <string_view>
 #include <vector>
 
@@ -939,6 +942,32 @@ void testSequencerBatchesPreserveSimultaneousEvents()
     }
 }
 
+void testAbsurdHostPositionsRenderNothing()
+{
+    auto state = bsl::ProjectState::makeDefault();
+    state.patterns[0].lanes[0].beats[0] = bsl::BeatState::withSubdivision(2, 0, 0.5f);
+    bsl::TransportFrame good { 48000.0, 120.0, 0, 512, true };
+    check(!bsl::Sequencer::render(state, good).empty(), "control frame renders events");
+    // A host position far outside any real session must neither hang nor reach
+    // an out-of-range double -> int64 cast.
+    for (const double phase : { 1.0e30, -1.0e30 })
+    {
+        auto frame = good;
+        frame.patternPhaseQuarterNotes = phase;
+        check(bsl::Sequencer::render(state, frame).empty(), "absurd pattern phase renders nothing");
+        std::array<bsl::SequencerBatchEvent, 8> storage;
+        bsl::SequencerBatchCursor cursor;
+        check(bsl::Sequencer::renderBatch(state, frame, 0, storage, cursor) == 0 && cursor.exhausted,
+              "absurd pattern phase ends a batch cursor immediately");
+    }
+    auto huge = good;
+    huge.absoluteSampleStart = std::numeric_limits<std::int64_t>::max() / 2;
+    check(bsl::Sequencer::render(state, huge).empty(), "absurd sample position renders nothing");
+    auto slow = good;
+    slow.bpm = 1.0e-320;
+    check(bsl::Sequencer::render(state, slow).empty(), "denormal tempo renders nothing");
+}
+
 void testBatchWindowsMatchFullRender()
 {
     auto state = bsl::ProjectState::makeDefault();
@@ -1027,6 +1056,7 @@ int main()
     check(bsl::filterCutoffHz(0.0f) == 10.0f && bsl::filterCutoffHz(1.0f) == 20000.0f,
           "cutoff mapping retains native range endpoints");
     testMidiChannelRouting();
+    testAbsurdHostPositionsRenderNothing();
     testMainInitFactorySamples();
     testSequencerBatchesPreserveSimultaneousEvents();
     testBatchWindowsMatchFullRender();

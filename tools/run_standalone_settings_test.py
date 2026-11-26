@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import resource
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,7 @@ parser.add_argument('executable', type=Path)
 parser.add_argument('output', type=Path)
 parser.add_argument('--midi-host', type=Path)
 parser.add_argument('--plugin', type=Path)
+parser.add_argument('--flam-width', type=int, choices=(960, 1280), default=1280)
 args = parser.parse_args()
 if (args.midi_host is None) != (args.plugin is None):
     parser.error('--midi-host and --plugin must be supplied together')
@@ -32,6 +34,16 @@ if match is None:
 pid = Path(f'/tmp/.X{match[1]}-lock').read_text().strip()
 if Path(f'/proc/{pid}/comm').read_text().strip() != 'Xvfb':
     raise RuntimeError('Refusing to control a desktop display')
+
+# ALSA enumerates physical cards even with a private ALSA_CONFIG_PATH. On a
+# workstation that aborts the minimal config's software-device enumeration.
+# Hide hardware from this harness and its children; keep the Xvfb socket.
+if Path('/dev/snd').exists():
+    bubblewrap = shutil.which('bwrap')
+    if bubblewrap is None:
+        raise RuntimeError('Install bubblewrap to isolate physical audio devices for this test')
+    os.execv(bubblewrap, [bubblewrap, '--die-with-parent', '--bind', '/', '/',
+                         '--dev', '/dev', '--', sys.executable, __file__, *sys.argv[1:]])
 
 # ALSA's null device never waits for hardware. Real-time priority lets its
 # callback starve GUI event handling in a CPU-limited cloud container.
@@ -132,7 +144,8 @@ def close_app(app, main):
 with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
     scratch = Path(scratch)
     alsa = scratch / 'asound.conf'
-    alsa.write_text('pcm.!default { type null }\npcm.offline { type null hint { show on description "Offline Null" } }\n')
+    alsa.write_text('pcm.!default { type null }\n'
+                    'pcm.offline { type null hint { show on description "Offline Null" } }\n')
     env = {**os.environ, 'XDG_CONFIG_HOME': str(scratch / 'config'), 'HOME': str(scratch),
            'XDG_DATA_HOME': str(scratch / 'data'), 'XDG_CACHE_HOME': str(scratch / 'cache'),
            'ALSA_CONFIG_PATH': str(alsa), 'JACK_NO_START_SERVER': '1',
@@ -224,6 +237,8 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             # The displayed menu orders Default ALSA Output, Offline Null,
             # then none. Move down from Default to the actual null device.
             xdo('mousemove', '--window', settings, 300, 27, 'click', '1')
+            time.sleep(0.2)
+            capture_rendered_window(settings, 'standalone-output-menu.png')
             xdo('key', 'Down', 'Return')
             time.sleep(0.2)
             capture_rendered_window(settings, 'standalone-settings-device-changed.png')
@@ -351,7 +366,11 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             # then inspect the app's own saved project rather than a test model.
             app = subprocess.Popen([str(executable)], env=env, stdout=log, stderr=subprocess.STDOUT)
             main = wait_window('Beat Scholar Linux', app.pid)
-            capture_rendered_window(main, 'standalone-flam-before.png')
+            flam_size = (args.flam_width, round(720 * args.flam_width / 1280) + wrapper_height)
+            gesture('windowsize', '--sync', main, *flam_size)
+            # Leave space above the window for the upward Ctrl-drag.
+            gesture('windowmove', '--sync', main, 50, 300)
+            capture_rendered_window(main, 'standalone-flam-before.png', flam_size)
             geometry = dict(line.split('=', 1) for line in
                             xdo('getwindowgeometry', '--shell', main).stdout.splitlines() if '=' in line)
             width, height = int(geometry['WIDTH']), int(geometry['HEIGHT'])
@@ -361,29 +380,41 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
             editor_top = top + editor_y
             gesture('windowfocus', '--sync', main)
             before_flam = ImageGrab.grab(xdisplay=os.environ['DISPLAY'])
-            move_to_beat(196)
+            # Ctrl-drag law (see PluginEditor.cpp dragSubdivisionHeight_): one
+            # slice per 0.05 of height*(1/41) normalized, with the row height
+            # taken from the live window. Five slices need a drag of
+            # 1.951..2.439 row heights; aim at the middle of that band so the
+            # result holds at every window width this script uses.
+            lane_count = len(saved['patterns'][0]['lanes'])
+            cell_h = round(380 * scale) / lane_count
+            # Use the current grid's pie centre, including its top gutter.
+            # The older centre (196, 150) remains inside the beat, but sector
+            # clicks around it can cross a wedge boundary after layout changes.
+            pie_x = round(67 * scale) + round(1067 * scale) / (2 * len(beats))
+            pie_y = editor_y + round(113 * scale) + cell_h * 10 / 19
+            gesture('mousemove', '--window', main, round(pie_x), round(pie_y))
+            drag_height = max(1, round(0.8 * (cell_h - round(5 * scale))))
+            drag_dy = round(2.195 * drag_height)
             gesture('keydown', 'ctrl', 'mousedown', '1')
-            # Subdivision drag sensitivity is in editor pixels, not design units.
-            gesture('mousemove', '--window', main, round(196 * scale),
-                    round(editor_y + 150 * scale) - 48)
+            gesture('mousemove', '--window', main, round(pie_x), round(pie_y) - drag_dy)
             time.sleep(0.1)
             gesture('mouseup', '1', 'keyup', 'ctrl')
             # Slice zero begins at six o'clock and runs clockwise.
             for index in (2, 3, 4):
                 angle = math.pi / 2 + (index + 0.5) * 2 * math.pi / 5
                 gesture('mousemove', '--window', main,
-                        round((196 + 25 * math.cos(angle)) * scale),
-                        round(editor_y + (150 + 25 * math.sin(angle)) * scale), 'click', '1')
+                        round(pie_x + 25 * scale * math.cos(angle)),
+                        round(pie_y + 25 * scale * math.sin(angle)), 'click', '1')
             gesture('mousemove', '--window', main, round(1038 * scale),
                     round(editor_y + 30 * scale))
             wait_beats(before_flam, [196], True, 'standalone-five-slice-flam.png')
             close_app(app, main)
             flam = saved_project(scratch)
+            (output / 'flam-project.json').write_text(json.dumps(flam, indent=2) + '\n')
             flam_beats = flam['patterns'][0]['lanes'][0]['beats']
             expected_first = [dict(beats[0][0], enabled=index < 2) for index in range(5)]
             if flam_beats[0] != expected_first or flam_beats[1:] != beats[1:]:
                 raise RuntimeError('Ctrl-drag flam did not preserve pad/velocity or the other beats')
-            (output / 'flam-project.json').write_text(json.dumps(flam, indent=2) + '\n')
             midi_result = None
             if args.midi_host is not None:
                 from check_vst3_midi_output import canonical, note, rounded
@@ -426,7 +457,8 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
                 'actual_c_copy_v_preview_drag_fill': True,
                 'single_undo_restores_drag_targets': True, 'redo_restores_drag_targets': True,
                 'filled_beats_persisted': True,
-                'actual_ctrl_drag_flam_persisted': True, 'flam_vst3_midi': midi_result,
+                'actual_ctrl_drag_flam_persisted': True, 'flam_width': args.flam_width,
+                'flam_vst3_midi': midi_result,
                 'clean_exit': True, 'saved_tempo_bpm': 137, 'project_recalled': True,
                 'captures_have_rendered_content': True,
                 'main_geometry': geometry, 'click': [x, y]}, indent=2) + '\n')

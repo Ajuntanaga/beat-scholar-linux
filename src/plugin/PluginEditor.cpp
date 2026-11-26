@@ -411,6 +411,7 @@ public:
 
     bool keyPressed(const juce::KeyPress& key) override
     {
+        if (key == juce::KeyPress::tabKey) return false;
         if (key == juce::KeyPress::escapeKey) close();
         // Do not let text-entry shortcuts reach the pattern editor.
         return true;
@@ -3347,6 +3348,9 @@ void BeatScholarLinuxEditor::mouseDrag(const juce::MouseEvent& event)
     }
     if (draggingSubdivision_ && lastHit_)
     {
+        // A delivered drag event without movement must not truncate the
+        // toolbar's 43..45-slice values into the gesture's 1..42 range.
+        if (!beatDragCheckpointed_ && position.y == dragStartY_) return;
         auto& state = processor_.projectState();
         auto& beat = state.patterns[state.activePattern].lanes[lastHit_->lane].beats[lastHit_->beat];
         // Original 1.6.2 BeatPizza::mouseDrag uses a normalized 0..41

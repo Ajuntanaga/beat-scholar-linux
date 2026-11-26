@@ -162,6 +162,7 @@ private:
     std::uint64_t lastPublishedExplicitRevision_ = 0;
     bsl::PatternId lastPublishedActivePattern_ = 0;
     std::atomic<std::int64_t> fallbackSamplePosition_ { 0 };
+    double fallbackQuarterNotePosition_ = 0.0; // Audio-thread owned.
     std::atomic<bool> standalonePlaying_ { true };
     std::atomic<bool> transportPlaying_ { false };
     std::atomic<double> effectiveBpm_ { 120.0 };
@@ -173,7 +174,9 @@ private:
     // 0: no input gate, 1: held input, 2: replaced by a sequencer hit.
     std::array<std::array<std::uint8_t, 128>, 16> inputMidiGates_ {};
     std::int64_t midiExpectedSample_ = 0;
-    double midiExpectedPpq_ = std::numeric_limits<double>::quiet_NaN();
+    double midiPreviousPpq_ = std::numeric_limits<double>::quiet_NaN();
+    double midiPreviousPpqAdvance_ = 0.0;
+    double midiPreviousBlockTempoScale_ = 0.0;
     bool midiWasPlaying_ = false;
     bool samplerWasEnabled_ = true;
     bsl::PatternScheduler patternScheduler_;

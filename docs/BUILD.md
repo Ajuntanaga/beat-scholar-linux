@@ -7,7 +7,7 @@ audio, font, OpenGL, and X11 development packages.
 On Debian or Ubuntu, the package names used by the cloud build are:
 
 ```text
-build-essential cmake ninja-build pkg-config python3-venv
+build-essential cmake ninja-build pkg-config python3-venv unzip gdb ladspa-sdk
 libasound2-dev libfontconfig1-dev libfreetype6-dev libgl1-mesa-dev libgtk-3-dev
 libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev
 libxrandr-dev libxrender-dev
@@ -16,7 +16,7 @@ libxrandr-dev libxrender-dev
 The GUI tests also use these packages:
 
 ```text
-xvfb openbox xauth xdotool x11-utils fonts-lato fonts-urw-base35
+xvfb openbox xauth xdotool x11-utils bubblewrap fonts-lato fonts-urw-base35
 ```
 
 Create a Python environment for the test helpers:
@@ -120,9 +120,11 @@ it does not migrate license files or extract audio. Keep migrated content local.
 
 The **Linux validation** workflow replaces the CPU build-and-test portion of
 Modal. It runs only through Actions → Linux validation → Run workflow in this
-repository. Before running, verify the account's remaining included
-Actions minutes and set an Actions spending limit of $0 in GitHub billing.
-The required confirmation is an operator acknowledgement, not an automated
+repository. Public repositories run on free standard runners and need no
+confirmation. For a private repository, verify the account's remaining
+included Actions minutes, set an Actions spending limit of $0 in GitHub
+billing, and tick the `free_tier_confirmed` input; the job is skipped
+otherwise. That confirmation is an operator acknowledgement, not an automated
 billing check. A timeout limits runtime; it does not guarantee a free run.
 
 The workflow uses a standard Ubuntu runner, a 60-minute job limit, two-way

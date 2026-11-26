@@ -31,6 +31,16 @@ double boundaryAtOrAfter(double position, double grid) noexcept
 
 } // namespace
 
+bool hostPpqDiscontinuous(double previous, double current,
+                         double previousAdvance, double currentAdvance) noexcept
+{
+    if (!std::isfinite(previous) || !std::isfinite(current)) return false;
+    const double advance = current - previous;
+    constexpr double tolerance = 1.0e-4;
+    return advance < std::min(previousAdvance, currentAdvance) - tolerance
+        || advance > std::max(previousAdvance, currentAdvance) + tolerance;
+}
+
 PatternScheduler::PatternScheduler(PatternId activePattern) noexcept
     : activePattern_(activePattern)
 {
@@ -103,14 +113,24 @@ std::size_t PatternScheduler::planBlock(const SchedulerTransport& transport,
     const double samplesPerQuarter = transport.sampleRate * 60.0 / transport.bpm;
     const bool hasHostPpq = std::isfinite(transport.quarterNotePosition);
     bool discontinuity = wasPlaying_ && transport.absoluteSampleStart != expectedSampleStart_;
+    // Allow integrated tempo ramps while retaining PPQ-only seek detection.
     if (!discontinuity && wasPlaying_ && hasHostPpq)
-        discontinuity = std::abs(transport.quarterNotePosition - expectedQuarterNote_) > 1.0e-4;
+        discontinuity = hostPpqDiscontinuous(previousQuarterNote_, transport.quarterNotePosition,
+            expectedQuarterNote_ - previousQuarterNote_, previousBlockTempoScale_ * transport.bpm);
     // Integrate contiguous fallback blocks at their own tempos. Recomputing
     // the entire sample timeline at today's BPM moves the musical grid.
     const double blockQuarterNote = hasHostPpq ? transport.quarterNotePosition
         : (!wasPlaying_ || discontinuity
                ? static_cast<double>(transport.absoluteSampleStart) / samplesPerQuarter
                : expectedQuarterNote_);
+    if (!std::isfinite(samplesPerQuarter) || samplesPerQuarter <= 0.0
+        || !std::isfinite(blockQuarterNote) || std::abs(blockQuarterNote) >= 1.0e12
+        || std::abs(static_cast<double>(transport.absoluteSampleStart)) >= 1.0e15)
+    {
+        wasPlaying_ = false;
+        clearTimelineState();
+        return 0;
+    }
     if (!wasPlaying_ || discontinuity)
     {
         clearTimelineState();
@@ -145,13 +165,16 @@ std::size_t PatternScheduler::planBlock(const SchedulerTransport& transport,
     for (std::size_t index = 0; index < pendingCount_; ++index)
     {
         const auto& pending = pending_[index];
-        const auto relative = static_cast<std::int64_t>(std::llround(
-            (pending.targetQuarterNote - blockQuarterNote) * samplesPerQuarter));
-        if (relative < static_cast<std::int64_t>(transport.blockSize))
+        // Compare before narrowing: an extremely slow tempo can put a
+        // pending boundary outside the representable sample timeline.
+        const double relative = std::round(
+            (pending.targetQuarterNote - blockQuarterNote) * samplesPerQuarter);
+        if (relative < static_cast<double>(transport.blockSize))
         {
             due[dueCount++] = {
-                static_cast<std::int32_t>(std::clamp<std::int64_t>(
-                    pending.atCallbackStart ? 0 : relative, 0, transport.blockSize)),
+                static_cast<std::int32_t>(std::clamp(
+                    pending.atCallbackStart ? 0.0 : relative, 0.0,
+                    static_cast<double>(transport.blockSize))),
                 pending.patternId,
                 pending.sequence
             };
@@ -208,6 +231,8 @@ std::size_t PatternScheduler::planBlock(const SchedulerTransport& transport,
     appendSegment(cursor, transport.blockSize, activePattern_, phase);
 
     expectedSampleStart_ = transport.absoluteSampleStart + transport.blockSize;
+    previousQuarterNote_ = blockQuarterNote;
+    previousBlockTempoScale_ = static_cast<double>(transport.blockSize) / (transport.sampleRate * 60.0);
     expectedQuarterNote_ = blockQuarterNote
                            + static_cast<double>(transport.blockSize) / samplesPerQuarter;
     return segmentCount;

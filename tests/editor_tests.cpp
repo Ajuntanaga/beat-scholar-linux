@@ -32,6 +32,16 @@ struct BeatScholarLinuxProcessorTestAccess
         return processor.fallbackSamplePosition_.load();
     }
 
+    static double fallbackQuarterNotePosition(BeatScholarLinuxProcessor& processor)
+    {
+        return processor.fallbackQuarterNotePosition_;
+    }
+
+    static const juce::MidiBuffer& stagedMidi(BeatScholarLinuxProcessor& processor)
+    {
+        return processor.incomingMidi_;
+    }
+
     static void prepareDistortion(BeatScholarLinuxProcessor& processor)
     {
         processor.audioEngine_.setDistortionResponse({ std::vector<float>{1.0f}, std::vector<float>{1.0f} });
@@ -1592,6 +1602,9 @@ void testDisabledRandomizerModules(const juce::File& output)
         settings.triggeringEnabled = settings.velocityEnabled = true;
         settings.triggerChance = 0.65f;
         settings.minimumVelocity = 18.0f / 127.0f;
+        // Start away from every Alt-click default so a reset is observable.
+        settings.spacing = 0.8f;
+        settings.maximumVelocity = 0.9f;
         settings.selectedPads = {0};
         settings.selectedSubdivisions = {1, 2, 4, 8};
         auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
@@ -1665,10 +1678,20 @@ void testDisabledRandomizerModules(const juce::File& output)
                 for (auto* control : BeatScholarLinuxEditorTestAccess::randomizerBody(*editor, other))
                     check(control->isEnabled() == (other <= module), "modules re-enable independently");
         }
-        auto* chance = childWithId<juce::Slider>(*editor, "random.0");
-        editor->mouseDown(visualEvent(*editor, chance->getBounds().getCentre().toFloat(),
-            juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::altModifier).getEventRelativeTo(chance));
-        check(settings.triggerChance == 0.5f, "re-enabled chance accepts Alt-click reset");
+        // Every setup value above differs from its Alt-click default, so each
+        // reset below is observable once the module is enabled again.
+        const float altDefaults[4] = {0.5f, 0.5f, 0.4f, 1.0f};
+        const float* altValues[4] = {&settings.triggerChance, &settings.spacing,
+                                     &settings.minimumVelocity, &settings.maximumVelocity};
+        for (int index = 0; index < 4; ++index)
+        {
+            auto* slider = childWithId<juce::Slider>(*editor, "random." + juce::String(index));
+            editor->mouseDown(visualEvent(*editor, slider->getBounds().getCentre().toFloat(),
+                juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::altModifier)
+                .getEventRelativeTo(slider));
+            check(std::abs(*altValues[index] - altDefaults[index]) < 1e-6f,
+                  "re-enabled randomizer slider accepts Alt-click reset");
+        }
         for (int module = 0; module < 4; ++module)
             childWithId<juce::TextButton>(*editor, "random.module." + juce::String(module))->onClick();
         childWithId<juce::TextButton>(*editor, "brush.drum")->onClick();
@@ -2928,6 +2951,26 @@ private:
         menu("Save To Menu");
         action([this] {
             auto* overlay = control<juce::Component>("random.save.overlay");
+            check(!overlay->keyPressed(juce::KeyPress(juce::KeyPress::tabKey)),
+                  "Randomizer save overlay allows normal Tab focus traversal");
+            auto* name = control<juce::TextEditor>("random.save.name");
+            name->grabKeyboardFocus();
+            name->moveKeyboardFocusToSibling(true);
+            check(!name->hasKeyboardFocus(true), "Tab traversal leaves the Randomizer name field");
+            auto* category = control<juce::ComboBox>("random.save.category");
+            const auto oldText = category->getText();
+            category->setText("A very long category name beside the dropdown arrow", juce::dontSendNotification);
+            bool foundLabel = false;
+            for (auto* child : category->getChildren())
+                if (auto* label = dynamic_cast<juce::Label*>(child))
+                {
+                    foundLabel = true;
+                    check(label->getRight() <= category->getWidth() - category->getHeight(),
+                          "Randomizer category text reserves the dropdown arrow area");
+                }
+            check(foundLabel, "Randomizer category exposes its text label");
+            saveVisual(*editor_, folder_, "save-form-long-category.png");
+            category->setText(oldText, juce::dontSendNotification);
             saveVisual(*editor_, folder_, "save-form.png");
             overlay->mouseDown(visualEvent(*editor_, {20.0f, 20.0f}).getEventRelativeTo(overlay));
             check(!overlay->isVisible(), "outside click cancels Randomizer save form");
@@ -5424,6 +5467,15 @@ void testSubdivisionDragReference(const juce::File& output)
         const juce::ModifierKeys mods(juce::ModifierKeys::leftButtonModifier
                                      | juce::ModifierKeys::commandModifier);
         auto& beat = state.patterns[0].lanes[0].beats[0];
+        for (const std::size_t slices : { 43u, 44u, 45u })
+        {
+            beat = bsl::BeatState::withSubdivision(slices, 0, 0.8f);
+            editor->mouseDown(visualEvent(*editor, start, mods));
+            editor->mouseDrag(visualEvent(*editor, start, mods));
+            editor->mouseUp(visualEvent(*editor, start, mods));
+            check(beat.slices.size() == slices && !processor->projectEditor().canUndo(),
+                  "zero-motion Ctrl-drag preserves toolbar subdivisions above 42 without history");
+        }
         beat = bsl::BeatState::withSubdivision(1, 0, 0.8f);
         editor->mouseDown(visualEvent(*editor, start, mods));
         auto move = [&](float dy) {
@@ -8331,6 +8383,50 @@ void testStandaloneTransportIgnoresDeviceClock(const juce::File& output)
     processor->releaseResources();
 }
 
+void testStandalonePausePreservesPositionAcrossTempoChange()
+{
+    auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_Standalone);
+    auto state = bsl::ProjectState::makeDefault();
+    state.global.samplerEnabled = false;
+    state.global.beatsPerMinute = 120.0;
+    state.patterns[0].lanes = { bsl::LaneState::make(4) };
+    for (auto& beat : state.patterns[0].lanes[0].beats)
+        beat = bsl::BeatState::withSubdivision(1, 0, 0.8f);
+    const auto bytes = bsl::statecodec::encode(state);
+    processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
+    processor->setRateAndBufferSizeDetails(48000, 480);
+    processor->prepareToPlay(48000, 480);
+    processor->playStandalone();
+    juce::AudioBuffer<float> audio(2, 480);
+    juce::MidiBuffer midi;
+    const auto render = [&] {
+        midi.clear();
+        processor->processBlock(audio, midi);
+    };
+    for (int block = 0; block < 25; ++block) render();
+    processor->pauseStandalone();
+    render();
+    check(std::abs(BeatScholarLinuxProcessorTestAccess::fallbackQuarterNotePosition(*processor) - 0.5) < 1e-9,
+          "standalone Pause freezes musical position at half a quarter note");
+    auto* bpm = processor->parameters().getParameter("bpm");
+    bpm->setValueNotifyingHost(bpm->convertTo0to1(60.0f));
+    render();
+    check(std::abs(BeatScholarLinuxProcessorTestAccess::fallbackQuarterNotePosition(*processor) - 0.5) < 1e-9,
+          "changing BPM while paused preserves the accumulated musical position");
+    processor->playStandalone();
+    std::vector<int> positiveOnsets;
+    for (int block = 0; block < 60; ++block)
+    {
+        render();
+        for (const auto event : midi)
+            if (event.getMessage().isNoteOn() && block * 480 + event.samplePosition > 0)
+                positiveOnsets.push_back(block * 480 + event.samplePosition);
+    }
+    check(positiveOnsets == std::vector<int>{ 24000 },
+          "standalone Resume at 60 BPM reaches the next beat after the remaining half quarter note");
+    processor->releaseResources();
+}
+
 void testHostedPauseResumeMatchesCapturedLifecycle()
 {
     struct HostClock final : juce::AudioPlayHead
@@ -9424,6 +9520,119 @@ void testShiftExportPreservesPlayingAndQueuedPatterns()
     }
 }
 
+void testStateSaveUsesExecutedMidiPatternWithoutEditor()
+{
+    struct PlayHead final : juce::AudioPlayHead
+    {
+        PositionInfo info;
+        juce::Optional<PositionInfo> getPosition() const override { return info; }
+    };
+    for (const bool queued : { false, true })
+    {
+        PlayHead clock;
+        clock.info.setIsPlaying(true);
+        clock.info.setBpm(120.0);
+        auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
+        auto state = bsl::ProjectState::makeDefault();
+        state.global.samplerEnabled = false;
+        state.global.quantization = queued ? std::optional { bsl::PatternQuantization::quarter } : std::nullopt;
+        state.patterns.resize(2, state.patterns.front());
+        for (std::size_t i = 0; i < state.patterns.size(); ++i)
+        {
+            state.patterns[i].triggerNote = static_cast<std::uint8_t>(12 + i);
+            state.patterns[i].quantization = bsl::PatternQuantization::off;
+            state.patterns[i].lanes = { bsl::LaneState::make(4) };
+        }
+        const auto bytes = bsl::statecodec::encode(state);
+        processor->setStateInformation(bytes.getData(), static_cast<int>(bytes.getSize()));
+        processor->setRateAndBufferSizeDetails(48000, 1024);
+        processor->prepareToPlay(48000, 1024);
+        processor->setPlayHead(&clock);
+        juce::AudioBuffer<float> audio(2, 1024);
+        juce::MidiBuffer midi;
+        for (int block = 0; block < 25; ++block)
+        {
+            clock.info.setTimeInSamples(block * 1024);
+            clock.info.setPpqPosition(block * 1024 / 24000.0);
+            midi.clear();
+            if (block == (queued ? 1 : 0))
+                midi.addEvent(juce::MidiMessage::noteOn(1, 13, 1.0f), 100);
+            processor->processBlock(audio, midi);
+            juce::MemoryBlock saved;
+            processor->getStateInformation(saved);
+            bsl::ProjectState restored;
+            check(bsl::statecodec::decode(saved.getData(), saved.getSize(), restored),
+                  "state saved without an editor decodes");
+            const std::size_t expected = queued && block < 23 ? 0 : 1;
+            check(restored.activePattern == expected,
+                  "host state saves the executed MIDI pattern, excluding unexecuted queued triggers");
+        }
+        processor->setPlayHead(nullptr);
+        processor->releaseResources();
+    }
+    auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
+    processor->publishProjectStateIfNeeded();
+    check(processor->projectEditor().duplicatePattern(0), "duplicate selects a new UI pattern");
+    juce::MemoryBlock saved;
+    processor->getStateInformation(saved); // No timer publication between edit and host save.
+    bsl::ProjectState restored;
+    check(bsl::statecodec::decode(saved.getData(), saved.getSize(), restored)
+              && restored.activePattern == processor->projectState().activePattern,
+          "save preserves a newer unpublished UI pattern selection");
+}
+
+void testHostedTempoRampDoesNotResetPlaybackActivity()
+{
+    struct PlayHead final : juce::AudioPlayHead
+    {
+        PositionInfo info;
+        juce::Optional<PositionInfo> getPosition() const override { return info; }
+    } clock;
+    auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
+    processor->projectState().patterns[0].lanes = { bsl::LaneState::make(4) };
+    processor->projectState().patterns[0].lanes[0].beats[0] = bsl::BeatState::withSubdivision(1, 0, 0.8f);
+    processor->markProjectDirty();
+    processor->publishProjectStateIfNeeded();
+    processor->setRateAndBufferSizeDetails(48000, 1024);
+    processor->prepareToPlay(48000, 1024);
+    processor->setPlayHead(&clock);
+    clock.info.setIsPlaying(true);
+    clock.info.setBpm(120.0);
+    clock.info.setTimeInSamples(0);
+    clock.info.setPpqPosition(0.0);
+    juce::AudioBuffer<float> audio(2, 1024);
+    juce::MidiBuffer midi;
+    processor->processBlock(audio, midi);
+    const auto epoch = processor->playbackActivityEpoch();
+    clock.info.setBpm(144.0);
+    clock.info.setTimeInSamples(1024);
+    clock.info.setPpqPosition(0.05); // Integrated ramp, not previous block's fixed BPM.
+    midi.clear();
+    processor->processBlock(audio, midi);
+    check(processor->playbackActivityEpoch() == epoch,
+          "contiguous host tempo ramp does not reset held playback lighting or MIDI gates");
+    clock.info.setTimeInSamples(2048);
+    clock.info.setPpqPosition(0.0);
+    midi.clear();
+    processor->processBlock(audio, midi);
+    check(processor->playbackActivityEpoch() > epoch, "backward PPQ still identifies a transport discontinuity");
+    // Hosts may provide PPQ without any sample position. A large forward
+    // seek still has to expire lighting and emit held-note termination.
+    const auto beforeSeek = processor->playbackActivityEpoch();
+    clock.info.setTimeInSamples(juce::nullopt);
+    clock.info.setPpqPosition(8.0);
+    midi.clear();
+    processor->processBlock(audio, midi);
+    check(processor->playbackActivityEpoch() > beforeSeek,
+          "forward PPQ-only seek resets the playback epoch");
+    bool released = false;
+    for (const auto event : midi)
+        released |= event.getMessage().isNoteOff() && event.samplePosition == 0;
+    check(released, "forward PPQ-only seek releases held sequencer notes at block start");
+    processor->setPlayHead(nullptr);
+    processor->releaseResources();
+}
+
 void testDirectPatternClickOverridesMidiSwitch()
 {
     struct PlayHead final : juce::AudioPlayHead
@@ -9778,11 +9987,29 @@ void testIncomingMidiBeyondFormerCapacity()
         processor->prepareToPlay(48000, 512);
         juce::AudioBuffer<float> buffer(2, 512);
         juce::MidiBuffer midi;
+        midi.ensureSize(128 * 1024);
         if (dense)
             for (int i = 0; i < 8192; ++i)
                 midi.addEvent(juce::MidiMessage::noteOff(1, 36), 0);
+        const std::array<juce::uint8, 5> sysex { 0x7d, 1, 2, 3, 4 };
+        if (!dense)
+            midi.addEvent(juce::MidiMessage::createSysExMessage(sysex.data(), sysex.size()), 0);
         midi.addEvent(juce::MidiMessage::noteOn(1, 36, 0.7f), 64);
+        const auto* outputStorage = midi.data.getRawDataPointer();
+        const auto* inputStorage = BeatScholarLinuxProcessorTestAccess::stagedMidi(*processor).data.getRawDataPointer();
         processor->processBlock(buffer, midi);
+        const auto& staged = BeatScholarLinuxProcessorTestAccess::stagedMidi(*processor);
+        check(midi.data.getRawDataPointer() == outputStorage,
+              "MIDI processing retains the host's reserved output storage");
+        check(staged.data.getRawDataPointer() == inputStorage,
+              "dense short MIDI input fits the preallocated staging buffer");
+        if (!dense)
+        {
+            const auto message = (*staged.begin()).getMessage();
+            check(message.isSysEx() && message.getSysExDataSize() == static_cast<int>(sysex.size())
+                      && std::equal(sysex.begin(), sysex.end(), message.getSysExData()),
+                  "input staging preserves complete variable-length MIDI payloads");
+        }
         return std::vector<float>(buffer.getReadPointer(0), buffer.getReadPointer(0) + 512);
     };
     check(render(true) == render(false), "incoming MIDI after 8192 events still reaches sampler");
@@ -10613,6 +10840,8 @@ int main(int argc, char** argv)
     testModifiedArrangementContextMenusDoNotEdit(output);
     testSequencerMidiNotesHaveFiniteLifetimes();
     testStandaloneTransportIgnoresDeviceClock(output);
+    testStandalonePausePreservesPositionAcrossTempoChange();
+    testHostedTempoRampDoesNotResetPlaybackActivity();
     testHostedPauseResumeMatchesCapturedLifecycle();
     testHostedTransportRemainsHostControlled(output);
     testReferenceMapStripColours();
@@ -10626,6 +10855,7 @@ int main(int argc, char** argv)
     testStandaloneRestoresMultiOutputAsStereo();
     testQueuedPatternsSurviveStructuralEdits();
     testDirectPatternClickOverridesMidiSwitch();
+    testStateSaveUsesExecutedMidiPatternWithoutEditor();
     testOutgoingMidiReleasesOnTransportChanges();
     testPadResonanceAltReset();
     testMasterResonanceAltReset();

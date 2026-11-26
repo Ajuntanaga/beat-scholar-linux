@@ -1633,7 +1633,7 @@ void BeatScholarLookAndFeel::positionComboBoxText(juce::ComboBox& box, juce::Lab
 {
     if (box.getComponentID() == "random.save.category")
     {
-        label.setBounds(0, 0, box.getWidth(), box.getHeight());
+        label.setBounds(0, 0, std::max(0, box.getWidth() - box.getHeight()), box.getHeight());
         label.setJustificationType(juce::Justification::centred);
         label.setFont(font(static_cast<float>(box.getHeight()) * 0.65f));
         return;

@@ -11,6 +11,11 @@
 
 namespace bsl {
 
+// A monotonic tempo ramp advances between the previous/current BPM estimates.
+// A PPQ jump outside that range is a seek even without host sample positions.
+[[nodiscard]] bool hostPpqDiscontinuous(double previous, double current,
+    double previousAdvance, double currentAdvance) noexcept;
+
 struct SchedulerTransport
 {
     double sampleRate = 48000.0;
@@ -89,6 +94,8 @@ private:
     std::uint64_t nextSequence_ = 0;
     std::int64_t expectedSampleStart_ = 0;
     double expectedQuarterNote_ = 0.0;
+    double previousQuarterNote_ = 0.0;
+    double previousBlockTempoScale_ = 0.0;
     double patternOriginQuarterNotes_ = 0.0;
     bool wasPlaying_ = false;
 };
