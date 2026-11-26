@@ -26,7 +26,7 @@ juce::Font font(float height, bool heavy)
 void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad,
                          juce::Colour tint, float stroke, bool kitTile)
 {
-    if (!kitTile && pad == 2)
+    if (!kitTile && (pad == 1 || pad == 2))
     {
         // The large snare has full-height tension rods behind the short lugs.
         // Original 1.6.2 captures also separate the three strike arcs vertically.
@@ -40,6 +40,23 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         };
         tint = juce::Colour(0xffd7dbf6);
         g.setColour(tint);
+        if (pad == 1)
+        {
+            const auto shell = juce::Rectangle<float>(point(469.5f,628.5f),point(502.5f,640.0f));
+            g.drawRoundedRectangle(shell,0.6f*unit,0.75f*unit);
+            line(469.5f,630.0f,502.5f,630.0f,0.55f);
+            line(469.5f,638.5f,502.5f,638.5f,0.55f);
+            for (const float x : {473.0f,482.0f,490.5f,499.5f})
+            {
+                line(x,630.0f,x,638.5f,0.55f);
+                line(x,633.0f,x,636.0f,1.15f);
+            }
+            line(482.5f,625.0f,505.5f,617.5f,1.05f);
+            line(474.0f,620.0f,478.5f,622.5f,0.65f);
+            line(478.5f,614.5f,480.0f,618.8f,0.65f);
+            line(484.8f,615.5f,484.0f,620.0f,0.65f);
+            return;
+        }
         const auto shell = juce::Rectangle<float>(point(469.5f,636.5f),point(505.5f,649.5f));
         g.drawRoundedRectangle(shell,0.6f*unit,0.75f*unit);
         line(469.5f,638.5f,505.5f,638.5f,0.55f);
@@ -63,6 +80,55 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         arc(630.0f,4.7f,4.5f);
         return;
     }
+    if (!kitTile && pad == 3)
+    {
+        // The large clap has a tilted palm and separated finger valleys;
+        // scaling the compact kit drawing flattens the heel of the hand.
+        const float unit = std::min(icon.getWidth(), icon.getHeight()) / 42.0f;
+        const auto point = [&icon, unit](float x, float y) {
+            return icon.getCentre() + juce::Point<float>(x - 487.0f, y - 628.0f) * unit;
+        };
+        g.setColour(juce::Colour(0xffd7dbf6));
+        juce::Path hand;
+        hand.startNewSubPath(point(482.0f,633.0f));
+        hand.lineTo(point(493.0f,623.9f));
+        hand.quadraticTo(point(495.6f,622.0f),point(496.0f,625.5f));
+        hand.quadraticTo(point(496.3f,626.5f),point(495.4f,627.8f));
+        hand.lineTo(point(486.5f,634.7f));
+        hand.lineTo(point(497.2f,626.7f));
+        hand.quadraticTo(point(499.5f,625.8f),point(499.0f,629.2f));
+        hand.lineTo(point(489.4f,637.0f));
+        hand.lineTo(point(499.0f,630.4f));
+        hand.quadraticTo(point(500.6f,630.3f),point(500.6f,632.5f));
+        hand.lineTo(point(491.4f,640.6f));
+        hand.lineTo(point(496.5f,637.3f));
+        hand.quadraticTo(point(498.0f,637.0f),point(498.3f,638.8f));
+        hand.lineTo(point(489.3f,648.3f));
+        hand.cubicTo(point(484.0f,653.7f),point(479.0f,653.5f),point(474.7f,648.5f));
+        hand.cubicTo(point(471.5f,645.0f),point(472.0f,641.0f),point(473.2f,637.5f));
+        hand.lineTo(point(478.4f,629.0f));
+        hand.quadraticTo(point(479.3f,627.3f),point(481.6f,628.4f));
+        hand.quadraticTo(point(483.7f,629.5f),point(482.0f,632.5f));
+        hand.lineTo(point(480.5f,635.5f));
+        g.strokePath(hand,juce::PathStrokeType(0.75f*unit,
+                     juce::PathStrokeType::curved,juce::PathStrokeType::rounded));
+        juce::Path rearHand;
+        rearHand.startNewSubPath(point(474.0f,647.0f));
+        rearHand.cubicTo(point(469.0f,645.7f),point(469.5f,640.0f),point(471.0f,635.0f));
+        rearHand.lineTo(point(477.0f,625.6f));
+        rearHand.quadraticTo(point(479.2f,624.0f),point(480.0f,626.5f));
+        rearHand.lineTo(point(480.5f,628.4f));
+        rearHand.startNewSubPath(point(482.5f,628.5f));
+        rearHand.lineTo(point(488.0f,622.8f));
+        rearHand.quadraticTo(point(489.5f,621.4f),point(491.0f,624.0f));
+        rearHand.lineTo(point(491.5f,625.5f));
+        g.strokePath(rearHand,juce::PathStrokeType(0.65f*unit,
+                     juce::PathStrokeType::curved,juce::PathStrokeType::rounded));
+        g.drawLine({point(499.0f,622.3f),point(500.3f,618.4f)},0.65f*unit);
+        g.drawLine({point(501.0f,623.3f),point(503.5f,620.7f)},0.65f*unit);
+        g.drawLine({point(502.0f,625.0f),point(506.0f,624.2f)},0.65f*unit);
+        return;
+    }
     // Large sample drawings have their own proportions and baseline. Measured
     // from original 1.6.2 at both 1280 and 960; kit tile transforms stay separate.
     if (!kitTile && pad != 0)
@@ -72,8 +138,6 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         float size = 1.0f, dx = 0.0f, dy = 0.0f;
         switch (pad)
         {
-            case 1: size = 0.86f; dx = -0.7f; dy = -2.6f; stroke = 1.05f * unit; break;
-            case 3: size = 0.90f; dx = 0.4f; dy = 7.5f; stroke = 1.10f * unit; break;
             case 12: size = 0.96f; dx = 0.8f; dy = 6.6f; break;
             case 13: size = 0.90f; dx = 0.2f; dy = 9.0f; stroke = 1.20f * unit; break;
             case 14: size = 0.78f; dx = 2.5f; dy = 8.5f; stroke = 1.20f * unit; break;
