@@ -26,6 +26,43 @@ juce::Font font(float height, bool heavy)
 void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad,
                          juce::Colour tint, float stroke, bool kitTile)
 {
+    if (!kitTile && pad == 2)
+    {
+        // The large snare has full-height tension rods behind the short lugs.
+        // Original 1.6.2 captures also separate the three strike arcs vertically.
+        const float unit = std::min(icon.getWidth(), icon.getHeight()) / 42.0f;
+        const auto point = [&icon, unit](float x, float y) {
+            return icon.getCentre() + juce::Point<float>(x - 487.0f, y - 628.0f) * unit;
+        };
+        const auto line = [&g, &point, unit](float x1, float y1, float x2, float y2,
+                                           float width) {
+            g.drawLine({point(x1,y1),point(x2,y2)},width*unit);
+        };
+        tint = juce::Colour(0xffd7dbf6);
+        g.setColour(tint);
+        const auto shell = juce::Rectangle<float>(point(469.5f,636.5f),point(505.5f,649.5f));
+        g.drawRoundedRectangle(shell,0.6f*unit,0.75f*unit);
+        line(469.5f,638.5f,505.5f,638.5f,0.55f);
+        line(469.5f,648.5f,505.5f,648.5f,0.55f);
+        for (const float x : {473.5f,482.5f,492.0f,501.5f})
+        {
+            line(x,638.5f,x,648.5f,0.55f);
+            line(x,641.5f,x,645.5f,1.2f);
+        }
+        line(473.8f,632.7f,502.0f,632.3f,0.9f);
+        const auto arc = [&g, &point, unit](float y, float rx, float ry) {
+            const auto centre = point(487.0f,y);
+            juce::Path wave;
+            wave.addCentredArc(centre.x,centre.y,rx*unit,ry*unit,0,
+                -juce::MathConstants<float>::pi*0.25f,
+                 juce::MathConstants<float>::pi*0.25f,true);
+            g.strokePath(wave,juce::PathStrokeType(0.85f*unit));
+        };
+        arc(628.0f,12.7f,9.5f);
+        arc(629.3f,8.7f,7.0f);
+        arc(630.0f,4.7f,4.5f);
+        return;
+    }
     // Large sample drawings have their own proportions and baseline. Measured
     // from original 1.6.2 at both 1280 and 960; kit tile transforms stay separate.
     if (!kitTile && pad != 0)
@@ -36,7 +73,6 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         switch (pad)
         {
             case 1: size = 0.86f; dx = -0.7f; dy = -2.6f; stroke = 1.05f * unit; break;
-            case 2: size = 0.90f; dx = 0.8f; dy = 7.2f; stroke = 1.40f * unit; break;
             case 3: size = 0.90f; dx = 0.4f; dy = 7.5f; stroke = 1.10f * unit; break;
             case 12: size = 0.96f; dx = 0.8f; dy = 6.6f; break;
             case 13: size = 0.90f; dx = 0.2f; dy = 9.0f; stroke = 1.20f * unit; break;
@@ -155,10 +191,10 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         const auto line = [&g, &point, unit](float x1, float y1, float x2, float y2) {
             g.drawLine({point(x1,y1),point(x2,y2)},0.85f*unit);
         };
-        const auto tom = [&g, &box, unit](float x, float y, float w, float h,
-                                        float angle, bool selected, bool clearRim) {
+        const auto tom = [&g, &box, unit, tint](float x, float y, float w, float h,
+                                        float angle, bool selected, bool rack) {
             const auto shell = box(x,y,w,h);
-            const float rimHeight = (clearRim ? 4.8f : 2.4f) * unit;
+            const float rimHeight = (rack ? 6.2f : 2.4f) * unit;
             const auto head = shell.withHeight(rimHeight);
             juce::Graphics::ScopedSaveState saved(g);
             g.addTransform(juce::AffineTransform::rotation(angle,
@@ -176,14 +212,13 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
                     head.getWidth()*0.5f,head.getHeight()*0.5f,0,
                     juce::MathConstants<float>::halfPi,-juce::MathConstants<float>::halfPi);
                 body.closeSubPath();
-                if (clearRim)
                 {
                     juce::Path rim,gap;
                     rim.addCentredArc(head.getCentreX(),head.getCentreY(),
                         head.getWidth()*0.5f,head.getHeight()*0.5f,0,
                         juce::MathConstants<float>::pi*0.60f,
                         juce::MathConstants<float>::pi*1.40f,true);
-                    juce::PathStrokeType(0.85f*unit).createStrokedPath(gap,rim);
+                    juce::PathStrokeType(0.65f*unit).createStrokedPath(gap,rim);
                     body.setUsingNonZeroWinding(false);
                     body.addPath(gap);
                 }
@@ -192,24 +227,27 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
             else
             {
                 g.strokePath(body,juce::PathStrokeType(0.85f*unit));
+                if (!rack)
+                    g.setColour(tint.withMultipliedAlpha(0.55f));
                 g.drawEllipse(head,0.85f*unit);
             }
         };
         // The large kit has two tilted rack toms, a dim bass drum and
-        // independent floor-tom legs. Only selected rack toms have a rim gap.
+        // independent floor-tom legs. Selected heads retain the front rim gap.
         g.setColour(tint.withAlpha(0.50f));
         line(481,626.5f,485.7f,626.5f);
         line(483.5f,626.5f,483.5f,632.5f);
-        g.drawEllipse(box(472.4f,632.5f,18.2f,17.5f),0.85f*unit);
+        g.drawEllipse(box(472.2f,632.3f,18.5f,18.5f),0.85f*unit);
         line(473.6f,646.7f,471.4f,650.5f);
         line(489.0f,646.7f,491.2f,650.5f);
         g.setColour(tint);
-        tom(466.4f,619.7f,15.0f,9.8f,0.16f,pad==9,true);
-        tom(485.4f,620.4f,12.8f,9.2f,-0.16f,pad==10,true);
-        tom(494,633.8f,14.4f,14.7f,0,pad==11,false);
-        line(494.5f,646.2f,494.5f,650.5f);
-        line(508,646.2f,508,650.5f);
-        line(498.5f,647.8f,498.5f,649.5f);
+        tom(466.6f,619.8f,14.0f,11.0f,0.16f,pad==9,true);
+        tom(483.7f,620.1f,14.0f,11.0f,-0.12f,pad==10,true);
+        tom(493.7f,633.5f,15.0f,12.8f,0,pad==11,false);
+        g.setColour(tint);
+        line(494.5f,645.7f,494.5f,650.0f);
+        line(508,645.7f,508,650.0f);
+        line(498.5f,646.2f,498.5f,648.0f);
         return;
     }
     if (pad >= 9 && pad <= 12)
