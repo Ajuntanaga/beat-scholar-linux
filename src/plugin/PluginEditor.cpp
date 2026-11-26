@@ -2160,15 +2160,12 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
         }
         else
         {
-            auto factoryGlyph = sampleGlyph;
-            if (state.ui.selectedPad == 0)
-            {
-                // Keep the measured Kick contour on fractional coordinates
-                // when scaled; integer component bounds shift it at 960px.
-                factoryGlyph = { (getWidth() - 1280.0f * scale) * 0.5f + 461.0f * scale,
-                                 (getHeight() - 720.0f * scale) * 0.5f + 607.0f * scale,
-                                 52.0f * scale, 42.0f * scale };
-            }
+            // Keep measured sample contours on fractional coordinates when
+            // scaled; integer component bounds shift them at 960px.
+            const juce::Rectangle<float> factoryGlyph {
+                (getWidth() - 1280.0f * scale) * 0.5f + 461.0f * scale,
+                (getHeight() - 720.0f * scale) * 0.5f + 607.0f * scale,
+                52.0f * scale, 42.0f * scale };
             bsl::ui::drawInstrumentGlyph(graphics, factoryGlyph, state.ui.selectedPad,
                 juce::Colour(lookAndFeel_.palette().text).withAlpha(0.90f),
                 std::max(1.4f, 1.7f * scale));

@@ -6865,6 +6865,29 @@ void testOriginalZoomGeometry(const juce::File& output)
     }
 }
 
+void captureFactoryGlyphReference(const juce::File& output)
+{
+    for (const auto wrapper : { juce::AudioProcessor::wrapperType_Standalone,
+                               juce::AudioProcessor::wrapperType_VST3 })
+        for (const int width : { 960, 1280 })
+            for (int pad = 0; pad < 16; ++pad)
+            {
+                auto processor = makeProcessorForWrapper(wrapper);
+                processor->projectState() = bsl::ProjectState::makeMainInit();
+                processor->projectState().ui.selectedPad = pad;
+                BeatScholarLinuxEditor editor(*processor);
+                editor.setSize(width, width * 720 / 1280);
+                auto* button = childWithId<juce::TextButton>(editor, "pad." + juce::String(pad));
+                check(button != nullptr && button->getToggleState(),
+                      "factory glyph capture selects its requested pad");
+                const auto name = juce::String(wrapper == juce::AudioProcessor::wrapperType_Standalone
+                                                   ? "standalone-" : "vst3-")
+                                + juce::String(width) + "-pad-"
+                                + juce::String(pad).paddedLeft('0', 2) + ".png";
+                saveVisual(editor, output, name.toRawUTF8());
+            }
+}
+
 void testOriginalLowerPanelFrames(const juce::File& output)
 {
     // Original 1.6.2 captures 18-horizontal-min and 23-resize-border in
@@ -10407,6 +10430,12 @@ int main(int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI initialiser;
     const juce::File output(argc > 1 ? argv[1] : "/tmp/beat-scholar-editor-tests");
     check(output.createDirectory().wasOk(), "create screenshot directory");
+    if (argc > 2 && juce::String(argv[2]) == "--factory-glyph-reference")
+    {
+        captureFactoryGlyphReference(output);
+        std::cout << "Factory glyph reference failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
     if (argc > 2 && juce::String(argv[2]) == "--lower-panel-reference")
     {
         testOriginalLowerPanelFrames(output.getChildFile("lower-panel"));

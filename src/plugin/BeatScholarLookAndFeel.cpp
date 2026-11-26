@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <initializer_list>
 
 namespace bsl::ui {
 
@@ -25,7 +26,192 @@ juce::Font font(float height, bool heavy)
 void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad,
                          juce::Colour tint, float stroke, bool kitTile)
 {
+    // Large sample drawings have their own proportions and baseline. Measured
+    // from original 1.6.2 at both 1280 and 960; kit tile transforms stay separate.
+    if (!kitTile && pad != 0)
+    {
+        const float unit = std::min(icon.getWidth(), icon.getHeight()) / 42.0f;
+        tint = juce::Colour(0xffd7dbf6);
+        float size = 1.0f, dx = 0.0f, dy = 0.0f;
+        switch (pad)
+        {
+            case 1: size = 0.86f; dx = -0.7f; dy = -2.6f; stroke = 1.05f * unit; break;
+            case 2: size = 0.90f; dx = 0.8f; dy = 7.2f; stroke = 1.40f * unit; break;
+            case 3: size = 0.90f; dx = 0.4f; dy = 7.5f; stroke = 1.10f * unit; break;
+            case 12: size = 0.96f; dx = 0.8f; dy = 6.6f; break;
+            case 13: size = 0.90f; dx = 0.2f; dy = 9.0f; stroke = 1.20f * unit; break;
+            case 14: size = 0.78f; dx = 2.5f; dy = 8.5f; stroke = 1.20f * unit; break;
+            case 15: size = 0.88f; dx = 0.3f; dy = 9.0f; stroke = 1.35f * unit;
+                     tint = tint.withAlpha(0.80f); break;
+            default: break;
+        }
+        icon = icon.withSizeKeepingCentre(icon.getWidth() * size, icon.getHeight() * size)
+                   .translated(dx * unit, dy * unit);
+    }
     g.setColour(tint);
+    if (!kitTile && pad >= 4 && pad <= 8)
+    {
+        const float unit = std::min(icon.getWidth(), icon.getHeight()) / 42.0f;
+        const auto point = [&icon, unit](float x, float y) {
+            return icon.getCentre() + juce::Point<float>(x - 487.0f, y - 628.0f) * unit;
+        };
+        const auto polygon = [&g, &point](std::initializer_list<juce::Point<float>> vertices) {
+            juce::Path path;
+            bool first = true;
+            for (const auto vertex : vertices)
+            {
+                if (first) path.startNewSubPath(point(vertex.x, vertex.y));
+                else path.lineTo(point(vertex.x, vertex.y));
+                first = false;
+            }
+            path.closeSubPath();
+            g.fillPath(path);
+        };
+        const auto line = [&g, &point, unit](float x1, float y1, float x2, float y2, float width) {
+            g.drawLine({ point(x1, y1), point(x2, y2) }, width * unit);
+        };
+        // Shallow shaded hi-hats and independently tilted ride/crash cymbals.
+        // Their stand lengths are not derived from the disc width.
+        if (pad == 4)
+        {
+            polygon({ {469,630.6f}, {484,626.0f}, {487.8f,625.3f},
+                      {491.5f,626.0f}, {506.5f,630.6f} });
+            g.setColour(tint.withAlpha(0.70f));
+            polygon({ {469,632.0f}, {487.8f,635.0f}, {506.5f,632.0f} });
+            g.setColour(tint.withAlpha(0.55f));
+            line(487.8f,634.5f,487.8f,651.0f,1.6f);
+            g.setColour(tint.withAlpha(0.70f));
+            line(487.8f,621.5f,487.8f,625.5f,1.3f);
+        }
+        else if (pad == 5)
+        {
+            polygon({ {468,630.5f}, {483,626.6f}, {488.2f,625.4f},
+                      {492,627.2f}, {507.8f,632.5f} });
+            polygon({ {469,633.8f}, {488.2f,634.0f}, {506.8f,633.0f},
+                      {488.2f,636.8f} });
+            line(488.2f,621.3f,488.2f,651.0f,0.9f);
+            g.setColour(tint.withAlpha(0.72f));
+            for (const auto offset : { juce::Point<float>(460.0f,626.0f),
+                                       juce::Point<float>(507.5f,637.3f) })
+            {
+                juce::Path motion;
+                motion.startNewSubPath(point(offset.x,offset.y));
+                motion.lineTo(point(offset.x+1.5f,offset.y+2.0f));
+                motion.lineTo(point(offset.x+4.8f,offset.y-0.2f));
+                motion.lineTo(point(offset.x+7.8f,offset.y+0.8f));
+                g.strokePath(motion,juce::PathStrokeType(0.9f*unit));
+                motion.clear();
+                motion.startNewSubPath(point(offset.x+6.1f,offset.y-6.1f));
+                motion.lineTo(point(offset.x+6.5f,offset.y-2.9f));
+                motion.lineTo(point(offset.x+9.5f,offset.y-2.5f));
+                motion.lineTo(point(offset.x+9.8f,offset.y+0.5f));
+                // The second pair is inverted around the opposite disc edge.
+                if (offset.x > 500.0f)
+                    motion.applyTransform(juce::AffineTransform::rotation(
+                        juce::MathConstants<float>::pi, point(offset.x+4.0f,offset.y).x,
+                        point(offset.x+4.0f,offset.y).y));
+                g.strokePath(motion,juce::PathStrokeType(0.9f*unit));
+            }
+        }
+        else if (pad == 6)
+        {
+            polygon({ {463.6f,635.3f}, {483.5f,629.1f}, {487.6f,628.5f},
+                      {491.8f,629.1f}, {512.0f,631.1f} });
+            line(487.6f,621.0f,487.6f,651.0f,0.9f);
+            g.fillEllipse(juce::Rectangle<float>(2.4f*unit,2.4f*unit)
+                              .withCentre(point(487.6f,625.7f)));
+        }
+        else if (pad == 7)
+        {
+            polygon({ {462.6f,629.1f}, {483.4f,626.3f}, {487.9f,623.6f},
+                      {491.0f,626.4f}, {513.0f,635.7f} });
+            line(487.9f,621.0f,487.9f,643.5f,1.5f);
+            g.fillEllipse(juce::Rectangle<float>(4.3f*unit,4.3f*unit)
+                              .withCentre(point(488.0f,644.0f)));
+            line(488.0f,644.0f,481.8f,655.0f,1.0f);
+            line(489.5f,644.0f,492.2f,644.0f,1.0f);
+            line(492.2f,641.5f,492.2f,646.5f,1.0f);
+        }
+        else
+        {
+            polygon({ {468.0f,627.2f}, {485.5f,627.2f}, {488.5f,626.8f},
+                      {491.3f,627.8f}, {508.0f,635.9f} });
+            line(488.5f,619.5f,488.5f,649.5f,0.9f);
+            g.fillEllipse(juce::Rectangle<float>(2.3f*unit,2.3f*unit)
+                              .withCentre(point(488.5f,624.7f)));
+        }
+        return;
+    }
+    if (!kitTile && pad >= 9 && pad <= 11)
+    {
+        const float unit = std::min(icon.getWidth(), icon.getHeight()) / 42.0f;
+        const auto point = [&icon, unit](float x, float y) {
+            return icon.getCentre() + juce::Point<float>(x - 487.0f, y - 628.0f) * unit;
+        };
+        const auto box = [&point, unit](float x, float y, float w, float h) {
+            const auto origin = point(x,y);
+            return juce::Rectangle<float>(origin.x,origin.y,w*unit,h*unit);
+        };
+        const auto line = [&g, &point, unit](float x1, float y1, float x2, float y2) {
+            g.drawLine({point(x1,y1),point(x2,y2)},0.85f*unit);
+        };
+        const auto tom = [&g, &box, unit](float x, float y, float w, float h,
+                                        float angle, bool selected, bool clearRim) {
+            const auto shell = box(x,y,w,h);
+            const float rimHeight = (clearRim ? 4.8f : 2.4f) * unit;
+            const auto head = shell.withHeight(rimHeight);
+            juce::Graphics::ScopedSaveState saved(g);
+            g.addTransform(juce::AffineTransform::rotation(angle,
+                shell.getCentreX(),shell.getCentreY()));
+            juce::Path body;
+            body.startNewSubPath(shell.getX(),head.getCentreY());
+            body.lineTo(shell.getX(),shell.getBottom()-rimHeight*0.5f);
+            body.cubicTo(shell.getX(),shell.getBottom()+rimHeight*0.15f,
+                         shell.getRight(),shell.getBottom()+rimHeight*0.15f,
+                         shell.getRight(),shell.getBottom()-rimHeight*0.5f);
+            body.lineTo(shell.getRight(),head.getCentreY());
+            if (selected)
+            {
+                body.addCentredArc(head.getCentreX(),head.getCentreY(),
+                    head.getWidth()*0.5f,head.getHeight()*0.5f,0,
+                    juce::MathConstants<float>::halfPi,-juce::MathConstants<float>::halfPi);
+                body.closeSubPath();
+                if (clearRim)
+                {
+                    juce::Path rim,gap;
+                    rim.addCentredArc(head.getCentreX(),head.getCentreY(),
+                        head.getWidth()*0.5f,head.getHeight()*0.5f,0,
+                        juce::MathConstants<float>::pi*0.60f,
+                        juce::MathConstants<float>::pi*1.40f,true);
+                    juce::PathStrokeType(0.85f*unit).createStrokedPath(gap,rim);
+                    body.setUsingNonZeroWinding(false);
+                    body.addPath(gap);
+                }
+                g.fillPath(body);
+            }
+            else
+            {
+                g.strokePath(body,juce::PathStrokeType(0.85f*unit));
+                g.drawEllipse(head,0.85f*unit);
+            }
+        };
+        // The large kit has two tilted rack toms, a dim bass drum and
+        // independent floor-tom legs. Only selected rack toms have a rim gap.
+        g.setColour(tint.withAlpha(0.50f));
+        line(481,626.5f,485.7f,626.5f);
+        line(483.5f,626.5f,483.5f,632.5f);
+        g.drawEllipse(box(472.4f,632.5f,18.2f,17.5f),0.85f*unit);
+        line(473.6f,646.7f,471.4f,650.5f);
+        line(489.0f,646.7f,491.2f,650.5f);
+        g.setColour(tint);
+        tom(466.4f,619.7f,15.0f,9.8f,0.16f,pad==9,true);
+        tom(485.4f,620.4f,12.8f,9.2f,-0.16f,pad==10,true);
+        tom(494,633.8f,14.4f,14.7f,0,pad==11,false);
+        line(494.5f,646.2f,494.5f,650.5f);
+        line(508,646.2f,508,650.5f);
+        line(498.5f,647.8f,498.5f,649.5f);
+        return;
+    }
     if (pad >= 9 && pad <= 12)
     {
         const float heightRatio = pad == 12 ? 1.0f : 0.85f;
@@ -43,6 +229,15 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         const float lineWidth = stroke * 0.65f;
         const auto shell = juce::Rectangle<float>(point(0.03f, 0.59f), point(0.97f, 0.91f));
         g.drawRoundedRectangle(shell, width * 0.025f, lineWidth);
+        if (!kitTile)
+        {
+            const float rimInset = width * 0.045f;
+            const float rimStroke = width * (sticks ? 0.011f : 0.022f);
+            g.drawLine(shell.getX(),shell.getY()+rimInset,
+                       shell.getRight(),shell.getY()+rimInset,rimStroke);
+            g.drawLine(shell.getX(),shell.getBottom()-rimInset,
+                       shell.getRight(),shell.getBottom()-rimInset,rimStroke);
+        }
         for (const float x : { 0.12f, 0.37f, 0.63f, 0.88f })
             g.drawLine({ point(x, 0.69f), point(x, 0.82f) }, stroke);
         if (sticks)
@@ -54,12 +249,12 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         }
         else
         {
-            const float strikeWidth = kitTile ? stroke * 0.48f : lineWidth;
+            const float strikeWidth = stroke * (kitTile ? 0.48f : 0.65f);
             for (const float radius : { 0.12f, 0.20f, 0.28f })
             {
                 juce::Path wave;
-                wave.addCentredArc(point(0.5f, 0.39f).x, point(0.5f, 0.39f).y,
-                                   width * radius, width * radius, 0.0f,
+                wave.addCentredArc(point(0.5f, 0.39f).x, point(0.5f, kitTile ? 0.39f : 0.32f).y,
+                                   width * radius, width * radius * (kitTile ? 1.0f : 0.90f), 0.0f,
                                    -juce::MathConstants<float>::pi * 0.30f,
                                    juce::MathConstants<float>::pi * 0.30f, true);
                 g.strokePath(wave, juce::PathStrokeType(strikeWidth));
@@ -362,13 +557,13 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
                 {
                     juce::Graphics::ScopedSaveState saved(g);
                     g.addTransform(rotation);
-                    g.reduceClipRegion(head.withHeight(head.getHeight() * 0.47f).toNearestInt());
+                    g.reduceClipRegion(head.withHeight(head.getHeight() * (kitTile ? 0.47f : 0.64f)).toNearestInt());
                     g.fillPath(upper);
                 }
                 {
                     juce::Graphics::ScopedSaveState saved(g);
                     g.addTransform(rotation);
-                    g.reduceClipRegion(head.withTrimmedTop(head.getHeight() * 0.57f).toNearestInt());
+                    g.reduceClipRegion(head.withTrimmedTop(head.getHeight() * (kitTile ? 0.57f : 0.77f)).toNearestInt());
                     g.fillPath(upper);
                 }
                 handle.addRoundedRectangle(centre.x - icon.getWidth() * 0.026f,
@@ -410,8 +605,10 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
             {
                 // Original 1.6.2 kit captures retain the faint outer contour;
                 // the three inner contours sit about one pixel farther in.
-                const float inset = kitTile && ring > 0 ? 0.08f : 0.0f;
-                const float diameter = width * (0.82f - ring * 0.20f - inset);
+                const float inset = ring > 0 ? 0.08f : 0.0f;
+                constexpr float largeDiameter[] { 0.82f, 0.66f, 0.42f, 0.16f };
+                const float diameter = width * (kitTile ? 0.82f - ring * 0.20f - inset
+                                                        : largeDiameter[ring]);
                 g.setColour(tint.withMultipliedAlpha(0.18f + ring * 0.27f));
                 g.drawEllipse(icon.withSizeKeepingCentre(diameter, diameter), stroke * 0.85f);
             }
@@ -432,7 +629,7 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
             {
                 // Original 1.6.2 kit captures 18/23: the two major marks are
                 // outlined five-point stars; the smaller glints stay filled.
-                const bool outlined = kitTile && sparkle[2] >= 0.08f;
+                const bool outlined = sparkle[2] >= 0.08f;
                 const float radius = width * sparkle[2];
                 juce::Path star;
                 star.addStar({ box.getX() + width * (sparkle[0] - (outlined ? 0.02f : 0.0f)),
