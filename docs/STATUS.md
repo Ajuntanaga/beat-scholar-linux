@@ -931,3 +931,14 @@ FX rings and sparkle kit glyphs now follow saved original 1.6.2 captures at 960 
 Both uninstalled formats built. Focused lower-panel checks passed all four standalone/VST3 wrapper and size combinations. Complete editor and actual VST3 smoke passed 2/2 in 61.72 seconds. Final screenshot comparison and source diff inspected; git diff check clean. Fine contour and raster differences remain, and full reference parity is still open.
 
 Validation ran serially under 3 GiB/two CPUs/no swap. Final service inactive, MainPID 0, Result success. Observed regression memory peak was 122970112 bytes, with zero swap; this is an observation during the run, not a whole-build maximum. No installed artifacts, live REAPER, VM, governor or archive changes.
+
+
+## 2026-11-26T22:04:13.045540+00:00: Small kit cymbals and strike-detail checkpoint
+
+Small kit hi-hats now have shaded undersides, with a smaller open hi-hat and corrected plate spacing. Cymbal placement and tilt, the kick hub, and the snare strike arcs are closer to saved original 1.6.2 captures. The large sample-panel drawings and audio behavior are unchanged.
+
+Both uninstalled formats built. Focused lower-panel checks passed all four standalone/VST3 wrapper and window-size combinations. Complete editor and actual VST3 smoke passed 2/2 in 62.22 s. The final screenshot comparison and source diff were inspected. An existing background-shading probe was moved clear of a changed glyph edge using the measured original background colour at both sizes; its tolerance is unchanged.
+
+Validation ran serially under 3 GiB/two CPUs/no swap. Final service inactive, MainPID 0, Result success. Observed memory peak during the run was 1136324608 bytes and swap use was zero; the completed unit no longer retains its final memory counters. Host memory pressure was zero. No installed artifacts, live REAPER, VM, governor or archive changes.
+
+Fine glyph contour/raster differences and physical device reconnection verification remain. Full reference parity is open. Public GitHub push is pending the specific factory filenames/menu-order metadata approval after automatic review rejected it; no push or workflow dispatch was retried.

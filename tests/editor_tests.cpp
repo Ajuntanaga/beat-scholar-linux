@@ -7048,8 +7048,9 @@ void testOriginalLowerPanelFrames(const juce::File& output)
                   "kit glyph tint matches original at width " + juce::String(width));
             // Neutral kit pad interiors have their own shading, darker in the
             // centre and lighter at the edges (original captures 18 and 23).
+            // Keep probes clear of glyph antialiasing at both window sizes.
             for (const auto& expected : std::array<std::array<int, 4>, 4> {{
-                     { 12, 580, 28, 63 }, { 16, 592, 27, 59 },
+                     { 12, 580, 28, 63 }, { 16, 606, 28, 60 },
                      { 25, 579, 27, 59 }, { 50, 610, 29, 63 }
                  }})
             {

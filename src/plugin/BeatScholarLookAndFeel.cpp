@@ -32,7 +32,7 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         const float width = std::min(icon.getWidth(), icon.getHeight() / heightRatio);
         icon = icon.withSizeKeepingCentre(width, width * heightRatio);
     }
-    const auto drawDrum = [&g, stroke](juce::Rectangle<float> box, bool sticks) {
+    const auto drawDrum = [&g, stroke, kitTile](juce::Rectangle<float> box, bool sticks) {
         // Samples & Sounds 2:35: shallow shell, lugs, and distinct strike marks.
         const float width = std::min(box.getWidth(), box.getHeight());
         box = box.withSizeKeepingCentre(width, width);
@@ -54,6 +54,7 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         }
         else
         {
+            const float strikeWidth = kitTile ? stroke * 0.48f : lineWidth;
             for (const float radius : { 0.12f, 0.20f, 0.28f })
             {
                 juce::Path wave;
@@ -61,9 +62,9 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
                                    width * radius, width * radius, 0.0f,
                                    -juce::MathConstants<float>::pi * 0.30f,
                                    juce::MathConstants<float>::pi * 0.30f, true);
-                g.strokePath(wave, juce::PathStrokeType(lineWidth));
+                g.strokePath(wave, juce::PathStrokeType(strikeWidth));
             }
-            g.drawLine({ point(0.13f, 0.49f), point(0.87f, 0.49f) }, lineWidth);
+            g.drawLine({ point(0.13f, 0.49f), point(0.87f, 0.49f) }, strikeWidth);
         }
     };
     const auto drawCymbal = [&g, stroke, tint, kitTile, pad](juce::Rectangle<float> box, float tilt) {
@@ -72,24 +73,44 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         box = box.withSizeKeepingCentre(width, width);
         const auto centre = box.getCentre();
         const float rise = slope * width;
+        const bool smallOpenHat = kitTile && pad == 5;
+        const bool shadedHat = kitTile && (pad == 4 || pad == 5);
+        const float bellTop = centre.y - width * (smallOpenHat ? 0.10f : 0.15f);
+        const float bellShoulder = centre.y - width * (smallOpenHat ? 0.07f : 0.09f);
+        const float lowerEdge = centre.y + width * (shadedHat ? (smallOpenHat ? 0.03f : 0.11f) : 0.07f);
         // Shallow disc and central bell, as in Samples & Sounds 2:35.
         juce::Path disc;
         disc.startNewSubPath(box.getX(), centre.y + rise);
-        disc.lineTo(centre.x - width * 0.10f, centre.y - width * 0.09f);
-        disc.lineTo(centre.x, centre.y - width * 0.15f);
-        disc.lineTo(centre.x + width * 0.10f, centre.y - width * 0.09f);
+        disc.lineTo(centre.x - width * 0.10f, bellShoulder);
+        disc.lineTo(centre.x, bellTop);
+        disc.lineTo(centre.x + width * 0.10f, bellShoulder);
         disc.lineTo(box.getRight(), centre.y - rise);
-        disc.lineTo(centre.x, centre.y + width * 0.07f);
+        if (!shadedHat)
+            disc.lineTo(centre.x, lowerEdge);
         disc.closeSubPath();
         g.fillPath(disc);
-        g.drawLine(centre.x, centre.y - width * 0.23f,
-                   centre.x, centre.y - width * 0.15f, stroke * 0.65f);
+        if (shadedHat)
+        {
+            // Original small hi-hats have a shaded underside and a bright rim.
+            juce::Path underside;
+            underside.startNewSubPath(box.getX(), centre.y + rise);
+            underside.lineTo(centre.x, lowerEdge);
+            underside.lineTo(box.getRight(), centre.y - rise);
+            g.setColour(tint.withMultipliedAlpha(0.55f));
+            g.fillPath(underside);
+            g.setColour(tint);
+            g.strokePath(underside, juce::PathStrokeType(stroke * 0.45f));
+        }
+        if (kitTile)
+            g.setColour(tint.withMultipliedAlpha(0.35f));
+        g.drawLine(centre.x, centre.y - width * (smallOpenHat ? 0.20f : 0.23f),
+                   centre.x, bellTop, stroke * 0.65f);
         // Stand brightness measured in the small original 1.6.2 kit tiles;
         // keep the discs and the larger sample-panel drawing independent.
         constexpr float kitStandAlpha[] { 0.28f, 0.78f, 0.44f, 0.61f, 0.26f };
         if (kitTile && pad >= 4 && pad <= 8)
             g.setColour(tint.withMultipliedAlpha(kitStandAlpha[pad - 4]));
-        g.drawLine(centre.x, centre.y + width * 0.07f,
+        g.drawLine(centre.x, lowerEdge,
                    centre.x, box.getBottom(), stroke * 0.65f);
         g.setColour(tint);
     };
@@ -100,8 +121,9 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
             const auto drum = icon.withSizeKeepingCentre(std::min(icon.getWidth(), icon.getHeight()) * 0.72f,
                                                          std::min(icon.getWidth(), icon.getHeight()) * 0.72f);
             g.drawEllipse(drum, stroke);
-            g.drawEllipse(drum.withSizeKeepingCentre(drum.getWidth() * 0.26f,
-                                                     drum.getHeight() * 0.26f), stroke);
+            const float hubRatio = kitTile ? 0.22f : 0.26f;
+            g.drawEllipse(drum.withSizeKeepingCentre(drum.getWidth() * hubRatio,
+                                                     drum.getHeight() * hubRatio), stroke);
             const auto beater = drum.withSizeKeepingCentre(drum.getWidth() * 0.13f,
                                                             drum.getHeight() * 0.13f)
                                     .translated(0.0f, drum.getHeight() * 0.32f);
@@ -167,7 +189,8 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
             // Open hi-hat: two separated discs, not a disc over a straight bar.
             const float width = std::min(icon.getWidth(), icon.getHeight());
             const auto box = icon.withSizeKeepingCentre(width, width);
-            drawCymbal(box.translated(0.0f, -width * 0.08f), 0.0f);
+            drawCymbal(box.translated(0.0f, -width * (kitTile ? 0.04f : 0.08f)),
+                       kitTile ? -width * 0.04f : 0.0f);
             const auto centre = box.getCentre();
             juce::Path lowerDisc;
             lowerDisc.startNewSubPath(box.getX(), centre.y + width * 0.10f);
@@ -193,13 +216,13 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
             }
             break;
         }
-        case 6: drawCymbal(icon, icon.getHeight() * 0.11f); break;
+        case 6: drawCymbal(icon, icon.getHeight() * (kitTile ? 0.055f : 0.11f)); break;
         case 7:
         {
             const float width = std::min(icon.getWidth(), icon.getHeight());
             const auto box = icon.withSizeKeepingCentre(width, width);
             // Leave room for the pedal below the stand, as in Samples & Sounds.
-            drawCymbal(box.withTrimmedBottom(width * 0.18f), -width * 0.04f);
+            drawCymbal(box.withTrimmedBottom(width * 0.18f), -width * (kitTile ? 0.08f : 0.04f));
             const auto point = [&box, width](float x, float y) {
                 return juce::Point<float>(box.getX() + width * x, box.getY() + width * y);
             };
@@ -213,7 +236,7 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
             g.drawLine({ point(0.55f, 0.78f), point(0.64f, 0.81f) }, stroke * 0.65f);
             break;
         }
-        case 8: drawCymbal(icon, icon.getHeight() * (kitTile ? -0.14f : 0.14f)); break;
+        case 8: drawCymbal(icon, icon.getHeight() * (kitTile ? -0.115f : 0.14f)); break;
         case 9:
         case 10:
         case 11:
@@ -816,10 +839,11 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
         {
             case 0: scaleX = scaleY = 0.90f; shiftY = 3.5f; break;
             case 3: scaleX = scaleY = 0.72f; shiftX = -1.5f; shiftY = 3.0f; break;
-            case 4: scaleX = scaleY = 0.80f; break;
-            case 6: scaleY = 0.78f; shiftX = -1.0f; break;
-            case 7: scaleX = 1.25f; scaleY = 0.86f; shiftX = -0.5f; shiftY = 2.0f; break;
-            case 8: scaleX = 0.82f; scaleY = 0.80f; shiftY = 0.5f; break;
+            case 4: scaleX = scaleY = 0.80f; shiftX = -0.5f; shiftY = 1.0f; break;
+            case 5: scaleX = scaleY = 0.80f; shiftY = 1.5f; break;
+            case 6: scaleY = 0.78f; shiftX = -1.0f; shiftY = 2.0f; break;
+            case 7: scaleX = 1.25f; scaleY = 0.86f; shiftX = -0.5f; shiftY = 4.0f; break;
+            case 8: scaleX = 0.82f; scaleY = 0.80f; shiftY = 0.8f; break;
             case 9: case 10: case 11:
                 scaleX = 0.87f; scaleY = 0.75f; shiftY = 3.5f; break;
             case 12: scaleX = 0.82f; scaleY = 0.84f; shiftX = -0.5f; shiftY = 3.5f; break;
