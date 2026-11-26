@@ -118,6 +118,33 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
     {
         case 0:
         {
+            if (!kitTile)
+            {
+                // Original 1.6.2 sample-panel captures: a thin rim, hollow
+                // beater and separate shaft, with the pedal below the rim.
+                const float unit = std::min(icon.getWidth(), icon.getHeight()) / 42.0f;
+                const auto centre = icon.getCentre() + juce::Point<float>(0.6f, -2.6f) * unit;
+                const auto circle = [centre, unit](float diameter, float offsetY = 0.0f) {
+                    return juce::Rectangle<float>(diameter * unit, diameter * unit)
+                        .withCentre(centre + juce::Point<float>(0.0f, offsetY * unit));
+                };
+                const juce::Colour outline(0xffd7dbf6);
+                g.setColour(outline);
+                g.drawEllipse(circle(30.6f), 1.25f * unit);
+                g.setColour(outline.withAlpha(0.88f));
+                g.drawEllipse(circle(8.0f), 0.95f * unit);
+                g.drawEllipse(circle(4.2f, 9.0f), 0.90f * unit);
+                g.drawRect(juce::Rectangle<float>(centre.x - 0.9f * unit,
+                    centre.y + 11.1f * unit, 1.8f * unit, 7.9f * unit), 0.70f * unit);
+                juce::Path pedal;
+                pedal.startNewSubPath(centre + juce::Point<float>(-3.0f, 14.7f) * unit);
+                pedal.lineTo(centre + juce::Point<float>(3.0f, 14.7f) * unit);
+                pedal.lineTo(centre + juce::Point<float>(2.1f, 21.1f) * unit);
+                pedal.lineTo(centre + juce::Point<float>(-2.1f, 21.1f) * unit);
+                pedal.closeSubPath();
+                g.strokePath(pedal, juce::PathStrokeType(0.90f * unit));
+                break;
+            }
             const auto drum = icon.withSizeKeepingCentre(std::min(icon.getWidth(), icon.getHeight()) * 0.72f,
                                                          std::min(icon.getWidth(), icon.getHeight()) * 0.72f);
             g.drawEllipse(drum, stroke);

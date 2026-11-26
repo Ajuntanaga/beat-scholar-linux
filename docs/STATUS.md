@@ -953,3 +953,14 @@ Both uninstalled formats built. Four focused standalone/VST3 wrapper and size co
 The serial validation service finished inactive/MainPID 0/Result success. Observed memory peak was 1038229504 bytes with zero swap; completed-unit counters were not retained. Host memory pressure was zero. No installed artifacts, live REAPER, VM, governor or archive changes.
 
 Full reference parity remains open. Fine glyph geometry/raster differences remain, including the larger sample-panel kick hub/beater proportions visible in this comparison. Physical device reconnect is still unverified by the null-ALSA fixture. Public GitHub push awaits specific factory-name/menu-order publication approval after automatic review rejected the earlier push; no push or workflow dispatch was retried.
+
+
+## 2026-11-26T22:20:01.311398+00:00: Large sample-panel Kick checkpoint
+
+The large factory Kick sample-panel glyph now has a thinner rim and hub, a hollow beater with a distinct shaft, and a separate pedal below the rim. Its position uses fractional scaled bounds so the 960-pixel editor does not introduce an extra rounding shift. Small kit glyphs, custom sample waveforms, other instruments and audio behavior are unchanged.
+
+Both uninstalled formats built. Focused lower-panel checks passed all four standalone/VST3 wrapper and size combinations. Kick screenshot crops are identical between wrapper modes at both sizes. Original/candidate fitted rim centres and radii differ by at most 0.05 design pixels; this measures alignment, not full raster equality. Final screenshots were inspected. Complete editor and actual VST3 smoke passed 2/2 in 64.08 seconds; git diff check passed.
+
+Validation ran serially under 3 GiB/two CPUs/no swap. Service finished inactive/MainPID 0/Result success. Observed memory peak during the run was 1016672256 bytes and swap use was zero; completed-unit counters were not retained. No installed artifacts, live REAPER, governor or archive changes.
+
+Full reference parity remains open. Saved original captures do not cover the other large sample-panel instrument glyphs, so those need fresh reference-VM evidence. Physical device reconnection remains unverified. GitHub push and workflow dispatch remain pending the specific factory sample-name/menu-order publication approval after automatic review rejected the earlier push.
