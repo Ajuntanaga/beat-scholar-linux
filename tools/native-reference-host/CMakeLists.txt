@@ -18,4 +18,4 @@ target_link_libraries(actual_vst3_host PRIVATE
     juce::juce_cryptography juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
 target_compile_definitions(actual_vst3_host PRIVATE
-    JUCE_PLUGINHOST_VST3=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    JUCE_MODAL_LOOPS_PERMITTED=1 JUCE_PLUGINHOST_VST3=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)

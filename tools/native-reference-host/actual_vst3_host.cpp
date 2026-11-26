@@ -67,6 +67,7 @@ struct Options
     std::int64_t postStopFrames = 0;
     std::int64_t restartFrames = 0;
     bool realtimePacing = false;
+    bool pumpMessages = false;
     bool playSequencer = false;
     bool floatOutput = false;
     bool allOutputs = false;
@@ -185,6 +186,7 @@ Options parseOptions(int argc, char** argv)
             event.controller = true;
             options.midi.push_back(event);
         }
+        else if (argument == "--pump-messages") options.pumpMessages = true;
         else if (argument == "--realtime-pacing") options.realtimePacing = true;
         else if (argument == "--play-sequencer") options.playSequencer = true;
         else if (argument == "--float-output") options.floatOutput = true;
@@ -195,7 +197,7 @@ Options parseOptions(int argc, char** argv)
             std::cout
                 << "Usage: actual_vst3_host --plugin BUNDLE --state PRESET_OR_BSLX --output WAV\\n"
                 << "       --expect-sha256 HEX --sample-rate HZ --block-size N --active-frames N\\n"
-                << "       [--parameter SAMPLE:INDEX:NORMALIZED_VALUE] [--midi SAMPLE:NOTE:VELOCITY[:CHANNEL]] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--all-outputs] [--realtime-pacing] [--startup-wait-ms N] [--parameter-settle-ms N] [--pre-roll-frames N] [--post-stop-frames N] [--restart-frames N] [--restored-state-output NEW_BSLX] [--raw-component-state]\\n";
+                << "       [--parameter SAMPLE:INDEX:NORMALIZED_VALUE] [--midi SAMPLE:NOTE:VELOCITY[:CHANNEL]] [--cc SAMPLE:CONTROLLER:VALUE] [--expect-cid CID] [--play-sequencer] [--tempo BPM] [--float-output] [--all-outputs] [--realtime-pacing] [--pump-messages] [--startup-wait-ms N] [--parameter-settle-ms N] [--pre-roll-frames N] [--post-stop-frames N] [--restart-frames N] [--restored-state-output NEW_BSLX] [--raw-component-state]\\n";
             std::exit(0);
         }
         else fail("unknown option: " + argument);
@@ -564,6 +566,22 @@ int run(const Options& options)
     // processing mode while allowing background work between audio callbacks.
     auto pacingStart = std::chrono::steady_clock::now();
     std::int64_t pacedFrames = 0;
+    std::int64_t messagePumpCalls = 0;
+    double messagePumpSeconds = 0.0;
+    const auto pumpMessages = [&] {
+        if (!options.pumpMessages) return;
+        auto* manager = juce::MessageManager::getInstance();
+        if (!manager->isThisTheMessageThread())
+            fail("message dispatch requested off the message thread");
+        const auto start = std::chrono::steady_clock::now();
+        if (!manager->runDispatchLoopUntil(1))
+            fail("message dispatch received a quit request");
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        ++messagePumpCalls;
+        messagePumpSeconds += std::chrono::duration<double>(elapsed).count();
+        // Diagnostic wall time must not cause later realtime blocks to catch up.
+        pacingStart += elapsed;
+    };
     const auto pace = [&](int frames) {
         if (!options.realtimePacing) return;
         pacedFrames += frames;
@@ -576,6 +594,7 @@ int run(const Options& options)
         juce::AudioBuffer<float> silence(processChannels, frames);
         silence.clear();
         juce::MidiBuffer noMidi;
+        pumpMessages();
         plugin->processBlock(silence, noMidi);
         pace(frames);
         remaining -= frames;
@@ -636,6 +655,9 @@ int run(const Options& options)
             std::this_thread::sleep_for(std::chrono::milliseconds(options.parameterSettleMs));
             pacingStart += std::chrono::steady_clock::now() - pauseStart;
         }
+        // Exercise pending platform/controller callbacks without advancing DSP.
+        // This opt-in probe establishes responsiveness, not exact live latency.
+        pumpMessages();
         // Stop at the requested sample even when it falls inside a host block.
         const bool restarted = options.restartFrames > 0 && cursor >= restartStart;
         const bool playing = cursor < options.activeFrames || (restarted && cursor < restartEnd);
@@ -744,6 +766,9 @@ int run(const Options& options)
     reportObject->setProperty("tempo", options.tempo);
     reportObject->setProperty("output_midi_events", outputMidi);
     reportObject->setProperty("realtime_pacing", options.realtimePacing);
+    reportObject->setProperty("pump_messages", options.pumpMessages);
+    reportObject->setProperty("message_pump_calls", static_cast<juce::int64>(messagePumpCalls));
+    reportObject->setProperty("message_pump_seconds", messagePumpSeconds);
     reportObject->setProperty("parameter_settle_ms", static_cast<juce::int64>(options.parameterSettleMs));
     reportObject->setProperty("startup_wait_ms", static_cast<juce::int64>(options.startupWaitMs));
     reportObject->setProperty("pre_roll_frames", static_cast<juce::int64>(options.preRollFrames));
