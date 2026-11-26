@@ -358,7 +358,10 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
             const float width = std::min(icon.getWidth(), icon.getHeight());
             for (int ring = 0; ring < 4; ++ring)
             {
-                const float diameter = width * (0.82f - ring * 0.20f);
+                // Original 1.6.2 kit captures retain the faint outer contour;
+                // the three inner contours sit about one pixel farther in.
+                const float inset = kitTile && ring > 0 ? 0.08f : 0.0f;
+                const float diameter = width * (0.82f - ring * 0.20f - inset);
                 g.setColour(tint.withMultipliedAlpha(0.18f + ring * 0.27f));
                 g.drawEllipse(icon.withSizeKeepingCentre(diameter, diameter), stroke * 0.85f);
             }
@@ -377,11 +380,19 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
             };
             for (const auto& sparkle : sparkles)
             {
+                // Original 1.6.2 kit captures 18/23: the two major marks are
+                // outlined five-point stars; the smaller glints stay filled.
+                const bool outlined = kitTile && sparkle[2] >= 0.08f;
+                const float radius = width * sparkle[2];
                 juce::Path star;
-                star.addStar({ box.getX() + width * sparkle[0],
-                               box.getY() + width * sparkle[1] },
-                             4, width * sparkle[2] * 0.38f, width * sparkle[2]);
-                g.fillPath(star);
+                star.addStar({ box.getX() + width * (sparkle[0] - (outlined ? 0.02f : 0.0f)),
+                               box.getY() + width * (sparkle[1] - (outlined ? 0.035f : 0.0f)) },
+                             outlined ? 5 : 4, radius * (outlined ? 0.45f : 0.38f), radius);
+                if (outlined)
+                    g.strokePath(star, juce::PathStrokeType(stroke * 0.48f,
+                                 juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                else
+                    g.fillPath(star);
             }
             break;
         }

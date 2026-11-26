@@ -922,3 +922,12 @@ Master header typography now matches measured original bright-pixel bounds at 96
 The Master header now matches the measured original text bounds at 960 and 1280 pixels. The small kit toms now retain the clear head rim only on the two high toms, use a continuous floor-tom body, and dim the bass-drum outline. Sample-panel drawings and audio behavior are unchanged.
 
 Both uninstalled candidates built. Four focused wrapper/size combinations passed; complete editor and actual VST3 smoke passed 2/2 in 61.38 s. Final screenshot comparison inspected; git diff check clean. One bounded job at a time, 3 GiB/two CPUs/no swap; all helpers exited, host memory PSI zero. Full reference parity remains open: fine glyph contours and broader reference coverage remain. Live REAPER and installed artifacts untouched.
+
+
+## 2026-11-26T21:52:14.566449+00:00: FX rings and sparkle glyph checkpoint
+
+FX rings and sparkle kit glyphs now follow saved original 1.6.2 captures at 960 and 1280 pixels. All four faint FX contours are retained, with the three inner contours moved inward. The two major sparkles are outlined five-point stars; smaller glints remain filled. Sample-panel drawings and audio behavior are unchanged.
+
+Both uninstalled formats built. Focused lower-panel checks passed all four standalone/VST3 wrapper and size combinations. Complete editor and actual VST3 smoke passed 2/2 in 61.72 seconds. Final screenshot comparison and source diff inspected; git diff check clean. Fine contour and raster differences remain, and full reference parity is still open.
+
+Validation ran serially under 3 GiB/two CPUs/no swap. Final service inactive, MainPID 0, Result success. Observed regression memory peak was 122970112 bytes, with zero swap; this is an observation during the run, not a whole-build maximum. No installed artifacts, live REAPER, VM, governor or archive changes.
