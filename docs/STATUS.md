@@ -942,3 +942,14 @@ Both uninstalled formats built. Focused lower-panel checks passed all four stand
 Validation ran serially under 3 GiB/two CPUs/no swap. Final service inactive, MainPID 0, Result success. Observed memory peak during the run was 1136324608 bytes and swap use was zero; the completed unit no longer retains its final memory counters. Host memory pressure was zero. No installed artifacts, live REAPER, VM, governor or archive changes.
 
 Fine glyph contour/raster differences and physical device reconnection verification remain. Full reference parity is open. Public GitHub push is pending the specific factory filenames/menu-order metadata approval after automatic review rejected it; no push or workflow dispatch was retried.
+
+
+## 2026-11-26T22:11:10.394232+00:00: Kit outline and panel-colour checkpoint
+
+Small Kick, Snare Hit, Snare Body and Clap kit outlines now use individually fitted stroke widths, retaining the measured glyph tint. Original/candidate aggregate glyph brightness ratios improved from 0.672/0.715/0.845/0.593 to 0.996/1.005/1.012/0.976 at 1280. This measures outline weight, not exact contour or pixel parity. The factory sample strip now retains its selected pad colour. Master dials use the measured original fill and ring colours. Custom sample strips and large sample glyphs retain their previous handling; audio behavior is unchanged.
+
+Both uninstalled formats built. Four focused standalone/VST3 wrapper and size combinations passed. Eight exact fill/strip colour probes passed; the exact Master ring colour appears in all four screenshots. Complete editor and actual VST3 smoke passed 2/2 in 61.43 seconds. Final screenshots at 960 and 1280 and source diff inspected; git diff check clean.
+
+The serial validation service finished inactive/MainPID 0/Result success. Observed memory peak was 1038229504 bytes with zero swap; completed-unit counters were not retained. Host memory pressure was zero. No installed artifacts, live REAPER, VM, governor or archive changes.
+
+Full reference parity remains open. Fine glyph geometry/raster differences remain, including the larger sample-panel kick hub/beater proportions visible in this comparison. Physical device reconnect is still unverified by the null-ALSA fixture. Public GitHub push awaits specific factory-name/menu-order publication approval after automatic review rejected the earlier push; no push or workflow dispatch was retried.

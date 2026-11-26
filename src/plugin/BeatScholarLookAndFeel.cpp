@@ -859,6 +859,11 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
         const bool mapping = bool(button.getProperties().getWithDefault("midiMapVisible", false));
         const auto glyphTint = darkMode_ ? tint : juce::Colour(0xffd7dbf6U);
         const float alpha = mapping ? 0.15f : darkMode_ ? 0.90f : pad == 15 ? 0.80f : 1.0f;
+        // Small outlined kit icons use finer strokes than the sample drawings.
+        // Fit to original 1.6.2 captures 18/23, keeping the measured tint intact.
+        constexpr float outlineWidths[] { 0.67f, 0.72f, 0.84f, 0.60f };
+        if (pad >= 0 && pad < 4)
+            stroke *= outlineWidths[pad];
         drawInstrumentGlyph(g, icon, pad, glyphTint.withAlpha(alpha), stroke, true);
         return;
     }
@@ -1165,7 +1170,7 @@ void BeatScholarLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, i
                                               juce::Colour(0xff141414), centre.x, knob.getBottom(), false));
     else
         g.setColour(juce::Colour(randomizerLevel ? 0xff1f2043U
-                                                : masterDial ? 0xff222349U : palette_.panelRaised));
+                                                : masterDial ? 0xff282856U : palette_.panelRaised));
     g.fillEllipse(knob);
     if (levelFill && sliderPos > 0.0f)
     {
@@ -1187,7 +1192,8 @@ void BeatScholarLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, i
     }
     if (!darkMode_ || levelFill)
     {
-        g.setColour(juce::Colour(randomizerLevel ? 0xff6566a1U : palette_.borderBright));
+        g.setColour(juce::Colour(randomizerLevel ? 0xff6566a1U
+                                                : masterDial ? 0xff6c6cabU : palette_.borderBright));
         g.drawEllipse(knob, std::max(1.5f, diameter * (randomizerLevel ? 0.045f : 0.055f)));
     }
     if (slider.isEnabled())

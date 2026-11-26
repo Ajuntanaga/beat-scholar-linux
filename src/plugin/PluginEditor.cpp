@@ -2117,10 +2117,11 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
     else
     {
         const auto& selectedPad = state.kit.pads[state.ui.selectedPad];
-        const auto sampleColour = padColours_[state.ui.selectedPad].withSaturation(0.72f)
-                                                              .withBrightness(0.70f);
         const bool custom = !selectedPad.customSampleLayered
                             && !selectedPad.customSamples[0].name.empty();
+        const auto sampleColour = custom
+            ? padColours_[state.ui.selectedPad].withSaturation(0.72f).withBrightness(0.70f)
+            : padColours_[state.ui.selectedPad];
         auto samplePanel = designRect(getWidth(), getHeight(),
                                       custom ? 402.0f : 412.0f, 558.0f,
                                       custom ? 146.0f : 150.0f, 152.0f);
