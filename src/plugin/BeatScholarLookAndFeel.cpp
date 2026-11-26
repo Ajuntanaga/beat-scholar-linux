@@ -225,9 +225,10 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
                                               w * icon.getWidth(), h * icon.getHeight());
             };
             const auto tom = [&g, stroke, kitTile, &box](float x, float y, float w, float h,
-                                               bool selected) {
+                                               bool selected, float kitRimRatio = 0.50f,
+                                               bool clearHeadRim = true) {
                 const auto shell = box(x, y, w, h);
-                const float rimHeight = shell.getHeight() * (kitTile ? 0.50f : 0.32f);
+                const float rimHeight = shell.getHeight() * (kitTile ? kitRimRatio : 0.32f);
                 juce::Path body;
                 body.startNewSubPath(shell.getX(), shell.getY() + rimHeight * 0.5f);
                 body.lineTo(shell.getX(), shell.getBottom() - rimHeight * 0.5f);
@@ -237,9 +238,35 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
                 body.lineTo(shell.getRight(), shell.getY() + rimHeight * 0.5f);
                 if (selected)
                 {
-                    body.closeSubPath();
-                    g.fillPath(body);
-                    g.fillEllipse(shell.withHeight(rimHeight));
+                    if (kitTile)
+                    {
+                        const auto centre = shell.withHeight(rimHeight).getCentre();
+                        body.addCentredArc(centre.x, centre.y, shell.getWidth() * 0.5f,
+                                           rimHeight * 0.5f, 0.0f,
+                                           juce::MathConstants<float>::halfPi,
+                                           -juce::MathConstants<float>::halfPi);
+                        body.closeSubPath();
+                        // Only the high toms have a clear lower head rim in
+                        // original 1.6.2. The floor tom has a continuous body.
+                        if (clearHeadRim)
+                        {
+                            juce::Path rim, gap;
+                            rim.addCentredArc(centre.x, centre.y, shell.getWidth() * 0.5f,
+                                              rimHeight * 0.5f, 0.0f,
+                                              juce::MathConstants<float>::pi * 0.65f,
+                                              juce::MathConstants<float>::pi * 1.35f, true);
+                            juce::PathStrokeType(stroke * 0.65f).createStrokedPath(gap, rim);
+                            body.setUsingNonZeroWinding(false);
+                            body.addPath(gap);
+                        }
+                        g.fillPath(body);
+                    }
+                    else
+                    {
+                        body.closeSubPath();
+                        g.fillPath(body);
+                        g.fillEllipse(shell.withHeight(rimHeight));
+                    }
                 }
                 else
                 {
@@ -249,8 +276,20 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
             };
             tom(0.02f, 0.08f, 0.32f, 0.30f, pad == 9);
             tom(0.40f, 0.08f, 0.32f, 0.30f, pad == 10);
-            g.drawEllipse(box(0.16f, 0.47f, 0.44f, 0.47f), stroke * 0.65f);
-            tom(0.65f, 0.48f, 0.33f, 0.41f, pad == 11);
+            if (kitTile)
+            {
+                g.setColour(tint.withMultipliedAlpha(0.38f));
+                g.drawEllipse(box(0.16f, 0.44f, 0.44f, 0.50f), stroke * 0.65f);
+                g.setColour(tint);
+                tom(0.634f, 0.465f, 0.363f, 0.43f, pad == 11, 0.45f, false);
+            }
+            else
+            {
+                g.drawEllipse(box(0.16f, 0.47f, 0.44f, 0.47f), stroke * 0.65f);
+                tom(0.65f, 0.48f, 0.33f, 0.41f, pad == 11);
+            }
+            if (kitTile)
+                g.setColour(tint.withMultipliedAlpha(0.38f));
             g.drawLine(icon.getX() + icon.getWidth() * 0.21f, icon.getBottom() - stroke,
                        icon.getX() + icon.getWidth() * 0.16f, icon.getBottom(), stroke * 0.65f);
             g.drawLine(icon.getX() + icon.getWidth() * 0.56f, icon.getBottom() - stroke,

@@ -915,3 +915,10 @@ kit-glyph-frames-original-20261126 contains RESULT.md, OBSERVATIONS.md, first/se
 User requested a GitHub update before continued repairs. Checkpoint includes the accumulated sampler mapping, audio/meters, slice-duration lighting, audio-derived pad glow, state/envelope handling, sample menus/arrows, and reference-driven editor corrections. Previously recorded full serial CTest passed 13/13. Latest shared-editor changes built both uninstalled formats; lower-panel reference checks passed all four wrapper/size combinations, and complete editor plus actual VST3 smoke passed 2/2 in 62.13 s. No installed artifact or live REAPER change.
 
 Master header typography now matches measured original bright-pixel bounds at 960 and 1280. Kit tom head proportions improved, but curved drumhead separators and other fine glyph contours remain visibly different. Full reference parity remains open; this is a development checkpoint, not a parity-complete release. Current comparison: kit-shapes-master-original-20261126/first-comparison.png.
+
+
+## 2026-11-26T21:41:34.995817+00:00: Tom contours and Master header checkpoint
+
+The Master header now matches the measured original text bounds at 960 and 1280 pixels. The small kit toms now retain the clear head rim only on the two high toms, use a continuous floor-tom body, and dim the bass-drum outline. Sample-panel drawings and audio behavior are unchanged.
+
+Both uninstalled candidates built. Four focused wrapper/size combinations passed; complete editor and actual VST3 smoke passed 2/2 in 61.38 s. Final screenshot comparison inspected; git diff check clean. One bounded job at a time, 3 GiB/two CPUs/no swap; all helpers exited, host memory PSI zero. Full reference parity remains open: fine glyph contours and broader reference coverage remain. Live REAPER and installed artifacts untouched.
