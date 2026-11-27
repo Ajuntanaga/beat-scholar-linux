@@ -75,6 +75,8 @@ Desktop 1.6.2 offers direct toggles for `Middle C = C4`, `Note Names`, and
 `Use Sharps`. Disabling the first changes MIDI note 60 from C4 to C3;
 disabling names displays 60. MIDI Channel offers Any and channels 1–16.
 Fresh defaults are C4, note names enabled, and flats.
+Recorded display-toggle comparisons leave Undo unavailable; changing these
+three preferences therefore does not add an undo step in the Linux editor.
 
 The Linux implementation uses those fresh defaults and explicitly saves the
 display preferences. Older native saves that omitted them retain their

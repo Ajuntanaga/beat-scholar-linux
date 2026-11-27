@@ -5103,7 +5103,9 @@ void BeatScholarLinuxEditor::showPresetMenu()
         }
         if (result >= 20 && result <= 26)
         {
-            safe->processor_.projectEditor().checkpoint();
+            // MIDI display preferences do not create musical undo steps.
+            if (result == 20)
+                safe->processor_.projectEditor().checkpoint();
             auto& ui = safe->processor_.projectState().ui;
             if (result == 20) ui.darkMode = !ui.darkMode;
             if (result == 21) ui.middleCOctave = ui.middleCOctave == 4 ? 3 : 4;

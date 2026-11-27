@@ -2926,6 +2926,7 @@ private:
             if (stage == 0)
             {
                 previousDisplayChecked_ = checked;
+                revision_ = processor_.projectEditor().revision();
                 auto* button = childWithId<juce::TextButton>(*editor_, "toolbar.preset");
                 if (button != nullptr) button->onClick();
             }
@@ -2958,6 +2959,8 @@ private:
             else
             {
                 check(checked != previousDisplayChecked_, "MIDI Display action toggles its setting");
+                check(processor_.projectEditor().revision() == revision_,
+                      "MIDI Display preference leaves undo history unchanged like original");
                 juce::PopupMenu::dismissAllActiveMenus();
             }
         }
@@ -3142,10 +3145,26 @@ class RandomizerFileMenuTests final : private juce::Timer
 {
 public:
     explicit RandomizerFileMenuTests(const juce::File& output) : output_(output) {}
-    ~RandomizerFileMenuTests() override { window_.clearContentComponent(); }
+    ~RandomizerFileMenuTests() override
+    {
+        stopTimer();
+        window_.clearContentComponent();
+        editor_.reset();
+        processor_.reset();
+        if (started_)
+        {
+            if (hadXdg_) setenv("XDG_DATA_HOME", previousXdg_.toRawUTF8(), 1);
+            else unsetenv("XDG_DATA_HOME");
+        }
+    }
     void start(std::function<void()> done)
     {
         done_ = std::move(done);
+        hadXdg_ = std::getenv("XDG_DATA_HOME") != nullptr;
+        previousXdg_ = juce::SystemStats::getEnvironmentVariable("XDG_DATA_HOME", "");
+        const auto xdg = output_.getChildFile("randomizer-files-xdg");
+        setenv("XDG_DATA_HOME", xdg.getFullPathName().toRawUTF8(), 1);
+        started_ = true;
         check(!juce::FileChooser::isPlatformDialogAvailable(), "Randomizer test uses isolated built-in chooser");
         beginWrapper();
         startTimer(100);
@@ -3437,6 +3456,8 @@ private:
         stopTimer(); done_();
     }
     juce::File output_, folder_, saved_;
+    juce::String previousXdg_;
+    bool started_ = false, hadXdg_ = false;
     juce::String savedBytes_;
     juce::MemoryBlock before_;
     std::uint64_t revision_ = 0;
