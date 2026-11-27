@@ -273,10 +273,10 @@ Jungle post-stop comparison passed: 192000 active + 192000 stopped frames at 48k
 - Broader controlled original-preset comparisons, shared-effect bus behavior
   and automation coverage remain incomplete. The bounded audio comparisons
   above must not be generalized to all presets or every control combination.
-- Confirmed host-automation omission: pad volume, pan, pitch, filter and AUX
-  controls exposed by the original are not registered in the candidate parameter
-  layout. Current host parameters cover four global controls and pad bypasses.
-  Original control-range capture is retained locally; implementation remains open.
+- Pad volume, pan, pitch, filter and AUX host controls are now registered in
+  the candidate parameter layout and synchronized with project state. The older
+  omission report is superseded by the implementation and dated validation below.
+  This does not establish complete live automation parity for every combination.
 - Physical audio/MIDI devices, reconnection and full live-host workflows still
   need direct checks. Isolated host tests do not establish those outcomes.
 
@@ -1051,3 +1051,66 @@ Corrected the original 1.6.2 gear's tooth orientation, horizontal position and d
 The original 1.6.2 lane-randomization routine and named preset fields establish that Spacing modulates Chance after a generated hit: neutral 0.5 preserves Chance, lower values interpolate toward 1, and higher values toward 0. Replaced the candidate's `1 - spacing` substitution and its unconditional 100%-Chance exception. Fill Empty now skips preserved hits without changing the previous random decision, matching the original branch. Seven distinguishing assertions fail before the repair and the complete core test executable passes afterward. Evidence is retained locally in `randomizer-probability-20261127/REFERENCE.md` with field mapping and bounded disassembly. Separate-click decision lifetime and disabled-slice note/velocity storage remain open; this change does not establish full Randomizer parity.
 
 Validation: standalone and VST3 candidates built; core, full editor and actual-VST3 smoke tests passed 3/3 (66.39 seconds). The isolated validation service exited successfully. Live REAPER and installed artifacts were untouched.
+
+### Explicit parity exception — custom sample dropdown
+The user selected the manual's working custom-sample dropdown over original 1.6.2's observed no-menu behavior. Keep the documented dropdown. This difference is intentional and no longer an unresolved parity decision.
+
+### Main and kit preset file actions
+Main and kit menus now expose Save To Menu with the name/category form, separate Save to File, and Load from File. Kit file loading is now reachable from its menu. Both candidate formats built; core, editor and actual VST3 smoke validation passed. Async editor checks cover saved contents and file-load restoration in both wrapper modes. Other menu differences remain under reference evaluation.
+
+Default menu validation complete: corrected editor suite passed (70.85 s; default-retest.log), exercising main and kit Default in standalone/VST3 wrapper modes. Both candidate formats built; diff whitespace check clean. Kit menu screenshot inspected. Enable grouping retains existing IDs/handlers; submenu interaction not separately exercised this batch. No installation/publication. Full parity remains open, including User Data compatibility and bar meter reference behavior.
+
+### Bar denominator drag repair — validated editor
+Replaced discrete 12-pixel denominator steps with the original 250-pixel normalized drag range and retained fractional position between gestures. The six captured sequential gestures now produce 4, 4, 4, 2, 8, 8; regression also checks undo and that a subthreshold gesture adds no undo entry. Editor suite passed (71.00 s) on isolated Xvfb. Inspected arrangement-meter-drag.png: header and Bars card both show 4/16. git diff --check passed. Both candidate format builds started single-job; outcome to follow. No REAPER or installed artifacts changed. Pattern-switch/control-reconstruction cache behavior remains unverified against the original; full parity remains open.
+
+Denominator repair format build completed successfully: standalone and VST3, single job. Evidence: main-kit-menu-reference-20261127/{meter-editor-tests.log,meter-formats-build.log}; editor screenshot in candidate-a8748ed/editor-regression/arrangement-meter-drag.png. No publication or installation.
+
+
+### Silent-slice Randomizer repair validated
+Original routine 0x180d39328–0x180d393e1 updates selected drum and velocity without checking slice.enabled after the trigger decision. Candidate now does likewise; disabled velocity randomization preserves silent-slice velocity data. New regression failed on the prior implementation for both drum and velocity, then passed after repair. Two older assertions were narrowed to preserve silence and unchanged velocity while allowing drum selection to update stored data. Focused core CTest passed (0.74 s); standalone and VST3 candidate builds succeeded in silent-slice-build.log. No install or REAPER changes. Separate-invocation trigger-history lifetime remains unresolved. Chance 100% / Spacing manual conflict is documented in docs/REFERENCES.md and supported by the direct branch trace, not interpolation alone.
+
+
+### Empty Drum Selection preserves existing assignments
+Original 1.6.2 routine 0x180d39331–0x180d39342 compares the selected-note vector begin/end and skips the note write when empty. With slicing disabled this preserves the existing note; no Kick substitution occurs in this routine or the lane callback. Removed candidate's unconditional Kick fallback for an empty selection. Replaced the old manual-derived expectation with an existing-pad-7 regression: failed before repair, passed afterward. Core CTest passed (0.75 s), standalone and VST3 candidate builds succeeded serially (randomizer-probability-20261127/empty-selection-{build,tests}.log). Settings validation already rejects pad IDs outside 0..15. Subdivision creation behavior is unchanged; manual Kick/default-velocity descriptions versus original UI initialization remain separate questions, not settled by this branch. No installed artifacts, VM, or REAPER changes. Memory check: about 27 GiB available, swap disabled; no governor edits.
+
+
+### Repeated-action randomizer trigger history
+Original 1.6.2 captures in randomizer-probability-20261127/repeated-action-result.md show three odd-slice actions alternating 010 -> 101 -> 010 with Chance/Spacing 100%, other modules disabled. ProjectEditor now owns transient trigger history shared by lane actions and beat strokes; Randomizer accepts an optional history pointer while isolated deterministic calls retain their initial false state. Core regression failed before repair (three assertions), then passed after repair, including interleaved lane/beat/lane actions. History is not serialized or included in undo snapshots. Reset behavior on settings/preset replacement remains unverified against original. Both format builds are running serially; no installation or REAPER changes.
+
+Trigger-history repair format validation completed: standalone and VST3 serial build exited 0 (history-formats-build.log); actual VST3 smoke passed 0.65 s; git diff --check passed. Core regression passed 0.73 s. No installed artifacts changed. Full parity remains open.
+
+
+### Disabled randomizer velocity preservation
+Original live comparison and positive control: randomizer-probability-20261127/velocity-disabled-result.md. Disabled Velocity preserves existing slice velocity, rather than replacing it with brush velocity. Repaired shared Randomizer implementation; regression failed before repair (two assertions). Serial standalone/VST3/core build and targeted checks in progress. No installation or live REAPER changes.
+
+Velocity preservation repair validated: serial standalone/VST3/core build exit 0; core and actual VST3 smoke checks 2/2 passed (0.73/0.68 s); git diff --check passed. Full parity remains open.
+
+
+### Randomizer slicing growth discrepancy
+Original live slicing-only change 3 -> 4 retains enabled pattern 101 and appends a silent fourth slice (1010), screenshot randomizer-probability-20261127/subdivision-four-only.png; all other modules disabled. Bounded original routine180d31610 confirms appended records zero-enabled at+0x28, MIDI36 at+0x1c, velocity0.8 at+0x20. Candidate cloned the first active slice through BeatState::setSubdivision. Randomizer now resizes with default SliceState while ordinary editing helper remains unchanged. Distinguishing core regression failed before repair. Validation pending; editor run87860 covers preceding velocity repair only.
+
+Slicing-growth repair validated: both format builds exit0; core and actual VST3 smoke2/2 passed (0.76/0.64s), diff check clean. Preceding disabled-velocity repair also passed full isolated editor test71.46s after rerunning with display access; initial sandbox Xvfb failure occurred before tests. No installed artifacts or live REAPER changes.
+
+### 2026-11-27 — MIDI Display menu parity
+Replaced nested MIDI Display choices with original direct toggles: Middle C = C4, Note Names, Use Sharps. Controlled original captures confirm the labels, checkmarks and C4/C3/numeric behavior. Full editor suite passed (74.07 s), exercising each toggle twice; rendered submenu inspected. Standalone and VST3 candidates rebuilt. Installed artifacts unchanged.
+
+## 2026-11-27: real standalone Randomizer restart harness executed
+Integrated Claude's standalone-randomizer-restart-harness.patch. Ran the full isolated Xvfb standalone settings harness against candidate-a8748ed at 1280 width: exit 0. All three new launches passed: next arrow selects Restart A, clean close/relaunch preserves decoded project/settings/anchor and visible header, subsequent next selects Restart B without changing patterns. Pixel assertions passed unchanged; visually inspected restored screenshot. Evidence: standalone-randomizer-restart-20261127/result.json and randomizer-restart-*.png. Python compile and git diff --check passed. No production repair needed. Optional VST3 MIDI subtest was not invoked; this closes standalone normal-close persistence coverage only. Live REAPER, installed plugins and VM untouched.
+
+## 2026-11-27: MIDI Display fresh defaults repaired
+Accepted Claude's pre-toggle original captures: Middle C C4 checked, Note Names checked, Use Sharps unchecked. UiState now defaults to C4/flats. Native writer explicitly stores both display preferences; decoder deliberately retains C3/sharps for missing keys in older native saves, preserving their labels without a schema bump. Added state tests for fresh defaults, all four explicit combinations through host/preset recall, and old omitted-key recall. State tests passed; standalone/VST3/editor builds passed serially. Full editor regression passed 73.15 s; inspected editor-regression/midi-display-menu.png, showing C4 and Note Names checked and Use Sharps unchecked. git diff --check clean. Logs: midi-defaults-build-20261127.log and midi-defaults-editor-20261127.log. No installed binary, REAPER, or VM changes. Full parity remains open.
+
+## 2026-11-27: different randomizer preset replacement preserves trigger history
+
+Controlled original check in the existing offline VM, fresh unlocked screenshot confirmed. Loaded User/historyprobe (Chance100%, Spacing100%, only Step Triggering enabled). Temporarily enabled slicing with only3 selected, applied once, then disabled slicing: replacement-three.png shows101. Selected Init Preset: replacement-init.png confirms the different name and changed settings (Chance50%, modules enabled), with the beat unchanged. Returned to User/historyprobe without any randomizer action in between; replacement-return.png records the restored settings. One beat action produced010 (replacement-action.png). Therefore replacement through Init and back preserves the observable previous-trigger state; resetting it would have produced101.
+
+Candidate loadRandomizerFile changes settings and ui.randomizerFile on the existing ProjectEditor; it does not reset previousRandomizerTrigger_. This matches the captured behavior. No production change required. This closes the different-preset replacement question for this controlled sequence, not restart history. Captures: randomizer-probability-20261127/replacement-{start,three,init,return,action}.png. VM input released after capture; no credentials, network changes, second VM, installs or live REAPER interaction. git diff --check passed. Full parity remains open.
+
+## 2026-11-27: denominator fractional drag resets on pattern switch
+Original captures in main-kit-menu-reference-20261127: meter-switch-up50.png remains 4/4 after an upward 50px denominator drag. Switched A to B and back to A, then dragged down 25px: meter-switch-down25.png shows 4/8. Retaining the fractional position across the switch would instead leave 4/4. Initial source inspection found the intended reset helper, but the subsequent distinguishing regression failed: ordinary pattern switches did not invoke it. That initial no-repair conclusion is superseded by the repair below. This comparison used the existing offline guest and left A at 4/8 with B present. Input lane released. No installed artifacts or REAPER changes. Full parity remains open.
+
+## 2026-11-27: denominator pattern-switch repair
+Added the original A -> B -> A sequence to the editor regression: upward 50px stays at 4; after switching, downward 25px must produce 8. Before repair the test failed exactly this assertion. The shared editor now synchronizes fractional denominator positions after direct pattern selection and during display updates (including playback-driven selection). Full isolated editor suite passes in 73.87 seconds. Both uninstalled Standalone and VST3 builds passed serially. No installation or REAPER changes.
+
+## 2026-11-27: GitHub metadata publication authorized
+User approval relayed for factory sample filenames and menu-order metadata in this checkpoint. The earlier publication hold is lifted for Ajuntanaga/beat-scholar-linux, branch fix/reference-event-subdivision-20261122. Extracted audio/sample payloads are excluded. Final editor regression and both candidate format builds pass; full parity remains open.

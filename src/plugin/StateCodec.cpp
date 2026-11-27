@@ -249,11 +249,11 @@ juce::var projectToVar(const ProjectState& state)
     set(ui, "selectedBar", static_cast<juce::int64>(state.ui.selectedBar));
     set(ui, "patternMode", state.ui.patternMode);
     set(ui, "randomizerVisible", state.ui.randomizerVisible);
-    // Omit defaults so older native presets retain their canonical encoding.
+    // Retain omission for unchanged defaults; explicitly store migrated display preferences.
     if (state.ui.darkMode) set(ui, "darkMode", true);
     if (!state.ui.midiNoteNames) set(ui, "midiNoteNames", false);
-    if (state.ui.midiFlats) set(ui, "midiFlats", true);
-    if (state.ui.middleCOctave != 3) set(ui, "middleCOctave", state.ui.middleCOctave);
+    set(ui, "midiFlats", state.ui.midiFlats);
+    set(ui, "middleCOctave", state.ui.middleCOctave);
     if (!state.ui.presetFile.empty()) set(ui, "presetFile", juce::String(state.ui.presetFile));
     if (!state.ui.kitFile.empty()) set(ui, "kitFile", juce::String(state.ui.kitFile));
     if (!state.ui.randomizerFile.empty()) set(ui, "randomizerFile", juce::String(state.ui.randomizerFile));
@@ -648,6 +648,7 @@ bool projectFromVar(const juce::var& root, ProjectState& state)
     candidate.ui.randomizerVisible = readBool(ui, "randomizerVisible", false);
     candidate.ui.darkMode = readBool(ui, "darkMode", false);
     candidate.ui.midiNoteNames = readBool(ui, "midiNoteNames", true);
+    // Missing keys belong to older native saves, whose defaults were sharps/C3.
     candidate.ui.midiFlats = readBool(ui, "midiFlats", false);
     candidate.ui.middleCOctave = static_cast<int>(ui.getProperty("middleCOctave", 3));
     candidate.ui.presetFile = readString(ui, "presetFile");

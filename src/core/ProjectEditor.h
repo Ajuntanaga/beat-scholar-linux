@@ -23,6 +23,8 @@ public:
     bool resetLane(std::size_t patternIndex, std::size_t laneIndex);
     bool randomizeLane(std::size_t patternIndex, std::size_t laneIndex,
                        std::uint32_t seed);
+    // Mutates a detached beat; the stroke caller owns its undo checkpoint.
+    void randomizeBeatData(BeatState& beat, std::uint32_t seed);
     bool addBar(std::size_t patternIndex, BarState bar);
     bool insertBar(std::size_t patternIndex, std::size_t barIndex, BarState bar);
     bool duplicateBar(std::size_t patternIndex, std::size_t barIndex);
@@ -50,6 +52,8 @@ private:
     static BeatState emptyBeat(std::uint8_t padIndex);
 
     ProjectState state_;
+    // Original settings retain this across actions; it is not musical/undo state.
+    bool previousRandomizerTrigger_ = false;
     struct HistoryEntry { ProjectState state; HistoryParameters parameters; std::size_t pad = 0; };
     std::vector<HistoryEntry> undo_;
     std::vector<HistoryEntry> redo_;

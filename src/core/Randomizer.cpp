@@ -15,13 +15,15 @@ const T& choose(const std::vector<T>& values, std::mt19937& engine)
 }
 
 void applyWithEngine(BeatState& beat, const RandomizerSettings& settings,
-                     std::mt19937& engine, float defaultVelocity, bool& previousTriggered)
+                     std::mt19937& engine, bool& previousTriggered)
 {
     if (!settings.isValid())
         return;
 
     if (settings.slicingEnabled && !settings.selectedSubdivisions.empty())
-        beat.setSubdivision(choose(settings.selectedSubdivisions, engine));
+        // Original resize routine default-constructs appended slices; it does not
+        // clone the first hit as the ordinary editing subdivision helper does.
+        beat.slices.resize(choose(settings.selectedSubdivisions, engine));
 
     std::uniform_real_distribution<float> unit(0.0f, 1.0f);
     std::uniform_real_distribution<float> velocity(settings.minimumVelocity,
@@ -48,40 +50,38 @@ void applyWithEngine(BeatState& beat, const RandomizerSettings& settings,
             previousTriggered = triggered;
         }
         slice.enabled = triggered;
-        if (!triggered)
-            continue;
-        if (settings.noteSelectionEnabled)
-        {
-            const std::uint8_t pad = settings.selectedPads.empty()
-                                         ? std::uint8_t { 0 }
-                                         : choose(settings.selectedPads, engine);
-            slice.padIndex = std::min<std::uint8_t>(pad, 15);
-        }
+        // Original randomizes stored note/velocity even when the slice is silent.
+        // Original skips note assignment when the selected-drum list is empty.
+        if (settings.noteSelectionEnabled && !settings.selectedPads.empty())
+            slice.padIndex = choose(settings.selectedPads, engine);
+        // Disabled modules leave stored data untouched (original 1.6.2).
         if (settings.velocityEnabled)
+        {
             slice.velocity = velocity(engine);
-        else
-            slice.velocity = std::clamp(defaultVelocity, 0.0f, 1.0f);
-        slice.velocityAssigned = true;
+            slice.velocityAssigned = true;
+        }
     }
 }
 
 } // namespace
 
 void Randomizer::apply(BeatState& beat, const RandomizerSettings& settings,
-                       std::uint32_t seed, float defaultVelocity)
+                       std::uint32_t seed, float /*defaultVelocity*/, bool* triggerHistory)
 {
     std::mt19937 engine(seed);
-    bool previousTriggered = false;
-    applyWithEngine(beat, settings, engine, defaultVelocity, previousTriggered);
+    bool initialHistory = false;
+    bool& previousTriggered = triggerHistory ? *triggerHistory : initialHistory;
+    applyWithEngine(beat, settings, engine, previousTriggered);
 }
 
 void Randomizer::apply(LaneState& lane, const RandomizerSettings& settings,
-                       std::uint32_t seed, float defaultVelocity)
+                       std::uint32_t seed, float /*defaultVelocity*/, bool* triggerHistory)
 {
     std::mt19937 engine(seed);
-    bool previousTriggered = false;
+    bool initialHistory = false;
+    bool& previousTriggered = triggerHistory ? *triggerHistory : initialHistory;
     for (auto& beat : lane.beats)
-        applyWithEngine(beat, settings, engine, defaultVelocity, previousTriggered);
+        applyWithEngine(beat, settings, engine, previousTriggered);
 }
 
 } // namespace bsl

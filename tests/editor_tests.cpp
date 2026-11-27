@@ -109,6 +109,15 @@ struct BeatScholarLinuxEditorTestAccess
         button.mouseUp(event(end, {}));
         return downCleared && dragUnpressed && !button.isDown();
     }
+    // kind: 0 preset, 1 kit, 2 randomizer; direction < 0 previous, otherwise next.
+    static void clickNavigationArrow(BeatScholarLinuxEditor& editor, int kind, int direction)
+    {
+        juce::TextButton& button = kind == 0 ? (direction < 0 ? editor.presetPrevious_ : editor.presetNext_)
+                                 : kind == 1 ? (direction < 0 ? editor.kitPrevious_ : editor.kitNext_)
+                                             : (direction < 0 ? editor.randomizerPrevious_ : editor.randomizerNext_);
+        button.onClick();
+    }
+
     static void tick(BeatScholarLinuxEditor& editor) { editor.timerCallback(0); }
     static void tickGlow(BeatScholarLinuxEditor& editor) { editor.timerCallback(1); }
     static float padGlow(const BeatScholarLinuxEditor& editor, std::size_t pad) { return editor.padFlashes_[pad]; }
@@ -2183,9 +2192,9 @@ void testBarMeterDragIsOneUndoStep(const juce::File& output)
               && processor->projectState().patterns[0].bars[0].numerator == 4,
           "arrangement beat-count gesture is one undo step");
     editor->mouseDown(visualEvent(*editor, { 1220.0f, 146.0f }));
-    for (const float y : { 158.0f, 170.0f })
+    for (const float y : { 246.0f, 326.0f })
         editor->mouseDrag(visualEvent(*editor, { 1220.0f, y }));
-    editor->mouseUp(visualEvent(*editor, { 1220.0f, 170.0f }));
+    editor->mouseUp(visualEvent(*editor, { 1220.0f, 326.0f }));
     check(processor->projectState().patterns[0].bars[0].denominator == 16,
           "downward arrangement note-value drag increases denominator like the original");
     check(processor->projectState().patterns[0].bars[0].numerator == 4,
@@ -2198,6 +2207,48 @@ void testBarMeterDragIsOneUndoStep(const juce::File& output)
     check(processor->projectEditor().undo()
               && processor->projectState().patterns[0].bars[0].denominator == 4,
           "arrangement note-value gesture is one undo step");
+    // Replay the original's chronological probes. Reinitializing from the
+    // displayed denominator after each drag fails this sequence.
+    for (const auto [upwardPixels, expected] : std::array<std::pair<int, int>, 6> {
+             {{12, 4}, {48, 4}, {-48, 4}, {100, 2}, {-100, 8}, {-12, 8}} })
+    {
+        const juce::Point<float> start { 1220.0f, 146.0f };
+        const auto end = start.translated(0.0f, -static_cast<float>(upwardPixels));
+        editor->mouseDown(visualEvent(*editor, start));
+        editor->mouseDrag(visualEvent(*editor, end));
+        editor->mouseUp(visualEvent(*editor, end));
+        check(processor->projectState().patterns[0].bars[0].denominator == expected,
+              "denominator preserves fractional drag position like the original captures");
+    }
+    check(processor->projectEditor().undo()
+              && processor->projectState().patterns[0].bars[0].denominator == 2,
+          "subthreshold denominator gesture creates no extra undo step");
+
+    // Original meter-switch-{up50,down25}.png: switching A -> B -> A
+    // discards a subthreshold upward drag before the next downward drag.
+    auto switchProcessor = std::make_unique<BeatScholarLinuxProcessor>();
+    check(switchProcessor->projectEditor().addPattern(), "create second meter-switch pattern");
+    switchProcessor->selectPatternFromUi(0);
+    auto switchEditor = std::make_unique<BeatScholarLinuxEditor>(*switchProcessor);
+    switchEditor->setSize(1280, 720);
+    const auto dragDenominator = [&](float upwardPixels) {
+        const juce::Point<float> start { 1220.0f, 146.0f };
+        const auto end = start.translated(0.0f, -upwardPixels);
+        switchEditor->mouseDown(visualEvent(*switchEditor, start));
+        switchEditor->mouseDrag(visualEvent(*switchEditor, end));
+        switchEditor->mouseUp(visualEvent(*switchEditor, end));
+    };
+    dragDenominator(50.0f);
+    check(switchProcessor->projectState().patterns[0].bars[0].denominator == 4,
+          "partial upward denominator drag leaves displayed quarter note");
+    for (const auto index : { 1, 0 })
+    {
+        switchProcessor->selectPatternFromUi(index);
+        BeatScholarLinuxEditorTestAccess::tick(*switchEditor);
+    }
+    dragDenominator(-25.0f);
+    check(switchProcessor->projectState().patterns[0].bars[0].denominator == 8,
+          "pattern switch resets fractional denominator drag like original");
 }
 
 void testArrowTransformRequiresClick()
@@ -2789,6 +2840,21 @@ private:
             check(menu != nullptr, "Main preset button opens its menu");
             if (menu != nullptr)
             {
+                // Original main-menu.png: channel, display, theme, then enable.
+                const char* orderedTitles[] = { "Show Preset Dir", "MIDI Channel",
+                                                "MIDI Display", "Dark Mode", "Enable" };
+                int previousY = -1;
+                for (const auto* title : orderedTitles)
+                {
+                    auto* entry = item(*menu, title);
+                    check(entry != nullptr, "Main menu contains " + juce::String(title));
+                    if (entry != nullptr)
+                    {
+                        const auto y = entry->getComponent().getScreenY();
+                        check(y > previousY, "Main menu reference order: " + juce::String(title));
+                        previousY = y;
+                    }
+                }
                 saveVisual(*menu, output_, "main-init-menu.png");
                 auto* action = item(*menu, "Init Preset");
                 check(action != nullptr && action->getActions().invoke(juce::AccessibilityActionType::press),
@@ -2832,10 +2898,56 @@ private:
                   "Kit menu action preserves the sequence and clears its old identity");
             saveVisual(*editor_, output_, "kit-init-state.png");
         }
+        else if (phase_ < 29)
+        {
+            const int toggle = (phase_ - 5) / 8;
+            const int stage = (phase_ - 5) % 4;
+            const char* titles[] = { "Middle C = C4", "Note Names", "Use Sharps" };
+            auto& ui = processor_.projectState().ui;
+            const bool checked = toggle == 0 ? ui.middleCOctave == 4
+                               : toggle == 1 ? ui.midiNoteNames : !ui.midiFlats;
+            if (stage == 0)
+            {
+                previousDisplayChecked_ = checked;
+                auto* button = childWithId<juce::TextButton>(*editor_, "toolbar.preset");
+                if (button != nullptr) button->onClick();
+            }
+            else if (stage == 1)
+            {
+                auto* menu = juce::Component::getCurrentlyModalComponent();
+                auto* action = menu == nullptr ? nullptr : item(*menu, "MIDI Display");
+                check(action != nullptr && action->getActions().invoke(juce::AccessibilityActionType::press),
+                      "Main menu opens MIDI Display");
+            }
+            else if (stage == 2)
+            {
+                juce::Component* submenu = nullptr;
+                auto& desktop = juce::Desktop::getInstance();
+                for (int i = desktop.getNumComponents(); --i >= 0;)
+                    if (item(*desktop.getComponent(i), titles[0]) != nullptr)
+                    { submenu = desktop.getComponent(i); break; }
+                check(submenu != nullptr, "MIDI Display exposes direct reference toggles");
+                if (submenu != nullptr)
+                {
+                    auto* action = item(*submenu, titles[toggle]);
+                    check(action != nullptr && action->getCurrentState().isChecked() == checked,
+                          "MIDI Display checkmark matches saved state");
+                    if (phase_ == 7) saveVisual(*submenu, output_, "midi-display-menu.png");
+                    check(action != nullptr && action->getActions().invoke(juce::AccessibilityActionType::press),
+                          "MIDI Display toggle is actionable");
+                }
+                else juce::PopupMenu::dismissAllActiveMenus();
+            }
+            else
+            {
+                check(checked != previousDisplayChecked_, "MIDI Display action toggles its setting");
+                juce::PopupMenu::dismissAllActiveMenus();
+            }
+        }
         else
         {
-            const int channel = (phase_ - 5) / 4;
-            const int stage = (phase_ - 5) % 4;
+            const int channel = (phase_ - 29) / 4;
+            const int stage = (phase_ - 29) % 4;
             auto& state = processor_.projectState();
             if (stage == 0)
             {
@@ -2908,6 +3020,7 @@ private:
     std::function<void()> done_;
     std::uint64_t revision_ = 0;
     int previousChannel_ = 1;
+    bool previousDisplayChecked_ = false;
     int phase_ = 0;
 };
 
@@ -3054,9 +3167,9 @@ private:
     }
     void action(std::function<void()> fn)
     { steps_.push_back([fn = std::move(fn)] { fn(); return true; }); }
-    void menu(const char* title)
+    void menu(const char* title, const char* button = "random.preset")
     {
-        action([this] { control<juce::TextButton>("random.preset")->onClick(); });
+        action([this, button] { control<juce::TextButton>(button)->onClick(); });
         steps_.push_back([this, title] {
             auto* modal = juce::Component::getCurrentlyModalComponent();
             auto* target = modal ? item(*modal, title) : nullptr;
@@ -3242,6 +3355,51 @@ private:
         action([this, exportFile] {
             check(exportFile.loadFileAsString() == bsl::statecodec::encodeRandomizerJson(processor_->projectState().randomizer),
                   "Save to File exports the current Randomizer settings");
+        });
+        for (const bool kit : {false, true})
+        {
+            const auto* button = kit ? "kit.menu" : "toolbar.preset";
+            const auto name = juce::String(kit ? "Saved Kit " : "Saved Project ") + juce::String(wrapper_);
+            const auto file = bsl::dataRoot().getChildFile(kit ? "User/Kits/User" : "User/Presets/User")
+                .getNonexistentChildFile(name, kit ? ".bslkit" : ".bslpreset");
+            action([this] { processor_->parameters().getParameter("pad1Attack")->setValueNotifyingHost(0.37f); });
+            menu("Save To Menu", button);
+            action([this, file, kit] {
+                control<juce::TextEditor>("random.save.name")->setText(file.getFileNameWithoutExtension());
+                saveVisual(*editor_, folder_, kit ? "kit-save-form.png" : "project-save-form.png");
+                control<juce::TextButton>("random.save.accept")->onClick();
+            });
+            action([this, file, kit] {
+                const auto& state = processor_->projectState();
+                check(file.loadFileAsString() == (kit
+                          ? bsl::statecodec::encodeKitJson(state.kit, state.master)
+                          : bsl::statecodec::encodePresetJson(state)),
+                      "menu save writes the correct preset family and contents");
+                check(!control<juce::Component>("random.save.overlay")->isVisible(),
+                      "project/kit save closes overlay");
+                processor_->parameters().getParameter("pad1Attack")->setValueNotifyingHost(0.12f);
+            });
+            menu("Load from File", button); chooser(file, true);
+            action([this] {
+                check(std::abs(processor_->projectState().kit.pads[0].attackSeconds - 0.37f) < 1.0e-6f,
+                      "project/kit file action restores saved pad settings");
+            });
+        }
+        action([this] { remember(); });
+        menu("Default Preset", "kit.menu");
+        action([this] { unchanged("kit Default preserves settings and history"); });
+        action([this] {
+            const auto file = bsl::dataRoot().getChildFile("Factory/Presets/Tutorial/This is Beat Scholar.json");
+            file.getParentDirectory().createDirectory();
+            auto state = processor_->projectState();
+            state.kit.pads[0].attackSeconds = 0.63f;
+            const auto bytes = bsl::statecodec::encode(state);
+            check(file.replaceWithData(bytes.getData(), bytes.getSize()), "write default fixture");
+        });
+        menu("Default Preset", "toolbar.preset");
+        action([this] {
+            check(std::abs(processor_->projectState().kit.pads[0].attackSeconds - 0.63f) < 1.0e-6f,
+                  "main Default loads factory tutorial preset");
         });
         deadline_ = juce::Time::getMillisecondCounterHiRes() + 3000.0;
     }
@@ -10976,6 +11134,264 @@ void testSwingReferenceAutomation()
           "unrelated project undo preserves current SwingRef automation");
 }
 
+// Previous/next arrow regression coverage for the preset, kit and Randomizer
+// header arrows. Every case drives the real arrow handler (the button onClick),
+// so it exercises contentFiles(), loadAdjacentContent() and the processor load
+// path, against temporary fixture trees under an isolated XDG_DATA_HOME. No
+// installed factory file is read or written.
+//
+// Expectation provenance, labelled per phase:
+//   CAPTURED  - reproduces transitions seen in the original 1.6.2 captures
+//               (randomizer-menu-original-20261126 captures 07-10): Init -> next
+//               is the first factory item, first -> previous wraps to the last
+//               factory item, last -> next wraps to the first, first -> next is
+//               the second. The fixture names/folders mirror the real Step
+//               Randomizer tree so the order is the captured order. The original
+//               preset and kit arrows were not captured separately; the same
+//               contract is asserted for them as CANDIDATE behaviour.
+//   CANDIDATE - current candidate semantics with no original capture: menu-
+//               selected anchor, unreadable-entry skip, deleted anchor, and the
+//               Factory-then-User concatenation with full-path ordering. These
+//               pin the present behaviour against regressions; they are NOT
+//               evidence of original parity.
+void testNavigationArrows(const juce::File& output)
+{
+    enum Kind { presetKind = 0, kitKind = 1, randomizerKind = 2 };
+    struct KindInfo { const char* name; const char* factory; const char* user; const char* extension; };
+    static constexpr KindInfo kinds[] {
+        { "preset", "Factory/Presets", "User/Presets", "bslpreset" },
+        { "kit", "Factory/Kits", "User/Kits", "bslkit" },
+        { "randomizer", "Factory/Step Randomizer", "User/Randomizers", "bslrandom" },
+    };
+
+    const auto previousXdg = juce::SystemStats::getEnvironmentVariable("XDG_DATA_HOME", "");
+    const auto xdg = output.getChildFile("navigation-arrows-xdg");
+    xdg.deleteRecursively();
+    setenv("XDG_DATA_HOME", xdg.getFullPathName().toRawUTF8(), 1);
+
+    for (int k = 0; k < 3; ++k)
+    {
+        const auto& info = kinds[k];
+        const juce::String label = juce::String(info.name) + " arrows: ";
+        const auto factory = bsl::dataRoot().getChildFile(info.factory);
+        const auto user = bsl::dataRoot().getChildFile(info.user);
+        const auto file = [&](const juce::File& base, const char* relative) {
+            return base.getChildFile(juce::String(relative) + "." + info.extension);
+        };
+        // A distinguishing payload per file so the load, not only the anchor, is observed.
+        int serial = 0;
+        std::map<juce::String, int> serialOf;
+        const auto write = [&](const juce::File& target) {
+            const int id = ++serial;
+            serialOf[target.getFullPathName()] = id;
+            juce::String json;
+            if (k == presetKind)
+            {
+                auto state = bsl::ProjectState::makeMainInit();
+                state.patterns[0].name = "nav-" + std::to_string(id);
+                json = bsl::statecodec::encodePresetJson(state);
+            }
+            else if (k == kitKind)
+            {
+                json = bsl::statecodec::encodeKitJson(bsl::ProjectState::makeMainInit().kit,
+                                                      bsl::ProjectState::makeMainInit().master);
+            }
+            else
+            {
+                auto settings = bsl::RandomizerSettings::makeInitPreset();
+                settings.triggerChance = 0.05f + 0.01f * static_cast<float>(id);
+                json = bsl::statecodec::encodeRandomizerJson(settings);
+            }
+            check(json.isNotEmpty() && target.getParentDirectory().createDirectory().wasOk()
+                      && target.replaceWithText(json), label + "write fixture " + target.getFileName());
+        };
+
+        // Mirrors the captured Step Randomizer order: first Basic Claps, second
+        // Basic Drum Fill, last Snare Replacer, spanning three category folders.
+        const auto claps = file(factory, "Basic Randomizers/Basic Claps");
+        const auto drumFill = file(factory, "Basic Randomizers/Basic Drum Fill");
+        const auto broken = file(factory, "Basic Randomizers/Basic Fill Broken");
+        const auto hatShuffle = file(factory, "Hi Hats/Hat Shuffle");
+        const auto snare = file(factory, "Utilities/Snare Replacer");
+        for (const auto& f : { claps, drumFill, hatShuffle, snare }) write(f);
+
+        auto processor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_Standalone);
+        BeatScholarLinuxEditor editor(*processor);
+        editor.setSize(960, 540);
+
+        const auto anchor = [&]() -> juce::File {
+            const auto& ui = processor->projectState().ui;
+            return juce::File(juce::String(k == presetKind ? ui.presetFile
+                                         : k == kitKind ? ui.kitFile : ui.randomizerFile));
+        };
+        const auto reset = [&] {
+            if (k == presetKind) processor->resetPresetToInit();
+            else if (k == kitKind) processor->resetKitToInit();
+            else processor->resetRandomizerToInit();
+        };
+        const auto loadAsMenuDoes = [&](const juce::File& target) {
+            // The menu callbacks call exactly these processor loads for a clicked entry.
+            const bool loaded = k == presetKind ? processor->loadPresetFile(target)
+                              : k == kitKind ? processor->loadKitFile(target)
+                                             : processor->loadRandomizerFile(target);
+            check(loaded, label + "menu-style load of " + target.getFileName());
+        };
+        const auto payloadMatches = [&](const juce::File& target) {
+            const int id = serialOf[target.getFullPathName()];
+            if (k == presetKind)
+                return processor->projectState().patterns[0].name == "nav-" + std::to_string(id);
+            if (k == randomizerKind)
+                return std::abs(processor->projectState().randomizer.triggerChance
+                                - (0.05f + 0.01f * static_cast<float>(id))) < 1.0e-4f;
+            return true; // Kit payloads are identical; the anchor is the observable.
+        };
+        const auto step = [&](int direction, const juce::File& expected, const char* what) {
+            BeatScholarLinuxEditorTestAccess::clickNavigationArrow(editor, k, direction);
+            check(anchor() == expected, label + what + " (anchor "
+                  + anchor().getRelativePathFrom(bsl::dataRoot()) + ", expected "
+                  + expected.getRelativePathFrom(bsl::dataRoot()) + ")");
+            if (anchor() == expected)
+                check(payloadMatches(expected), label + what + " loads the file's own content");
+        };
+
+        // CAPTURED (randomizer) / CANDIDATE (preset, kit): the factory-only cycle.
+        reset();
+        check(anchor() == juce::File(), label + "Init leaves no anchor");
+        step(1, claps, "Init -> next is the first factory item");
+        step(-1, snare, "first -> previous wraps to the last factory item");
+        step(1, claps, "last -> next wraps to the first factory item");
+        step(1, drumFill, "first -> next is the second item");
+        step(1, hatShuffle, "next crosses into the following category folder");
+        step(-1, drumFill, "previous crosses back to the preceding category folder");
+        // CANDIDATE only: Init -> previous has no capture (original lands on an unknown item).
+        reset();
+        step(-1, snare, "[candidate, uncaptured] Init -> previous is the last item");
+
+        // CANDIDATE: a menu-selected item becomes the anchor for the next arrow.
+        loadAsMenuDoes(hatShuffle);
+        step(1, snare, "[candidate] after a menu selection next continues from the selected item");
+        loadAsMenuDoes(claps);
+        step(-1, snare, "[candidate] after a menu selection previous continues from the selected item");
+
+        // CANDIDATE: an unreadable entry (undecodable text) is skipped in both directions.
+        check(broken.replaceWithText("this is not valid state"), label + "write unreadable fixture");
+        loadAsMenuDoes(drumFill);
+        step(1, hatShuffle, "[candidate] next skips an unreadable entry");
+        step(-1, drumFill, "[candidate] previous skips an unreadable entry");
+        check(anchor() != broken, label + "the unreadable entry never becomes the anchor");
+
+        // CANDIDATE: a deleted anchor is not in the list, so next restarts at the
+        // first item and previous restarts at the last item.
+        loadAsMenuDoes(hatShuffle);
+        check(hatShuffle.deleteFile(), label + "delete the current anchor file");
+        step(1, claps, "[candidate] deleted anchor -> next is the first item");
+        write(hatShuffle);
+        loadAsMenuDoes(hatShuffle);
+        check(hatShuffle.deleteFile(), label + "delete the current anchor file again");
+        step(-1, snare, "[candidate] deleted anchor -> previous is the last item");
+
+        // CANDIDATE: User items follow all Factory items, ordered by full path
+        // (case-insensitive) with subfolders interleaved, not directories first.
+        // The popup menu lists directories first, so the arrow order differs from the
+        // menu order when a User folder holds loose files beside subfolders. The
+        // original User-tree order was never captured; do not read this as parity.
+        const auto userAlpha = file(user, "Alpha");
+        const auto userLower = file(user, "b");
+        const auto userNested = file(user, "Zed Folder/a");
+        for (const auto& f : { userAlpha, userLower, userNested }) write(f);
+        loadAsMenuDoes(snare);
+        step(1, userAlpha, "[candidate] last Factory item -> next is the first User item");
+        step(1, userLower, "[candidate] User order is case-insensitive full-path (Alpha, b)");
+        step(1, userNested, "[candidate] User subfolder file sorts by full path (Zed Folder after b)");
+        step(1, claps, "[candidate] last User item -> next wraps to the first Factory item");
+        step(-1, userNested, "[candidate] first Factory item -> previous wraps to the last User item");
+    }
+
+    if (previousXdg.isEmpty()) unsetenv("XDG_DATA_HOME");
+    else setenv("XDG_DATA_HOME", previousXdg.toRawUTF8(), 1);
+    xdg.deleteRecursively();
+}
+
+// Original 1.6.2 keeps the last selected Randomizer across an application restart:
+// randomizer-menu-original-20261126/04-randomizer.png (first boot) reads "Init";
+// the session ended on Basic Drum Fill; randomizer-default-original-20261126/
+// 04-randomizer.png (a later boot) reads "Basic Drum Fill" with its Drum Selection,
+// Chance, Spacing, Min and Max restored. The Linux standalone persists through
+// JUCE's StandalonePluginHolder: closeButtonPressed() -> savePluginState() stores
+// getStateInformation() as base64 under "filterState"; the holder constructor ->
+// reloadPluginState() feeds it to setStateInformation(). This test reproduces that
+// exact sequence (state -> base64 -> PropertySet -> base64 -> new processor) for a
+// loaded, non-Init Randomizer. The existing Init-only host-recall check
+// (testRandomizerInit) and the state codec round trip do not cover this case.
+// It does not exercise the real settings file or the window close; those remain
+// manual/VM steps.
+void testRandomizerSurvivesStandaloneRestart(const juce::File& output)
+{
+    const auto previousXdg = juce::SystemStats::getEnvironmentVariable("XDG_DATA_HOME", "");
+    const auto xdg = output.getChildFile("randomizer-restart-xdg");
+    xdg.deleteRecursively();
+    setenv("XDG_DATA_HOME", xdg.getFullPathName().toRawUTF8(), 1);
+
+    auto settings = bsl::RandomizerSettings::makeInitPreset();
+    settings.selectedPads = { 1, 2, 3 };
+    settings.selectedSubdivisions = { 3, 5 };
+    settings.fillEmptyOnly = true;
+    settings.triggerChance = 0.89f;
+    settings.spacing = 0.44f;
+    settings.minimumVelocity = 0.59f;
+    settings.maximumVelocity = 0.87f;
+    const auto file = bsl::dataRoot().getChildFile(
+        "Factory/Step Randomizer/Basic Randomizers/Basic Drum Fill.bslrandom");
+    check(file.getParentDirectory().createDirectory().wasOk()
+              && file.replaceWithText(bsl::statecodec::encodeRandomizerJson(settings)),
+          "write restart Randomizer fixture");
+
+    auto first = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_Standalone);
+    check(first->loadRandomizerFile(file), "load a non-Init Randomizer before the simulated close");
+    const auto expected = bsl::statecodec::encodeRandomizerJson(first->projectState().randomizer);
+
+    // JUCE closeButtonPressed(): savePluginState() into the settings PropertySet.
+    juce::MemoryBlock saved;
+    first->getStateInformation(saved);
+    juce::PropertySet properties;
+    properties.setValue("filterState", saved.toBase64Encoding());
+    first.reset();
+
+    // JUCE holder construction: reloadPluginState() into a brand-new processor.
+    auto second = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_Standalone);
+    juce::MemoryBlock restored;
+    check(restored.fromBase64Encoding(properties.getValue("filterState")) && restored.getSize() > 0,
+          "settings value decodes back to the saved state bytes");
+    second->setStateInformation(restored.getData(), static_cast<int>(restored.getSize()));
+    BeatScholarLinuxEditor editor(*second);
+    editor.setSize(960, 540);
+
+    check(bsl::statecodec::encodeRandomizerJson(second->projectState().randomizer) == expected,
+          "restart restores every Randomizer setting, not only the name");
+    check(juce::File(juce::String(second->projectState().ui.randomizerFile)) == file,
+          "restart restores the selected Randomizer identity (arrow anchor)");
+    // The preset header is populated when its panel is opened.
+    childWithId<juce::TextButton>(editor, "brush.dice")->onClick();
+    auto* header = childWithId<juce::TextButton>(editor, "random.preset");
+    check(header != nullptr && header->getButtonText() == "Basic Drum Fill",
+          "restart shows the restored Randomizer name in the header, not Init");
+
+    // The arrows continue from the restored anchor after a restart.
+    const auto next = bsl::dataRoot().getChildFile(
+        "Factory/Step Randomizer/Hi Hats/Hat Shuffle.bslrandom");
+    check(next.getParentDirectory().createDirectory().wasOk()
+              && next.replaceWithText(bsl::statecodec::encodeRandomizerJson(
+                  bsl::RandomizerSettings::makeInitPreset())),
+          "write restart successor fixture");
+    BeatScholarLinuxEditorTestAccess::clickNavigationArrow(editor, 2, 1);
+    check(juce::File(juce::String(second->projectState().ui.randomizerFile)) == next,
+          "next arrow after a restart continues from the restored Randomizer");
+
+    if (previousXdg.isEmpty()) unsetenv("XDG_DATA_HOME");
+    else setenv("XDG_DATA_HOME", previousXdg.toRawUTF8(), 1);
+    xdg.deleteRecursively();
+}
+
 int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI initialiser;
@@ -11044,6 +11460,18 @@ int main(int argc, char** argv)
         testCommandDragPansBlankGrid(output);
         testSubdivisionDragReference(output.getChildFile("subdivision-drag"));
         std::cout << "Zoom reference failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc > 2 && juce::String(argv[2]) == "--randomizer-restart")
+    {
+        testRandomizerSurvivesStandaloneRestart(output);
+        std::cout << "Randomizer restart failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc > 2 && juce::String(argv[2]) == "--navigation-arrows")
+    {
+        testNavigationArrows(output);
+        std::cout << "Navigation arrow failures: " << failures << '\n';
         return failures == 0 ? 0 : 1;
     }
     if (argc > 2 && juce::String(argv[2]) == "--randomizer-files")
@@ -11279,6 +11707,8 @@ int main(int argc, char** argv)
     testShiftLaneResetOverridesRandomizer();
     testBarMeterDragIsOneUndoStep(output);
     testArrowTransformRequiresClick();
+    testNavigationArrows(output);
+    testRandomizerSurvivesStandaloneRestart(output);
     testKeyboardFocus(output);
     std::cout << "Editor regression failures: " << failures << '\n';
     return failures == 0 ? 0 : 1;

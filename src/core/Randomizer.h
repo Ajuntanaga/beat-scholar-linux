@@ -11,9 +11,11 @@ class Randomizer
 {
 public:
     static void apply(BeatState& beat, const RandomizerSettings& settings,
-                      std::uint32_t seed, float defaultVelocity = GlobalState{}.defaultVelocity);
+                      std::uint32_t seed, float defaultVelocity = GlobalState{}.defaultVelocity,
+                      bool* triggerHistory = nullptr);
     static void apply(LaneState& lane, const RandomizerSettings& settings,
-                      std::uint32_t seed, float defaultVelocity = GlobalState{}.defaultVelocity);
+                      std::uint32_t seed, float defaultVelocity = GlobalState{}.defaultVelocity,
+                      bool* triggerHistory = nullptr);
 };
 
 } // namespace bsl

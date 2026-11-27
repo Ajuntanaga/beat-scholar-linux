@@ -175,6 +175,7 @@ private:
     void updateEffectDragValue();
     void showPresetMenu();
     void savePresetAs();
+    void showPresetSaveToMenu(bool kit);
     void showKitPresetMenu();
     void showRandomizerPresetMenu();
     void showRandomizerSaveToMenu();
@@ -374,7 +375,15 @@ private:
     bool draggingBarDenominator_ = false;
     std::size_t draggingBarIndex_ = 0;
     int dragStartBarNumerator_ = 4;
-    int dragStartBarDenominator_ = 4;
+    struct DenominatorDragValue
+    {
+        int denominator = 0;
+        double normalized = 0.0;
+    };
+    std::vector<DenominatorDragValue> denominatorDragValues_;
+    bsl::PatternId denominatorDragPattern_ = 0;
+    double dragStartDenominatorValue_ = 0.0;
+    void syncDenominatorDragValues();
     juce::File currentPresetFile() const { return juce::File(juce::String(processor_.projectState().ui.presetFile)); }
     juce::File currentKitFile() const { return juce::File(juce::String(processor_.projectState().ui.kitFile)); }
     juce::File currentRandomizerFile() const { return juce::File(juce::String(processor_.projectState().ui.randomizerFile)); }

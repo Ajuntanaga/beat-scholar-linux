@@ -448,6 +448,158 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
                     raise RuntimeError('Sampler-disabled flam produced unexpected audio')
                 midi_result = {'pass': True, 'module_sha256': digest, 'host_tempo': 120,
                                'saved_tempo': flam['global']['beatsPerMinute'], 'note_on_samples': [0, 4800]}
+            # Real close/relaunch persistence of a loaded, non-Init Randomizer.
+            # Isolated fixtures live in the harness's own XDG_DATA_HOME, and the
+            # Randomizer is loaded with real pointer clicks on the Randomizer
+            # panel's next arrow, so the Standalone holder's own close-button
+            # save and constructor reload are the only persistence path used.
+            # Original 1.6.2 reference: randomizer-menu-original-20261126/04-randomizer.png
+            # (first boot, "Init") and randomizer-default-original-20261126/
+            # 04-randomizer.png (later boot, restored Basic Drum Fill + settings).
+            random_dir = scratch / 'data' / 'BeatScholarLinux' / 'User' / 'Randomizers'
+            random_dir.mkdir(parents=True, exist_ok=True)
+            fixtures = {
+                'Restart A': dict(selectedPads=[1, 2, 3], selectedSubdivisions=[3, 5],
+                                  noteSelectionEnabled=True, slicingEnabled=True,
+                                  triggeringEnabled=True, velocityEnabled=True,
+                                  fillEmptyOnly=True, triggerChance=0.75, spacing=0.25,
+                                  minimumVelocity=0.5, maximumVelocity=0.875),
+                'Restart B': dict(selectedPads=[0, 4], selectedSubdivisions=[1, 2],
+                                  noteSelectionEnabled=True, slicingEnabled=True,
+                                  triggeringEnabled=True, velocityEnabled=True,
+                                  fillEmptyOnly=False, triggerChance=0.25, spacing=0.75,
+                                  minimumVelocity=0.125, maximumVelocity=0.625),
+                'Restart C': dict(selectedPads=[2], selectedSubdivisions=[2, 4],
+                                  noteSelectionEnabled=True, slicingEnabled=True,
+                                  triggeringEnabled=True, velocityEnabled=True,
+                                  fillEmptyOnly=False, triggerChance=0.5, spacing=0.5,
+                                  minimumVelocity=0.25, maximumVelocity=0.75)}
+            for name, settings in fixtures.items():
+                (random_dir / f'{name}.bslrandom').write_text(json.dumps(
+                    {'schemaVersion': flam['schemaVersion'], 'randomizer': settings}))
+            # The candidate's own arrow order: Factory/Step Randomizer then
+            # User/Randomizers, each sorted by full path, ignoring case.
+            def arrow_order():
+                files = []
+                for root in (scratch / 'data' / 'BeatScholarLinux' / 'Factory' / 'Step Randomizer', random_dir):
+                    found = [p for p in root.rglob('*') if p.is_file()
+                             and p.suffix.lower() in ('.json', '.bslrandom')
+                             and p.stem.lower() != 'version']
+                    files += sorted(found, key=lambda p: str(p).lower())
+                return files
+            order = arrow_order()
+            if len(order) < 2 or order[0].stem != 'Restart A' or order[1].stem != 'Restart B':
+                raise RuntimeError(f'Unexpected Randomizer arrow order for the isolated data root: {order}')
+
+            def launch(first_frame):
+                global app
+                app = subprocess.Popen([str(executable)], env=env, stdout=log, stderr=subprocess.STDOUT)
+                window = wait_window('Beat Scholar Linux', app.pid)
+                # Read geometry only after the first paint: the mapped size can precede layout.
+                capture_rendered_window(window, first_frame)
+                metrics = dict(line.split('=', 1) for line in
+                               xdo('getwindowgeometry', '--shell', window).stdout.splitlines() if '=' in line)
+                return window, int(metrics['X']), int(metrics['Y']), int(metrics['WIDTH']), int(metrics['HEIGHT'])
+
+            def click_design(window, width, height, cx, cy):
+                scale = width / 1280
+                gesture('mousemove', '--window', window, round(cx * scale),
+                        round(height - 720 * scale + cy * scale), 'click', '1')
+
+            def park(window, width, height):
+                scale = width / 1280
+                gesture('mousemove', '--window', window, round(1038 * scale),
+                        round(height - 720 * scale + 30 * scale))
+
+            def header_crop(frame, left, top, width, height):
+                scale = width / 1280
+                editor_top = top + height - 720 * scale
+                # randomizerTab_ is designRect(546, 524, 360, 30) in PluginEditor.cpp.
+                return frame.crop((round(left + 546 * scale), round(editor_top + 524 * scale),
+                                   round(left + 906 * scale), round(editor_top + 554 * scale))).convert('RGB')
+
+            def header_difference(first, second):
+                return sum(max(abs(a - b) for a, b in zip(p, q)) > 12
+                           for p, q in zip(first.getdata(), second.getdata()))
+
+            def same_settings(saved_settings, expected):
+                keys = set(expected)
+                return (keys <= set(saved_settings) and all(
+                    math.isclose(saved_settings[key], value, abs_tol=1e-6)
+                    if isinstance(value, float) else saved_settings[key] == value
+                    for key, value in expected.items()))
+
+            def open_randomizer_panel(window, width, height, project):
+                # The reopened editor restores the panel when the saved UI state
+                # says it was open; the first launch has to open it itself.
+                if not project['ui'].get('randomizerVisible'):
+                    click_design(window, width, height, 1012, 31)
+                    time.sleep(0.5)
+
+            # 1. First launch: Init, then load Restart A with the real next arrow.
+            main, left, top, width, height = launch('randomizer-restart-first-launch.png')
+            gesture('windowfocus', '--sync', main)
+            open_randomizer_panel(main, width, height, {'ui': {}})
+            park(main, width, height)
+            time.sleep(0.3)
+            init_frame = ImageGrab.grab(xdisplay=os.environ['DISPLAY'])
+            init_header = header_crop(init_frame, left, top, width, height)
+            click_design(main, width, height, 1044, 541)
+            park(main, width, height)
+            time.sleep(0.5)
+            capture_rendered_window(main, 'randomizer-restart-loaded.png')
+            loaded_frame = ImageGrab.grab(xdisplay=os.environ['DISPLAY'])
+            loaded_header = header_crop(loaded_frame, left, top, width, height)
+            close_app(app, main)
+            first = saved_project(scratch)
+            if Path(first['ui'].get('randomizerFile', '')).resolve() != order[0].resolve():
+                raise RuntimeError(f"Next arrow from Init did not select Restart A: {first['ui'].get('randomizerFile')}")
+            if not same_settings(first['randomizer'], fixtures['Restart A']):
+                raise RuntimeError(f"Saved Randomizer settings differ from Restart A: {first['randomizer']}")
+            if not first['ui'].get('randomizerVisible'):
+                raise RuntimeError('Randomizer panel state was not saved as open')
+            if header_difference(init_header, loaded_header) < 100:
+                raise RuntimeError('Randomizer header did not change from Init after loading Restart A')
+
+            # 2. Relaunch and close untouched: the whole project, including the
+            # Randomizer settings and anchor, must remain equal after decoding the app's own save.
+            main, left, top, width, height = launch('randomizer-restart-restored.png')
+            gesture('windowfocus', '--sync', main)
+            open_randomizer_panel(main, width, height, first)
+            park(main, width, height)
+            time.sleep(0.5)
+            restored_frame = ImageGrab.grab(xdisplay=os.environ['DISPLAY'])
+            restored_header = header_crop(restored_frame, left, top, width, height)
+            close_app(app, main)
+            restored = saved_project(scratch)
+            if restored != first:
+                raise RuntimeError('Randomizer project changed across close/reopen')
+            # Text identity: the restored header reads like Restart A, not Init.
+            # (Pixel check; the exact string is covered by testRandomizerSurvivesStandaloneRestart.)
+            if header_difference(loaded_header, restored_header) > 40:
+                raise RuntimeError('Restored Randomizer header differs from the loaded Restart A header')
+            if header_difference(init_header, restored_header) < 100:
+                raise RuntimeError('Restored Randomizer header still looks like Init')
+
+            # 3. Relaunch again: the next arrow must continue from the restored
+            # anchor (Restart A -> Restart B), not restart from the beginning.
+            main, left, top, width, height = launch('randomizer-restart-relaunch-3.png')
+            gesture('windowfocus', '--sync', main)
+            open_randomizer_panel(main, width, height, restored)
+            click_design(main, width, height, 1044, 541)
+            park(main, width, height)
+            time.sleep(0.5)
+            capture_rendered_window(main, 'randomizer-restart-next-after-restore.png')
+            close_app(app, main)
+            continued = saved_project(scratch)
+            if Path(continued['ui'].get('randomizerFile', '')).resolve() != order[1].resolve():
+                raise RuntimeError('Next arrow after restart did not continue from the restored anchor '
+                                   f"to Restart B: {continued['ui'].get('randomizerFile')}")
+            if not same_settings(continued['randomizer'], fixtures['Restart B']):
+                raise RuntimeError(f"Saved Randomizer settings differ from Restart B: {continued['randomizer']}")
+            if continued['patterns'] != restored['patterns']:
+                raise RuntimeError('Randomizer navigation changed the saved pattern data')
+
             (output / 'result.json').write_text(json.dumps({'settings_opened_from_cog': True,
                 'settings_closed_with_escape': True, 'device_selection_changed': True,
                 'saved_output_device': audio_saved['audioOutputDeviceName'],
@@ -459,6 +611,10 @@ with tempfile.TemporaryDirectory(prefix='bsl-standalone-') as scratch:
                 'filled_beats_persisted': True,
                 'actual_ctrl_drag_flam_persisted': True, 'flam_width': args.flam_width,
                 'flam_vst3_midi': midi_result,
+                'randomizer_restart': {'selected_via_real_next_arrow': True,
+                                       'settings_and_anchor_recalled': True,
+                                       'next_arrow_continues_from_restored_anchor': True,
+                                       'restored_name': order[0].stem, 'next_name': order[1].stem},
                 'clean_exit': True, 'saved_tempo_bpm': 137, 'project_recalled': True,
                 'captures_have_rendered_content': True,
                 'main_geometry': geometry, 'click': [x, y]}, indent=2) + '\n')

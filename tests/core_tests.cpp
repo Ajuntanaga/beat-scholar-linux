@@ -511,18 +511,22 @@ void testRandomizerFillEmptyProtectsHitsWithTriggeringDisabled()
     bsl::Randomizer::apply(beat, settings, 42u);
     check(beat.slices[0].enabled && beat.slices[0].padIndex == 0,
           "fill-empty protects an existing hit even with Step Triggering disabled");
-    check(beat.slices[1] == emptySlice,
-          "disabled Step Triggering leaves empty slices unchanged with fill-empty on");
+    check(!beat.slices[1].enabled && beat.slices[1].padIndex == 1
+              && beat.slices[1].velocity == emptySlice.velocity
+              && beat.slices[1].velocityAssigned == emptySlice.velocityAssigned,
+          "disabled Step Triggering preserves silence while Drum Selection updates data with fill-empty on");
 
     settings.fillEmptyOnly = false;
     bsl::Randomizer::apply(beat, settings, 42u);
     check(beat.slices[0].enabled && beat.slices[0].padIndex == 1,
           "Drum Selection replaces existing hits when fill-empty is off");
-    check(beat.slices[1] == emptySlice,
-          "disabled Step Triggering leaves empty slices unchanged with fill-empty off");
+    check(!beat.slices[1].enabled && beat.slices[1].padIndex == 1
+              && beat.slices[1].velocity == emptySlice.velocity
+              && beat.slices[1].velocityAssigned == emptySlice.velocityAssigned,
+          "disabled Step Triggering preserves silence while Drum Selection updates data with fill-empty off");
 }
 
-void testRandomizerDefaultsEmptyPadSelectionToKick()
+void testRandomizerEmptyPadSelectionPreservesExistingDrum()
 {
     bsl::RandomizerSettings settings;
     settings.selectedPads.clear();
@@ -538,8 +542,8 @@ void testRandomizerDefaultsEmptyPadSelectionToKick()
     bsl::Randomizer::apply(beat, settings, 123u);
 
     check(std::all_of(beat.slices.begin(), beat.slices.end(), [](const auto& slice) {
-              return slice.enabled && slice.padIndex == 0;
-          }), "empty randomizer pad selection defaults generated hits to Kick");
+              return slice.enabled && slice.padIndex == 7;
+          }), "empty randomizer pad selection preserves existing drum assignments");
 }
 
 void testFillEmptySpacingSkipsPreservedHits()
@@ -637,7 +641,86 @@ void testLaneRandomizerSpacingCrossesBeatBoundaries()
     }
 }
 
-void testRandomizerUsesDefaultVelocityWhenVelocityModuleIsOff()
+void testRandomizerHistorySurvivesActions()
+{
+    auto state = bsl::ProjectState::makeDefault();
+    state.patterns[0].bars = { bsl::BarState::make(1, 4) };
+    state.patterns[0].lanes = { bsl::LaneState::make(1) };
+    state.patterns[0].lanes[0].beats[0].setSubdivision(3);
+    auto& settings = state.randomizer;
+    settings.slicingEnabled = false;
+    settings.noteSelectionEnabled = false;
+    settings.velocityEnabled = false;
+    settings.triggeringEnabled = true;
+    settings.fillEmptyOnly = false;
+    settings.triggerChance = 1.0f;
+    settings.spacing = 1.0f;
+    bsl::ProjectEditor editor(state);
+    for (int action = 0; action < 3; ++action)
+    {
+        if (action == 1)
+            editor.randomizeBeatData(editor.state().patterns[0].lanes[0].beats[0], 123u);
+        else
+            check(editor.randomizeLane(0, 0, 123u), "repeated randomization succeeds");
+        const auto& slices = editor.state().patterns[0].lanes[0].beats[0].slices;
+        for (int i = 0; i < 3; ++i)
+            check(slices[i].enabled == ((i + action) % 2 == 0),
+                  "trigger history alternates odd-slice actions like original");
+    }
+}
+
+void testRandomizerUpdatesDisabledSliceData()
+{
+    bsl::RandomizerSettings settings;
+    settings.slicingEnabled = false;
+    settings.selectedPads = { 7 };
+    settings.triggerChance = 0.0f;
+    settings.minimumVelocity = settings.maximumVelocity = 0.42f;
+    auto beat = bsl::BeatState::withSubdivision(1, 2, 0.91f);
+    bsl::Randomizer::apply(beat, settings, 123u);
+    check(!beat.slices[0].enabled, "zero chance leaves the randomized slice silent");
+    check(beat.slices[0].padIndex == 7,
+          "note selection updates disabled slices as in the original");
+    check(std::abs(beat.slices[0].velocity - 0.42f) < 1.0e-7f,
+          "velocity selection updates disabled slices as in the original");
+    check(beat.slices[0].velocityAssigned,
+          "randomized silent slice retains its assigned velocity");
+}
+
+void testRandomizerSlicingAddsSilentDefaults()
+{
+    bsl::RandomizerSettings settings;
+    settings.selectedSubdivisions = { 4 };
+    settings.noteSelectionEnabled = settings.triggeringEnabled = settings.velocityEnabled = false;
+    auto beat = bsl::BeatState::withSubdivision(3, 7, 1.0f);
+    beat.slices[1].enabled = false;
+    const auto first = beat.slices[0];
+    bsl::Randomizer::apply(beat, settings, 123u);
+    check(beat.slices.size() == 4 && beat.slices[0] == first,
+          "randomizer subdivision preserves existing slices");
+    check(!beat.slices[3].enabled && beat.slices[3].padIndex == 0
+              && std::abs(beat.slices[3].velocity - 0.8f) < 1.0e-7f,
+          "randomizer new slice starts silent with original Kick and 0.8 velocity defaults");
+
+    settings.slicingEnabled = false;
+    settings.triggeringEnabled = true;
+    settings.triggerChance = 1.0f;
+    settings.spacing = 0.5f;
+    bsl::Randomizer::apply(beat, settings, 123u, 0.37f);
+    auto project = bsl::ProjectState::makeDefault();
+    for (auto& lane : project.patterns[0].lanes)
+        for (auto& existingBeat : lane.beats)
+            for (auto& slice : existingBeat.slices)
+                slice.enabled = false;
+    project.patterns[0].lanes[0].beats[0] = beat;
+    const auto events = bsl::Sequencer::exportPattern(project, 0, 960);
+    check(events.size() == 4, "triggering activates all four randomized slices");
+    check(std::any_of(events.begin(), events.end(), [](const auto& event) {
+              return event.tick == 720 && event.padIndex == 0 && event.velocity == 102;
+          }), "new randomized slice plays its stored 0.8 velocity, not the brush velocity");
+}
+
+void testRandomizerPreservesVelocityWhenModuleIsOff()
 {
     bsl::RandomizerSettings settings;
     settings.slicingEnabled = false;
@@ -650,12 +733,12 @@ void testRandomizerUsesDefaultVelocityWhenVelocityModuleIsOff()
         slice.enabled = false;
     bsl::Randomizer::apply(beat, settings, 123u, 0.37f);
     check(std::all_of(beat.slices.begin(), beat.slices.end(), [](const auto& slice) {
-              return slice.enabled && std::abs(slice.velocity - 0.37f) < 1.0e-7f;
-          }), "disabled randomizer velocity module applies the brush default velocity");
+              return slice.enabled && std::abs(slice.velocity - 0.91f) < 1.0e-7f;
+          }), "disabled randomizer velocity module preserves existing velocity");
     bsl::Randomizer::apply(beat, settings, 123u);
     check(std::all_of(beat.slices.begin(), beat.slices.end(), [](const auto& slice) {
-              return slice.enabled && std::abs(slice.velocity - 100.0f / 127.0f) < 1.0e-7f;
-          }), "omitting the randomizer brush argument uses MIDI velocity 100");
+              return slice.enabled && std::abs(slice.velocity - 0.91f) < 1.0e-7f;
+          }), "omitting the brush argument still preserves existing velocity");
 }
 
 void testPatternLifecycleKeepsTriggerNotesUnique()
@@ -1112,11 +1195,14 @@ int main()
     testBeatTransformsPreserveNotesAndVelocities();
     testRandomizerIsDeterministicAndRespectsFillEmpty();
     testRandomizerFillEmptyProtectsHitsWithTriggeringDisabled();
-    testRandomizerDefaultsEmptyPadSelectionToKick();
+    testRandomizerEmptyPadSelectionPreservesExistingDrum();
     testFillEmptySpacingSkipsPreservedHits();
     testRandomizerConditionalSpacingProbability();
     testLaneRandomizerSpacingCrossesBeatBoundaries();
-    testRandomizerUsesDefaultVelocityWhenVelocityModuleIsOff();
+    testRandomizerHistorySurvivesActions();
+    testRandomizerUpdatesDisabledSliceData();
+    testRandomizerSlicingAddsSilentDefaults();
+    testRandomizerPreservesVelocityWhenModuleIsOff();
     testPatternLifecycleKeepsTriggerNotesUnique();
     testRemovingEarlierPatternPreservesSelection();
     testPatternTriggerNotesSelectPatterns();

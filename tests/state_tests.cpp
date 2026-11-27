@@ -23,6 +23,36 @@ void check(bool condition, std::string_view message)
 
 
 
+void testMidiDisplayDefaultsAndLegacyRecall()
+{
+    auto source = bsl::ProjectState::makeDefault();
+    check(source.ui.middleCOctave == 4 && source.ui.midiFlats && source.ui.midiNoteNames,
+          "fresh projects use reference C4, flats and note names");
+    for (const int octave : { 3, 4 })
+        for (const bool flats : { false, true })
+        {
+            source.ui.middleCOctave = octave;
+            source.ui.midiFlats = flats;
+            auto restored = bsl::ProjectState::makeDefault();
+            const auto matches = [&] {
+                return restored.ui.middleCOctave == octave && restored.ui.midiFlats == flats;
+            };
+            const auto host = bsl::statecodec::encode(source);
+            check(bsl::statecodec::decode(host.getData(), host.getSize(), restored) && matches(),
+                  "host recall preserves both MIDI display preferences");
+            check(bsl::statecodec::decodePresetJson(bsl::statecodec::encodePresetJson(source), restored)
+                      && matches(), "preset recall preserves both MIDI display preferences");
+        }
+    auto old = juce::JSON::parse(bsl::statecodec::encodePresetJson(source));
+    auto* ui = old.getProperty("ui", {}).getDynamicObject();
+    ui->removeProperty("middleCOctave");
+    ui->removeProperty("midiFlats");
+    auto restored = bsl::ProjectState::makeDefault();
+    check(bsl::statecodec::decodePresetJson(juce::JSON::toString(old), restored)
+              && restored.ui.middleCOctave == 3 && !restored.ui.midiFlats,
+          "older native saves with omitted preferences keep C3 and sharps");
+}
+
 void testModuleEnablesRoundTripIndependentlyOfRouting()
 {
     for (const bool aux : { false, true })
@@ -1582,6 +1612,7 @@ void testMidiChannelRecallAndCompatibility()
 
 int main()
 {
+    testMidiDisplayDefaultsAndLegacyRecall();
     testMidiChannelRecallAndCompatibility();
     testModuleEnablesRoundTripIndependentlyOfRouting();
     testSwingReferenceDefaultsAndExplicitRecall();

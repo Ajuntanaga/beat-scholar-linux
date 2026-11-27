@@ -104,8 +104,14 @@ bool ProjectEditor::randomizeLane(std::size_t patternIndex, std::size_t laneInde
         return false;
     beginEdit();
     Randomizer::apply(state_.patterns[patternIndex].lanes[laneIndex], state_.randomizer,
-                      seed, state_.global.defaultVelocity);
+                      seed, state_.global.defaultVelocity, &previousRandomizerTrigger_);
     return true;
+}
+
+void ProjectEditor::randomizeBeatData(BeatState& beat, std::uint32_t seed)
+{
+    Randomizer::apply(beat, state_.randomizer, seed, state_.global.defaultVelocity,
+                      &previousRandomizerTrigger_);
 }
 
 bool ProjectEditor::addBar(std::size_t patternIndex, BarState bar)

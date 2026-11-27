@@ -267,8 +267,8 @@ struct UiState
     bool randomizerVisible = false;
     bool darkMode = false;
     bool midiNoteNames = true;
-    bool midiFlats = false;
-    int middleCOctave = 3;
+    bool midiFlats = true;
+    int middleCOctave = 4;
     // Content identity belongs to the saved project, not an editor instance.
     std::string presetFile;
     std::string kitFile;

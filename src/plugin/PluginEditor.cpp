@@ -317,7 +317,9 @@ std::vector<BeatSpan> beatSpans(const bsl::PatternState& pattern)
 class BeatScholarLinuxEditor::RandomizerSaveOverlay final : public juce::Component
 {
 public:
-    explicit RandomizerSaveOverlay(BeatScholarLinuxEditor& editor) : editor_(editor)
+    enum class Kind { randomizer, preset, kit };
+    explicit RandomizerSaveOverlay(BeatScholarLinuxEditor& editor, Kind kind = Kind::randomizer)
+        : editor_(editor), kind_(kind)
     {
         setComponentID("random.save.overlay");
         setWantsKeyboardFocus(true);
@@ -425,7 +427,11 @@ public:
     void focusName() { name_.grabKeyboardFocus(); }
 
 private:
-    static juce::File userDirectory() { return dataRoot().getChildFile("User/Randomizers"); }
+    juce::File userDirectory() const
+    {
+        return dataRoot().getChildFile(kind_ == Kind::kit ? "User/Kits"
+            : kind_ == Kind::preset ? "User/Presets" : "User/Randomizers");
+    }
     static bool validName(const juce::String& name)
     {
         return name.isNotEmpty() && name != "." && name != ".."
@@ -451,9 +457,13 @@ private:
     }
     void write(const juce::File& file)
     {
-        if (file.getParentDirectory().createDirectory().failed() || !editor_.processor_.saveRandomizerFile(file))
-        { showError("Could not save randomizer"); return; }
-        editor_.status_.setText("Randomizer saved", juce::dontSendNotification);
+        if (file.getParentDirectory().createDirectory().failed())
+        { showError("Could not create preset category"); return; }
+        const bool saved = kind_ == Kind::kit ? editor_.processor_.saveKitFile(file)
+            : kind_ == Kind::preset ? editor_.processor_.savePresetFile(file)
+            : editor_.processor_.saveRandomizerFile(file);
+        if (!saved) { showError("Could not save preset"); return; }
+        editor_.status_.setText("Preset saved", juce::dontSendNotification);
         editor_.configureModuleControls();
         close();
     }
@@ -462,10 +472,11 @@ private:
         const auto name = name_.getText().trim();
         if (!validName(name)) { showError("Enter a valid preset name"); return; }
         const auto directory = userDirectory().getChildFile(category_.getText());
-        const auto file = directory.getChildFile(name + ".bslrandom");
+        const auto file = directory.getChildFile(name + (kind_ == Kind::kit ? ".bslkit"
+            : kind_ == Kind::preset ? ".bslpreset" : ".bslrandom"));
         if (!file.exists()) { write(file); return; }
         juce::AlertWindow::showAsync(juce::MessageBoxOptions().withIconType(juce::MessageBoxIconType::QuestionIcon)
-            .withTitle("Replace randomizer preset?").withMessage("Replace " + name + "?")
+            .withTitle("Replace preset?").withMessage("Replace " + name + "?")
             .withButton("Replace").withButton("Cancel").withAssociatedComponent(this),
             [safe = juce::Component::SafePointer<RandomizerSaveOverlay>(this), file](int result) {
                 if (safe != nullptr && result == 1) safe->write(file);
@@ -473,6 +484,7 @@ private:
     }
 
     BeatScholarLinuxEditor& editor_;
+    Kind kind_;
     juce::TextEditor name_, newCategory_;
     juce::ComboBox category_;
     juce::TextButton add_ { "+" }, save_ { "SAVE" };
@@ -3134,7 +3146,8 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
             draggingBarIndex_ = *bar;
             dragStartY_ = position.y;
             dragStartBarNumerator_ = pattern.bars[*bar].numerator;
-            dragStartBarDenominator_ = pattern.bars[*bar].denominator;
+            syncDenominatorDragValues();
+            dragStartDenominatorValue_ = denominatorDragValues_[*bar].normalized;
             if (arrangementPadBounds().contains(position))
                 draggingBarDenominator_ = position.x >= arrangementItemBounds(*bar).getCentreX();
             else
@@ -3203,6 +3216,7 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
         }
         else
             processor_.selectPatternFromUi(*pattern);
+        syncDenominatorDragValues();
         repaint();
         return;
     }
@@ -3346,13 +3360,16 @@ void BeatScholarLinuxEditor::mouseDrag(const juce::MouseEvent& event)
         const int delta = (dragStartY_ - position.y) / 12;
         if (draggingBarDenominator_)
         {
-            static constexpr std::array<int, 4> denominators { 2, 4, 8, 16 };
-            const auto found = std::find(denominators.begin(), denominators.end(),
-                                         dragStartBarDenominator_);
-            const int start = found == denominators.end()
-                                  ? 1 : static_cast<int>(std::distance(denominators.begin(), found));
-            const int denominator = denominators[static_cast<std::size_t>(
-                std::clamp(start - delta, 0, static_cast<int>(denominators.size() - 1)))];
+            // Original TransparentSlider retains its continuous position between
+            // gestures; the denominator model truncates normalized * 3.
+            // See docs/REFERENCES.md, Bar note-value dragging.
+            auto& value = denominatorDragValues_[draggingBarIndex_];
+            const double sensitivity = event.mods.isShiftDown() ? 750.0 : 250.0;
+            value.normalized = std::clamp(dragStartDenominatorValue_
+                + (dragStartY_ - position.y) / sensitivity, 0.0, 1.0);
+            static constexpr std::array<int, 4> denominators { 16, 8, 4, 2 };
+            const int denominator = denominators[static_cast<std::size_t>(value.normalized * 3.0)];
+            value.denominator = denominator;
             if (pattern.bars[draggingBarIndex_].denominator != denominator)
             {
                 processor_.projectEditor().setBarMeter(state.activePattern, draggingBarIndex_,
@@ -3575,9 +3592,8 @@ void BeatScholarLinuxEditor::randomizeBeatInStroke(const BeatHit& hit)
     auto& state = processor_.projectState();
     auto& beat = state.patterns[state.activePattern].lanes[hit.lane].beats[hit.beat];
     auto changed = beat;
-    bsl::Randomizer::apply(changed, state.randomizer,
-                          static_cast<std::uint32_t>(juce::Time::getMillisecondCounter()),
-                          state.global.defaultVelocity);
+    processor_.projectEditor().randomizeBeatData(changed,
+        static_cast<std::uint32_t>(juce::Time::getMillisecondCounter()));
     if (changed == beat)
         return;
     if (!beatDragCheckpointed_)
@@ -3706,9 +3722,31 @@ void BeatScholarLinuxEditor::selectPad(std::size_t pad, bool audition)
     updateControlsFromState();
 }
 
+void BeatScholarLinuxEditor::syncDenominatorDragValues()
+{
+    const auto& state = processor_.projectState();
+    const auto& pattern = state.patterns[state.activePattern];
+    if (denominatorDragPattern_ != pattern.runtimeId
+        || denominatorDragValues_.size() != pattern.bars.size())
+    {
+        denominatorDragValues_.assign(pattern.bars.size(), {});
+        denominatorDragPattern_ = pattern.runtimeId;
+    }
+    static constexpr std::array<int, 4> denominators { 16, 8, 4, 2 };
+    for (std::size_t i = 0; i < pattern.bars.size(); ++i)
+    {
+        auto& value = denominatorDragValues_[i];
+        if (value.denominator == pattern.bars[i].denominator) continue;
+        value.denominator = pattern.bars[i].denominator;
+        const auto found = std::find(denominators.begin(), denominators.end(), value.denominator);
+        value.normalized = static_cast<double>(std::distance(denominators.begin(), found)) / 3.0;
+    }
+}
+
 void BeatScholarLinuxEditor::updateControlsFromState()
 {
     cancelPatternInteraction();
+    syncDenominatorDragValues();
     clampView();
     configureModuleControls();
 }
@@ -4758,6 +4796,7 @@ void BeatScholarLinuxEditor::showKitPresetMenu()
     int nextId = 1000;
     juce::PopupMenu menu;
     menu.addItem(3, "Init Preset");
+    menu.addItem(6, "Default Preset");
     menu.addSeparator();
     menu.addSectionHeader("Factory:");
     addDirectoryMenu(menu, factoryDirectory, MenuContent::kit, entries, nextId);
@@ -4765,7 +4804,9 @@ void BeatScholarLinuxEditor::showKitPresetMenu()
     menu.addSectionHeader("User:");
     addDirectoryMenu(menu, userDirectory, MenuContent::kit, entries, nextId);
     menu.addSeparator();
-    menu.addItem(1, "Save Preset");
+    menu.addItem(4, "Save To Menu");
+    menu.addItem(1, "Save to File");
+    menu.addItem(5, "Load from File");
     menu.addItem(2, "Show Preset Dir");
     menu.setLookAndFeel(&lookAndFeel_);
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(kitMenu_),
@@ -4773,11 +4814,34 @@ void BeatScholarLinuxEditor::showKitPresetMenu()
                         entries = std::move(entries), userDirectory](int result) {
         if (safe == nullptr || result == 0)
             return;
+        // Original kit Default preserves the current kit (two captured states).
+        if (result == 6)
+            return;
         if (result == 3)
         {
             safe->processor_.resetKitToInit();
             safe->status_.setText("Kit initialized", juce::dontSendNotification);
             safe->updateControlsFromState();
+            return;
+        }
+        if (result == 4)
+        {
+            safe->showPresetSaveToMenu(true);
+            return;
+        }
+        if (result == 5)
+        {
+            safe->chooser_ = std::make_unique<juce::FileChooser>(
+                "Load Kit Preset", userDirectory, "*.json;*.bslkit");
+            safe->chooser_->launchAsync(juce::FileBrowserComponent::openMode
+                                          | juce::FileBrowserComponent::canSelectFiles,
+                [safe](const juce::FileChooser& chooser) {
+                    if (safe == nullptr || chooser.getResult() == juce::File {}) return;
+                    const bool loaded = safe->processor_.loadKitFile(chooser.getResult());
+                    safe->status_.setText(loaded ? "Kit loaded" : "Could not load kit",
+                                          juce::dontSendNotification);
+                    if (loaded) safe->configureModuleControls();
+                });
             return;
         }
         if (result == 1)
@@ -4915,6 +4979,16 @@ void BeatScholarLinuxEditor::showRandomizerSaveToMenu()
     randomizerSave_->focusName();
 }
 
+void BeatScholarLinuxEditor::showPresetSaveToMenu(bool kit)
+{
+    randomizerSave_ = std::make_unique<RandomizerSaveOverlay>(*this,
+        kit ? RandomizerSaveOverlay::Kind::kit : RandomizerSaveOverlay::Kind::preset);
+    addAndMakeVisible(*randomizerSave_);
+    randomizerSave_->setBounds(getLocalBounds());
+    randomizerSave_->enterModalState(false, nullptr, false);
+    randomizerSave_->focusName();
+}
+
 void BeatScholarLinuxEditor::showPresetMenu()
 {
     const auto root = dataRoot();
@@ -4926,47 +5000,58 @@ void BeatScholarLinuxEditor::showPresetMenu()
     int nextId = 1000;
     juce::PopupMenu menu;
     menu.addItem(4, "Init Preset");
+    menu.addItem(6, "Default Preset");
     menu.addSeparator();
     menu.addSectionHeader("Factory:");
     addDirectoryMenu(menu, factoryPresets, MenuContent::preset, entries, nextId);
     menu.addSeparator();
     menu.addSectionHeader("User:");
     addDirectoryMenu(menu, userPresets, MenuContent::preset, entries, nextId);
-    menu.addItem(1, "Load preset file...");
     menu.addSeparator();
-    menu.addItem(2, "Save Preset");
+    menu.addItem(5, "Save To Menu");
+    menu.addItem(2, "Save to File");
+    menu.addItem(1, "Load from File");
     menu.addItem(3, "Show Preset Dir");
     menu.addSeparator();
     const auto& global = processor_.projectState().global;
-    menu.addItem(10, "Sequencer", true, global.sequencerEnabled);
-    menu.addItem(11, "Sampler", true, global.samplerEnabled);
-    menu.addItem(12, "AUX", true, global.auxEnabled);
-    menu.addItem(13, "Master", true, global.masterEnabled);
+    juce::PopupMenu enable;
+    enable.addItem(10, "Sequencer", true, global.sequencerEnabled);
+    enable.addItem(11, "Sampler", true, global.samplerEnabled);
+    enable.addItem(12, "AUX", true, global.auxEnabled);
+    enable.addItem(13, "Master", true, global.masterEnabled);
     const auto& ui = processor_.projectState().ui;
     menu.addSeparator();
-    menu.addItem(20, "Dark Mode", true, ui.darkMode);
-    juce::PopupMenu midiDisplay, middleC, noteFormat, accidentals;
-    middleC.addItem(21, "C3", true, ui.middleCOctave == 3);
-    middleC.addItem(22, "C4", true, ui.middleCOctave == 4);
-    noteFormat.addItem(23, "Note Names", true, ui.midiNoteNames);
-    noteFormat.addItem(24, "Note Numbers", true, !ui.midiNoteNames);
-    accidentals.addItem(25, "Sharps", true, !ui.midiFlats);
-    accidentals.addItem(26, "Flats", true, ui.midiFlats);
-    midiDisplay.addSubMenu("Middle C", middleC);
-    midiDisplay.addSubMenu("Format", noteFormat);
-    midiDisplay.addSubMenu("Accidentals", accidentals);
-    menu.addSubMenu("MIDI Display", midiDisplay);
+    // Original 1.6.2 tail order: MIDI Channel, MIDI Display, Dark Mode, Enable
+    // (main-kit-menu-reference-20261127/main-menu.png).
+    juce::PopupMenu midiDisplay;
+    // Original MIDI Display is three direct toggles, not nested choice menus.
+    midiDisplay.addItem(21, "Middle C = C4", true, ui.middleCOctave == 4);
+    midiDisplay.addItem(23, "Note Names", true, ui.midiNoteNames);
+    midiDisplay.addItem(25, "Use Sharps", true, !ui.midiFlats);
     juce::PopupMenu midiChannel;
     midiChannel.addItem(100, "Any", true, global.midiChannel == 0);
     for (int channel = 1; channel <= 16; ++channel)
         midiChannel.addItem(100 + channel, juce::String(channel), true, global.midiChannel == channel);
     menu.addSubMenu("MIDI Channel", midiChannel);
+    menu.addSubMenu("MIDI Display", midiDisplay);
+    menu.addItem(20, "Dark Mode", true, ui.darkMode);
+    menu.addSubMenu("Enable", enable);
     menu.setLookAndFeel(&lookAndFeel_);
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(preset_),
                        [safe = juce::Component::SafePointer<BeatScholarLinuxEditor>(this),
                         entries = std::move(entries), userPresets, factoryPresets](int result) {
         if (safe == nullptr || result == 0)
             return;
+        if (result == 6)
+        {
+            // Original main Default loads this factory tutorial preset.
+            const auto file = factoryPresets.getChildFile("Tutorial/This is Beat Scholar.json");
+            const bool loaded = safe->processor_.loadPresetFile(file);
+            safe->status_.setText(loaded ? "Loaded This is Beat Scholar" : "Default factory preset unavailable",
+                                  juce::dontSendNotification);
+            if (loaded) safe->updateControlsFromState();
+            return;
+        }
         if (result == 4)
         {
             safe->processor_.resetPresetToInit();
@@ -4997,6 +5082,11 @@ void BeatScholarLinuxEditor::showPresetMenu()
             userPresets.startAsProcess();
             return;
         }
+        if (result == 5)
+        {
+            safe->showPresetSaveToMenu(false);
+            return;
+        }
         if (result == 2)
         {
             safe->savePresetAs();
@@ -5016,9 +5106,9 @@ void BeatScholarLinuxEditor::showPresetMenu()
             safe->processor_.projectEditor().checkpoint();
             auto& ui = safe->processor_.projectState().ui;
             if (result == 20) ui.darkMode = !ui.darkMode;
-            if (result == 21 || result == 22) ui.middleCOctave = result == 21 ? 3 : 4;
-            if (result == 23 || result == 24) ui.midiNoteNames = result == 23;
-            if (result == 25 || result == 26) ui.midiFlats = result == 26;
+            if (result == 21) ui.middleCOctave = ui.middleCOctave == 4 ? 3 : 4;
+            if (result == 23) ui.midiNoteNames = !ui.midiNoteNames;
+            if (result == 25) ui.midiFlats = !ui.midiFlats;
             safe->processor_.markProjectDirty();
             safe->configureModuleControls();
             safe->repaint();
@@ -5395,6 +5485,7 @@ void BeatScholarLinuxEditor::updateDisplay(int activityCount)
     processor_.publishProjectStateIfNeeded();
     const auto& state = processor_.projectState();
     const auto patternId = state.patterns[state.activePattern].runtimeId;
+    syncDenominatorDragValues();
     const auto epoch = processor_.playbackActivityEpoch();
     const bool sequencing = processor_.isTransportPlaying() && state.global.sequencerEnabled;
     // Original 1.6.2 polls each slice's playhead listener on its 10 ms timer.
