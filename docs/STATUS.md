@@ -994,3 +994,8 @@ Refined the large clap and both hi-hat drawings against retained original captur
 The 14 single-layer factory pads now omit the blend slider and place One Shot below the glyph, matching all retained original 1.6.2 factory layouts. Kick and Snare Hit retain two selectors and their blend slider. Custom-sample layout is unchanged.
 
 Both uninstalled formats built. All 32 wrapper panel pairs match; four dual-layer panels and the custom-sample screenshot remain unchanged. Single-layer One Shot positions differ by at most 0.5 pixels from retained originals. Lower-panel checks passed; editor/actual VST3 regressions passed 2/2. The serial job reported 1.1G peak under a 3 GiB cap. Full parity remains open. Evidence: recovery/sample-layer-layout-20261127/RESULT.md.
+
+
+## One Shot drawing proportions — 2026-11-26
+
+Matched the indicator scale, label size/inset and dual-layer vertical placement to retained original captures. Both uninstalled formats built; 32/32 reference comparisons improved, 32/32 wrapper crops match, and 32/32 images are unchanged outside the control. The 960 ink bounds match; small 1280 raster differences remain. Lower-panel checks passed, followed by editor/actual VST3 regressions (2/2). Final bounded job peak: 969.2 MiB. Live REAPER and installed artifacts were preserved. Evidence: recovery/oneshot-drawing-20261127/RESULT.md. Full parity remains open.

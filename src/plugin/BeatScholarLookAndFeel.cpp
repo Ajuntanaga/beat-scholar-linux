@@ -1413,16 +1413,18 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
     }
     if (id == "sample.oneshot")
     {
-        auto content = area.reduced(2.0f);
-        const float diameter = std::min(content.getHeight() * 0.56f, content.getWidth() * 0.22f);
+        // Original 960/1280 captures: ten design pixels including the outline,
+        // with an eleven-pixel label and a separate, stable text inset.
+        const float scale = area.getHeight() / 24.0f;
+        const float diameter = 9.0f * scale;
         const auto dot = juce::Rectangle<float>(diameter, diameter)
-                             .withCentre({ content.getX() + diameter * 0.7f, content.getCentreY() });
+                             .withCentre({ area.getX() + 11.0f * scale, area.getCentreY() });
         g.setColour(tint);
-        g.drawEllipse(dot, std::max(1.0f, diameter * 0.10f));
+        g.drawEllipse(dot, scale);
         if (button.getToggleState())
             g.fillEllipse(dot);
-        g.setFont(font(std::max(8.0f, area.getHeight() * 0.37f)));
-        g.drawText("One Shot", content.withTrimmedLeft(diameter * 1.55f).toNearestInt(),
+        g.setFont(font(11.0f * scale));
+        g.drawText("One Shot", area.withTrimmedLeft(22.0f * scale).toNearestInt(),
                    juce::Justification::centredLeft);
         return;
     }

@@ -2411,7 +2411,7 @@ void BeatScholarLinuxEditor::resized()
     // Single-layer factory pads place One Shot below the glyph; Kick/Snare
     // leave room for their second selector. Keep custom-sample geometry separate.
     const float oneShotY = custom ? 672.0f
-                                 : (processor_.projectState().ui.selectedPad <= 1 ? 650.0f : 671.0f);
+                                 : (processor_.projectState().ui.selectedPad <= 1 ? 651.0f : 671.0f);
     oneShot_.setBounds(designRect(getWidth(), getHeight(), custom ? 440.0f : 452.0f, oneShotY, 80.0f, 24.0f));
 
     if (module_ == Module::randomizer)
