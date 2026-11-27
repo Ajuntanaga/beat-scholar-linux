@@ -1117,12 +1117,13 @@ void BeatScholarLinuxProcessor::getStateInformation(juce::MemoryBlock& destinati
     copyParameterValuesToState(state);
     // MIDI switches run even with the editor closed. Save the executed
     // selection, not merely its pending UI notification or a queued trigger.
+    const auto pendingUi = pendingUiPattern_.load(std::memory_order_acquire);
     const auto activeId = audioPattern_.load(std::memory_order_acquire);
     const auto active = std::find_if(state.patterns.begin(), state.patterns.end(),
         [activeId](const auto& pattern) { return pattern.runtimeId == activeId; });
     // A structural UI edit can select a new pattern before timer publication.
     // Preserve that newer selection instead of restoring the previous audio ID.
-    if (active != state.patterns.end()
+    if (pendingUi == 0 && active != state.patterns.end()
         && state.patterns[state.activePattern].runtimeId == lastPublishedActivePattern_)
         state.activePattern = static_cast<std::size_t>(std::distance(state.patterns.begin(), active));
     destination = bsl::statecodec::encode(state);

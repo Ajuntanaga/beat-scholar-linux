@@ -969,6 +969,18 @@ void testAbsurdHostPositionsRenderNothing()
     auto huge = good;
     huge.absoluteSampleStart = std::numeric_limits<std::int64_t>::max() / 2;
     check(bsl::Sequencer::render(state, huge).empty(), "absurd sample position renders nothing");
+    for (const double bpm : { 1.0e-12, 1.0e12, 1.0e300 })
+    {
+        auto extreme = good;
+        extreme.bpm = bpm;
+        check(bsl::Sequencer::render(state, extreme).empty(),
+              "extreme finite tempo renders nothing");
+    }
+    std::array<bsl::MidiEvent, 16> negativeEvents;
+    auto negative = good;
+    negative.absoluteSampleStart = -100000000000000LL;
+    check(bsl::Sequencer::renderInto(state, negative, 0, negativeEvents) == 0,
+          "negative timeline skips directly to the first nonnegative cycle");
     auto slow = good;
     slow.bpm = 1.0e-320;
     check(bsl::Sequencer::render(state, slow).empty(), "denormal tempo renders nothing");

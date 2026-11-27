@@ -81,7 +81,7 @@ std::vector<MidiEvent> Sequencer::render(const ProjectState& state,
 {
     std::vector<MidiEvent> result;
     if (!transport.playing || !state.global.sequencerEnabled || !state.isValid()
-        || patternIndex >= state.patterns.size() || transport.sampleRate <= 0.0
+        || patternIndex >= state.patterns.size() || !transport.timingUsable()
         || transport.bpm <= 0.0 || transport.blockSize <= 0)
         return result;
 
@@ -113,7 +113,7 @@ void forEachEvent(const ProjectState& state, const TransportFrame& transport,
                   std::size_t patternIndex, Emit&& emit) noexcept
 {
     if (!transport.playing || !state.global.sequencerEnabled || !state.isValid()
-        || patternIndex >= state.patterns.size() || transport.sampleRate <= 0.0
+        || patternIndex >= state.patterns.size() || !transport.timingUsable()
         || transport.bpm <= 0.0 || transport.blockSize <= 0)
         return;
 
@@ -163,7 +163,8 @@ void forEachEvent(const ProjectState& state, const TransportFrame& transport,
                                                            * samplesPerQuarter
                                                      : static_cast<double>(transport.absoluteSampleStart);
                     const auto firstCycle = static_cast<std::int64_t>(
-                        std::floor((timelineStart - localSample) / patternSamples));
+                        std::max(std::floor((timelineStart - localSample) / patternSamples),
+                                 std::ceil(-localSample / patternSamples)));
 
                     for (std::int64_t cycle = firstCycle; ; ++cycle)
                     {
@@ -228,7 +229,7 @@ std::size_t Sequencer::renderBatch(const ProjectState& state,
     // once, then restrict each pass to the time range still able to enter the heap.
     if (!transport.playing || !state.global.sequencerEnabled
         || (!cursor.started && !state.isValid())
-        || patternIndex >= state.patterns.size() || transport.sampleRate <= 0.0
+        || patternIndex >= state.patterns.size() || !transport.timingUsable()
         || transport.bpm <= 0.0 || transport.blockSize <= 0)
     {
         cursor.exhausted = true;

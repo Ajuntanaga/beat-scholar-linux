@@ -141,6 +141,7 @@ void sortSteps(std::span<PlaybackStep> steps, std::size_t ideal)
 // must not reach the double -> int64 cycle casts below (undefined behaviour).
 bool hostPositionUsable(const TransportFrame& frame)
 {
+    if (!frame.timingUsable()) return false;
     const double host = std::isfinite(frame.quarterNotePosition) ? frame.quarterNotePosition
         : static_cast<double>(frame.absoluteSampleStart) / frame.sampleRate * frame.bpm / 60.0;
     const double origin = std::isfinite(frame.patternPhaseQuarterNotes)

@@ -1026,3 +1026,14 @@ Removed an intermediate integer truncation that darkened the measured lower-pane
 ## Bar-header glyph rendering — 2026-11-26
 
 Bar-header Duplicate now uses filled overlapping pages, and Add/Remove use the measured compact strokes and placement from original 1.6.2 captures. Both uninstalled formats built. All 18 original/icon crop comparisons improve; mean max-channel pixel difference falls from 36.60 to 12.77. All eight standalone/VST3 header crop pairs match. Existing original-coordinate click tests pass. The full editor regression and actual VST3 loading smoke passed 2/2 in 73.03 seconds. Final screenshots were inspected. Small raster/alignment differences remain; these figures describe this repair, not overall parity. The bounded job peaked at 969.2 MiB with zero swap and exited. Live REAPER and installed artifacts were preserved. Evidence: recovery/header-glyph-rendering-20261127/RESULT.md.
+
+
+## Review of cebd211: repairs validated
+- Rejected extreme finite transport tempos and unsafe samples-per-quarter before render allocation/cycle arithmetic; shared guard covers audio and visual playback.
+- forEachEvent skips negative cycles directly instead of iterating from a far-negative host timeline.
+- Integer fields distinguish missing defaults from unrepresentable numbers; corrupt legacy event numbers reject import. Legacy note-name fallback remains unchanged.
+- Pending UI pattern selection wins over the older audio selection during host state save.
+- CI collects both standalone-settings width directories and allows ten minutes for both runs.
+- Standalone/VST3 build succeeded; full CTest 13/13 passed (142.25 s), then expanded core/scheduler regressions 2/2 passed (0.77 s). CI path/timeout assertions and diff whitespace check passed.
+- Validation isolated, 3 GiB/no-swap/two-core cap, observed memory peak 1,337,516,032 bytes. No REAPER, installed plugin, VM, archive, or governor changes.
+- Evidence: review-cebd211-repairs/{build.log,tests.log,targeted-build.log,targeted-tests.log}. CI was inspected locally, not executed remotely. Unvoted speculative test-quality findings not treated as confirmed defects. Full reference parity remains open.

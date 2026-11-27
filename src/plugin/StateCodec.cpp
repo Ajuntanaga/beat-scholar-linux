@@ -289,7 +289,8 @@ int checkedInt(const juce::var& value, int fallback)
 
 int readInt(const juce::var& parent, const char* name, int fallback)
 {
-    return checkedInt(get(parent, name), fallback);
+    const auto value = get(parent, name);
+    return value.isVoid() ? fallback : checkedInt(value, std::numeric_limits<int>::min());
 }
 
 float readFloat(const juce::var& parent, const char* name, float fallback)
@@ -1382,8 +1383,14 @@ bool importLegacyPresetJson(const juce::String& json, ProjectState& destination)
         if (bars == nullptr || bars->isEmpty() || lanes == nullptr || lanes->isEmpty())
             return false;
         for (const auto& sourceBar : *bars)
-            pattern.bars.push_back(BarState::make(readInt(sourceBar, "num", 4),
-                                                  readInt(sourceBar, "denum", 4)));
+        {
+            const int numerator = readInt(sourceBar, "num", 4);
+            const int denominator = readInt(sourceBar, "denum", 4);
+            if (numerator == std::numeric_limits<int>::min()
+                || denominator == std::numeric_limits<int>::min())
+                return false;
+            pattern.bars.push_back(BarState::make(numerator, denominator));
+        }
         std::size_t loopBeatCount = 0;
         for (const auto& bar : pattern.bars)
             loopBeatCount += static_cast<std::size_t>(bar.numerator);
@@ -1410,8 +1417,9 @@ bool importLegacyPresetJson(const juce::String& json, ProjectState& destination)
                 {
                     const auto event = get(step, "Event");
                     SliceState slice;
-                    slice.padIndex = static_cast<std::uint8_t>(
-                        std::clamp(readInt(event, "noteNum", 36), 0, 127));
+                    const int note = readInt(event, "noteNum", 36);
+                    if (note == std::numeric_limits<int>::min()) return false;
+                    slice.padIndex = static_cast<std::uint8_t>(std::clamp(note, 0, 127));
                     slice.velocity = readFloat(event, "velocity", 0.8f);
                     slice.enabled = readBool(step, "enabled", false);
                     slice.velocityAssigned = true;

@@ -9884,6 +9884,13 @@ void testStateSaveUsesExecutedMidiPatternWithoutEditor()
             check(restored.activePattern == expected,
                   "host state saves the executed MIDI pattern, excluding unexecuted queued triggers");
         }
+        processor->selectPatternFromUi(0);
+        juce::MemoryBlock uiSaved;
+        processor->getStateInformation(uiSaved);
+        bsl::ProjectState uiRestored;
+        check(bsl::statecodec::decode(uiSaved.getData(), uiSaved.getSize(), uiRestored)
+                  && uiRestored.activePattern == 0,
+              "save preserves a published UI selection before audio consumes it");
         processor->setPlayHead(nullptr);
         processor->releaseResources();
     }

@@ -496,6 +496,22 @@ void testPlaybackRejectsAbsurdHostPositions()
         check(playback.renderBatch(state, bad, 0, plans[0], events, cursor) == 0 && cursor.exhausted,
               "an absurd host position plays nothing and ends the cursor");
     }
+    const auto visualPlan = bsl::SequencerPlayback::prepareVisualPattern(state.patterns[0]);
+    for (const double bpm : { 1.0e-12, 1.0e12, 1.0e300 })
+    {
+        auto bad = frame;
+        bad.bpm = bpm;
+        playback.reset();
+        bsl::PlaybackCursor cursor;
+        check(playback.renderBatch(state, bad, 0, plans[0], events, cursor) == 0
+                  && cursor.exhausted, "extreme finite tempo ends audio cursor");
+        std::array<bsl::VisualSliceEvent, 16> visuals;
+        bsl::VisualSliceCursor visualCursor;
+        check(bsl::SequencerPlayback::renderVisualBatch(state, bad, 0, visualPlan,
+                  visuals, visualCursor) == 0 && visualCursor.exhausted,
+              "extreme finite tempo ends visual cursor");
+    }
+
 }
 
 void testCapturedDenseTiming()

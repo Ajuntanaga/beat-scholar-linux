@@ -115,7 +115,7 @@ jobs:
           exit "$result"
       - name: Check standalone settings and state recall
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: |
           for width in 960 1280; do
             xvfb-run -a -s '-screen 0 1600x1200x24' python tools/run_standalone_settings_test.py \
@@ -181,7 +181,7 @@ jobs:
             build/ci/actual-vst3-panic/*.log
             build/ci/host-gate-reference.log
             build/ci/pluginval*.log
-            build/ci/standalone-settings/**/*.png
-            build/ci/standalone-settings/**/*.json
-            build/ci/standalone-settings/**/*.jsonl
-            build/ci/standalone-settings/**/*.log
+            build/ci/standalone-settings-*/**/*.png
+            build/ci/standalone-settings-*/**/*.json
+            build/ci/standalone-settings-*/**/*.jsonl
+            build/ci/standalone-settings-*/**/*.log

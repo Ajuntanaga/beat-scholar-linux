@@ -735,10 +735,9 @@ void testLegacyPresetAdapterPublishesOnlyValidatedProject()
     for (const auto* badNumber : { "1e100", "-1e100" })
     {
         auto restored = state;
-        check(bsl::statecodec::importLegacyPresetJson(
-                  json.replace("\"noteNum\":36", juce::String("\"noteNum\":") + badNumber), restored)
-                  && restored.patterns[0].lanes[0].beats[0].slices[0].padIndex == 0,
-              "out-of-range legacy event numbers use the default without narrowing overflow");
+        check(!bsl::statecodec::importLegacyPresetJson(
+                  json.replace("\"noteNum\":36", juce::String("\"noteNum\":") + badNumber), restored),
+              "out-of-range legacy event numbers reject the corrupt preset");
     }
     auto lowNoteState = state;
     auto highNoteState = state;

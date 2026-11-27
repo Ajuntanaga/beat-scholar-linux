@@ -3,6 +3,7 @@
 #include "core/Model.h"
 
 #include <compare>
+#include <cmath>
 #include <cstdint>
 #include <cstddef>
 #include <limits>
@@ -24,6 +25,14 @@ struct TransportFrame
     double patternPhaseQuarterNotes = std::numeric_limits<double>::quiet_NaN();
     // Host automation overrides the immutable project snapshot for this block.
     std::optional<SwingReference> swingReference;
+
+    bool timingUsable() const
+    {
+        const double samplesPerQuarter = sampleRate * 60.0 / bpm;
+        return std::isfinite(sampleRate) && bpm >= 1.0e-3 && bpm <= 1.0e5
+            && std::isfinite(samplesPerQuarter)
+            && samplesPerQuarter >= 1.0 && samplesPerQuarter <= 1.0e12;
+    }
 };
 
 struct MidiEvent
