@@ -98,3 +98,10 @@ This establishes failure for the tested arrangements, not every arrangement
 or a compatible backup format. A working Linux export would be an intentional
 difference from those observations; that choice remains pending. Original
 import behavior has not been verified.
+
+## MIDI display on factory preset loads
+
+Desktop 1.6.2 retains Use Sharps, Middle C = C3, and numeric note display
+when advancing from Init to a factory preset. Legacy preset loading preserves
+these application choices in the Linux build. Native preset and host-state
+recall continue restoring their explicitly saved display settings.

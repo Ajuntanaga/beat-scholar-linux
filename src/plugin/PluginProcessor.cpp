@@ -1385,7 +1385,15 @@ bool BeatScholarLinuxProcessor::loadPresetFile(const juce::File& file)
     // Resolve the displayed kit identity without reloading or replacing the
     // sampler settings embedded in this preset. Native state keeps its path.
     if (!hostEnvelope && !file.hasFileExtension("bslpreset"))
+    {
         restored.ui.kitFile = legacyPresetKitFile(json).toStdString();
+        // Original factory preset navigation retains the application's MIDI
+        // display choices; legacy musical presets do not carry these settings.
+        const auto& ui = projectEditor_.state().ui;
+        restored.ui.midiFlats = ui.midiFlats;
+        restored.ui.middleCOctave = ui.middleCOctave;
+        restored.ui.midiNoteNames = ui.midiNoteNames;
+    }
     const bool preserveKit = projectEditor_.state().global.kitLocked;
     auto current = projectEditor_.state();
     copyParameterValuesToState(current);

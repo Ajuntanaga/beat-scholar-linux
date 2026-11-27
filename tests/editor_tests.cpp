@@ -6245,7 +6245,14 @@ void testLegacyPresetKitIdentity(const juce::File& output)
       }}]}}})json";
     check(preset.replaceWithText(json), "write synthetic tutorial preset");
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    processor->projectState().ui.midiFlats = false;
+    processor->projectState().ui.middleCOctave = 3;
+    processor->projectState().ui.midiNoteNames = false;
     check(processor->loadPresetFile(preset), "load legacy tutorial identity");
+    check(!processor->projectState().ui.midiFlats
+              && processor->projectState().ui.middleCOctave == 3
+              && !processor->projectState().ui.midiNoteNames,
+          "legacy preset load retains sharps, C3 and numeric display as in the original");
     check(processor->projectState().ui.kitFile == kit.getFullPathName().toStdString(),
           "legacy preset resolves kit identity by id despite differing names");
     check(processor->projectState().kit.pads[0].name == "Preset Kick"
