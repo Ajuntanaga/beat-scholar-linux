@@ -197,6 +197,7 @@ private:
     void showSubdivisionMenu();
     void showSwingReferenceMenu();
     void showAbout();
+    void showOpenSourceLicenses();
     void loadAdjacentPreset(int delta);
     void loadAdjacentKit(int delta);
     void loadAdjacentRandomizer(int delta);
@@ -310,6 +311,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> bpmAttachment_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> routingAttachment_;
     std::unique_ptr<juce::FileChooser> chooser_;
+    std::unique_ptr<juce::DocumentWindow> licensesWindow_;
     class RandomizerSaveOverlay;
     std::unique_ptr<RandomizerSaveOverlay> randomizerSave_;
     juce::TextEditor numericEntry_;

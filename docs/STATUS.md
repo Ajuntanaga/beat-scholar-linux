@@ -42,3 +42,14 @@ a bar. That added regression also awaits publication.
 - Real audio-device change/reconnect behavior has not been established.
 - These checks cover development candidates. Equivalence with currently
   installed binaries has not been established.
+
+### Open Source Libs window (2026-11-27)
+
+Main, kit and randomizer preset menus now open a shared license window. Its
+600 x 400 layout follows the captured original; the list and offline notices
+cover this build's JUCE, chowdsp_fft and Montserrat dependencies. The original
+link action remains unverified. Standalone, VST3 and editor targets built
+serially; the isolated editor suite passed in 74.12 seconds, including notice
+content, navigation, close/reopen and editor-owned window cleanup. Screenshots
+were inspected. An earlier test run received SIGTERM without a result; the
+retry passed. Full reference parity remains open.

@@ -83,6 +83,13 @@ if(BSL_BUILD_PLUGIN)
     )
     set_target_properties(BeatScholarFonts PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+    juce_add_binary_data(BeatScholarNotices
+        HEADER_NAME BeatScholarNotices.h
+        NAMESPACE BeatScholarNotices
+        SOURCES third_party/JUCE/LICENSE.md third_party/chowdsp_fft/LICENSE.txt assets/fonts/OFL.txt
+    )
+    set_target_properties(BeatScholarNotices PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
     juce_add_plugin(BeatScholarLinux
         COMPANY_NAME "Ajuntanaga"
         BUNDLE_ID "com.ajuntanaga.beatscholarlinux"
@@ -114,6 +121,7 @@ if(BSL_BUILD_PLUGIN)
     )
     target_link_libraries(BeatScholarLinux PRIVATE
         BeatScholarFonts
+        BeatScholarNotices
         beat_scholar_core
         juce::juce_audio_utils
         juce::juce_cryptography

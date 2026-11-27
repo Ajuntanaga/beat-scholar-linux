@@ -63,6 +63,12 @@ struct BeatScholarLinuxProcessorTestAccess
 
 struct BeatScholarLinuxEditorTestAccess
 {
+    static juce::DocumentWindow* showLicenses(BeatScholarLinuxEditor& editor)
+    {
+        editor.showOpenSourceLicenses();
+        return editor.licensesWindow_.get();
+    }
+
     static std::vector<juce::Component*> randomizerBody(BeatScholarLinuxEditor& editor, int module)
     {
         if (module == 0) return { &editor.randomClearPads_, &editor.randomAllPads_ };
@@ -2858,7 +2864,7 @@ private:
             if (menu != nullptr)
             {
                 // Original main-menu.png: channel, display, theme, then enable.
-                const char* orderedTitles[] = { "Show Preset Dir", "MIDI Channel",
+                const char* orderedTitles[] = { "Show Preset Dir", "Open Source Libs", "MIDI Channel",
                                                 "MIDI Display", "Dark Mode", "Enable" };
                 int previousY = -1;
                 for (const auto* title : orderedTitles)
@@ -6223,6 +6229,59 @@ void testPresetNamesSurviveEditorAndHostRecall(const juce::File& output)
     auto* undo = childWithId<juce::TextButton>(*editor, "toolbar.undo");
     if (undo != nullptr) undo->onClick();
     checkNames(*editor);
+}
+
+void testOpenSourceLicenses(const juce::File& output)
+{
+    auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+    auto* window = BeatScholarLinuxEditorTestAccess::showLicenses(*editor);
+    check(window != nullptr && window->isVisible(), "license window opens");
+    if (window == nullptr) return;
+    auto* content = window->getContentComponent();
+    check(content != nullptr && content->getWidth() == 600 && content->getHeight() == 400,
+          "license window matches original client dimensions");
+    if (content == nullptr) return;
+    auto capture = [&](const juce::String& name) {
+        const auto snapshot = content->createComponentSnapshot(content->getLocalBounds());
+        auto stream = output.getChildFile(name).createOutputStream();
+        if (stream != nullptr) { stream->setPosition(0); stream->truncate(); }
+        check(stream != nullptr && juce::PNGImageFormat().writeImageToStream(snapshot, *stream),
+              "write license screenshot");
+    };
+    capture("open-source-licenses.png");
+    std::vector<juce::TextButton*> links;
+    juce::TextButton* back = nullptr;
+    juce::TextEditor* text = nullptr;
+    for (auto* child : content->getChildren())
+    {
+        if (auto* button = dynamic_cast<juce::TextButton*>(child))
+        {
+            if (button->getButtonText() == "License") links.push_back(button);
+            if (button->getButtonText() == "Back") back = button;
+        }
+        if (auto* field = dynamic_cast<juce::TextEditor*>(child)) text = field;
+    }
+    check(links.size() == 3 && back != nullptr && text != nullptr,
+          "all shipped dependency notice controls exist");
+    if (links.size() != 3 || back == nullptr || text == nullptr) return;
+    const std::array<juce::String, 3> expected { "JUCE", "MIT License", "SIL OPEN FONT LICENSE" };
+    for (std::size_t i = 0; i < links.size(); ++i)
+    {
+        links[i]->onClick();
+        check(text->isVisible() && text->isReadOnly() && text->getText().contains(expected[i])
+              && text->getText().length() > 500, "license link opens its complete bundled notice");
+        if (i == 0) capture("open-source-license-text.png");
+        back->onClick();
+        check(!text->isVisible() && links[i]->isVisible(), "return to license list");
+    }
+    window->closeButtonPressed();
+    check(!window->isVisible(), "license close hides window");
+    check(BeatScholarLinuxEditorTestAccess::showLicenses(*editor) == window && window->isVisible(),
+          "license window reopens without duplication");
+    juce::Component::SafePointer<juce::DocumentWindow> safe(window);
+    editor.reset();
+    check(safe == nullptr, "closing plugin editor releases license window");
 }
 
 void testLegacyPresetKitIdentity(const juce::File& output)
@@ -11646,6 +11705,7 @@ int main(int argc, char** argv)
     testRandomizerVelocityEndpointsStayVisibleAndOrdered();
     testTutorialRandomizerNumericUnits(output);
     testPresetNamesSurviveEditorAndHostRecall(output);
+    testOpenSourceLicenses(output);
     testLegacyPresetKitIdentity(output);
     testContentNavigationSkipsMalformedFiles(output);
     testMasterUndoPreservesHostAutomation();

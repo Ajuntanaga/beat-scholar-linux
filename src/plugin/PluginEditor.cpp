@@ -1,6 +1,7 @@
 #include "plugin/PluginEditor.h"
 #include "plugin/DataPaths.h"
 #include "plugin/FactorySampleOrder.h"
+#include "BeatScholarNotices.h"
 
 #include "core/Randomizer.h"
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -13,6 +14,113 @@
 #include <utility>
 
 namespace {
+
+// The original presents a 600 x 400 notice window with 36px table rows.
+// List dependencies shipped by this build, with their bundled notices offline.
+class LicenseLink final : public juce::TextButton
+{
+    void paintButton(juce::Graphics& g, bool highlighted, bool down) override
+    {
+        if (highlighted || down || hasKeyboardFocus(true))
+        {
+            g.setColour(juce::Colour(0xff444444));
+            g.fillRect(getLocalBounds().reduced(1));
+        }
+        g.setColour(juce::Colours::white);
+        g.setFont(13.0f);
+        g.drawText(getButtonText(), getLocalBounds(), juce::Justification::centred);
+    }
+};
+
+class LicenseContent final : public juce::Component
+{
+public:
+    LicenseContent()
+    {
+        const std::array<juce::String, 3> names { "JUCE", "chowdsp_fft", "Montserrat" };
+        for (std::size_t i = 0; i < names.size(); ++i)
+        {
+            labels_[i].setText(names[i], juce::dontSendNotification);
+            labels_[i].setFont(juce::Font(juce::FontOptions(13.0f)));
+            labels_[i].setJustificationType(juce::Justification::centred);
+            labels_[i].setColour(juce::Label::textColourId, juce::Colours::white);
+            addAndMakeVisible(labels_[i]);
+            links_[i].setButtonText("License");
+            links_[i].onClick = [this, i] {
+                const std::array<const char*, 3> texts { BeatScholarNotices::LICENSE_md,
+                    BeatScholarNotices::LICENSE_txt, BeatScholarNotices::OFL_txt };
+                const std::array<int, 3> sizes { BeatScholarNotices::LICENSE_mdSize,
+                    BeatScholarNotices::LICENSE_txtSize, BeatScholarNotices::OFL_txtSize };
+                text_.setText(juce::String::fromUTF8(texts[i], sizes[i]));
+                text_.setCaretPosition(0);
+                setReading(true);
+            };
+            addAndMakeVisible(links_[i]);
+        }
+        text_.setMultiLine(true);
+        text_.setReadOnly(true);
+        text_.setScrollbarsShown(true);
+        text_.setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xff101010));
+        text_.setColour(juce::TextEditor::textColourId, juce::Colours::white);
+        addChildComponent(text_);
+        back_.setButtonText("Back");
+        back_.onClick = [this] { setReading(false); };
+        addChildComponent(back_);
+        setSize(600, 400);
+    }
+    void paint(juce::Graphics& g) override
+    {
+        g.fillAll(juce::Colour(0xff101010));
+        g.setColour(juce::Colours::white);
+        g.setFont(22.0f);
+        g.drawText("Open Source Licenses", 0, 0, getWidth(), 40, juce::Justification::centred);
+        if (!text_.isVisible())
+            for (int i = 0; i < 3; ++i)
+            {
+                const juce::Rectangle<int> row(0, 40 + i * 36, getWidth(), 36);
+                g.setColour(juce::Colour(0xff222222));
+                g.fillRect(row);
+                g.setColour(juce::Colour(0xff777777));
+                g.drawRect(row);
+                g.drawVerticalLine(getWidth() * 4 / 5, float(row.getY()), float(row.getBottom()));
+            }
+    }
+    void resized() override
+    {
+        for (int i = 0; i < 3; ++i)
+        {
+            labels_[std::size_t(i)].setBounds(0, 40 + i * 36, getWidth() * 4 / 5, 36);
+            links_[std::size_t(i)].setBounds(getWidth() * 4 / 5, 40 + i * 36, getWidth() / 5, 36);
+        }
+        back_.setBounds(8, 40, 70, 28);
+        text_.setBounds(8, 76, getWidth() - 16, getHeight() - 84);
+    }
+private:
+    void setReading(bool reading)
+    {
+        for (auto& label : labels_) label.setVisible(!reading);
+        for (auto& link : links_) link.setVisible(!reading);
+        text_.setVisible(reading);
+        back_.setVisible(reading);
+        repaint();
+    }
+    std::array<juce::Label, 3> labels_;
+    std::array<LicenseLink, 3> links_;
+    juce::TextEditor text_;
+    juce::TextButton back_;
+};
+
+class LicenseWindow final : public juce::DocumentWindow
+{
+public:
+    LicenseWindow() : DocumentWindow("Open Source Licenses", juce::Colour(0xff101010), closeButton)
+    {
+        setUsingNativeTitleBar(true);
+        setContentOwned(new LicenseContent(), true);
+        centreWithSize(600, 400);
+    }
+    void closeButtonPressed() override { setVisible(false); }
+};
 
 constexpr std::array<const char*, 4> masterControlIds {
     "masterCutoff", "masterResonance", "masterCrush", "masterCompression"
@@ -4808,6 +4916,7 @@ void BeatScholarLinuxEditor::showKitPresetMenu()
     menu.addItem(1, "Save to File");
     menu.addItem(5, "Load from File");
     menu.addItem(2, "Show Preset Dir");
+    menu.addItem(7, "Open Source Libs");
     menu.setLookAndFeel(&lookAndFeel_);
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(kitMenu_),
                        [safe = juce::Component::SafePointer<BeatScholarLinuxEditor>(this),
@@ -4815,6 +4924,11 @@ void BeatScholarLinuxEditor::showKitPresetMenu()
         if (safe == nullptr || result == 0)
             return;
         // Original kit Default preserves the current kit (two captured states).
+        if (result == 7)
+        {
+            safe->showOpenSourceLicenses();
+            return;
+        }
         if (result == 6)
             return;
         if (result == 3)
@@ -4888,6 +5002,7 @@ void BeatScholarLinuxEditor::showRandomizerPresetMenu()
     menu.addItem(1, "Save to File");
     menu.addItem(5, "Load from File");
     menu.addItem(2, "Show Preset Dir");
+    menu.addItem(7, "Open Source Libs");
     menu.setLookAndFeel(&lookAndFeel_);
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(randomizerTab_),
                        [safe = juce::Component::SafePointer<BeatScholarLinuxEditor>(this),
@@ -4896,6 +5011,11 @@ void BeatScholarLinuxEditor::showRandomizerPresetMenu()
             return;
         // Original 1.6.2 leaves settings and identity unchanged here, including
         // an edited Init preset (reference captures 2026-11-26).
+        if (result == 7)
+        {
+            safe->showOpenSourceLicenses();
+            return;
+        }
         if (result == 6)
             return;
         if (result == 3)
@@ -5012,6 +5132,7 @@ void BeatScholarLinuxEditor::showPresetMenu()
     menu.addItem(2, "Save to File");
     menu.addItem(1, "Load from File");
     menu.addItem(3, "Show Preset Dir");
+    menu.addItem(7, "Open Source Libs");
     menu.addSeparator();
     const auto& global = processor_.projectState().global;
     juce::PopupMenu enable;
@@ -5042,6 +5163,11 @@ void BeatScholarLinuxEditor::showPresetMenu()
                         entries = std::move(entries), userPresets, factoryPresets](int result) {
         if (safe == nullptr || result == 0)
             return;
+        if (result == 7)
+        {
+            safe->showOpenSourceLicenses();
+            return;
+        }
         if (result == 6)
         {
             // Original main Default loads this factory tutorial preset.
@@ -5189,6 +5315,13 @@ void BeatScholarLinuxEditor::loadAdjacentRandomizer(int delta)
                         juce::dontSendNotification);
         updateControlsFromState();
     }
+}
+
+void BeatScholarLinuxEditor::showOpenSourceLicenses()
+{
+    if (!licensesWindow_) licensesWindow_ = std::make_unique<LicenseWindow>();
+    licensesWindow_->setVisible(true);
+    licensesWindow_->toFront(true);
 }
 
 void BeatScholarLinuxEditor::showAbout()
