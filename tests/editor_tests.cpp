@@ -2611,6 +2611,136 @@ private:
     int step_ = 0, phase_ = 0;
 };
 
+class NestedPresetMenuTests final : private juce::Timer
+{
+public:
+    explicit NestedPresetMenuTests(const juce::File& output) : output_(output) {}
+    ~NestedPresetMenuTests() override
+    {
+        stopTimer();
+        juce::PopupMenu::dismissAllActiveMenus();
+        window_.clearContentComponent();
+        if (started_)
+        {
+            if (previousXdg_.isEmpty()) unsetenv("XDG_DATA_HOME");
+            else setenv("XDG_DATA_HOME", previousXdg_.toRawUTF8(), 1);
+        }
+    }
+
+    void start(std::function<void()> done)
+    {
+        done_ = std::move(done);
+        previousXdg_ = juce::SystemStats::getEnvironmentVariable("XDG_DATA_HOME", "");
+        const auto xdg = output_.getChildFile("xdg");
+        setenv("XDG_DATA_HOME", xdg.getFullPathName().toRawUTF8(), 1);
+        started_ = true;
+        preset_ = bsl::dataRoot().getChildFile("User/Presets/Category/Subcategory/Leaf.bslpreset");
+        check(preset_.getParentDirectory().createDirectory().wasOk(), "create nested User preset folders");
+        auto state = bsl::ProjectState::makeMainInit();
+        state.patterns[0].name = "Nested preset loaded";
+        check(preset_.replaceWithText(bsl::statecodec::encodePresetJson(state)), "write nested preset fixture");
+        beginCase();
+        startTimer(75);
+    }
+
+private:
+    static juce::AccessibilityHandler* item(juce::Component& component, const juce::String& title)
+    {
+        if (auto* h = component.getAccessibilityHandler(); h != nullptr && h->getTitle() == title) return h;
+        for (auto* child : component.getChildren())
+            if (auto* h = item(*child, title)) return h;
+        return nullptr;
+    }
+
+    void beginCase()
+    {
+        window_.clearContentComponent();
+        editor_.reset();
+        const bool standalone = case_ < 2;
+        const int width = case_ % 2 == 0 ? 960 : 1280;
+        folder_ = output_.getChildFile(juce::String(standalone ? "standalone-" : "vst3-") + juce::String(width));
+        folder_.createDirectory();
+        processor_ = makeProcessorForWrapper(standalone ? juce::AudioProcessor::wrapperType_Standalone
+                                                       : juce::AudioProcessor::wrapperType_VST3);
+        processor_->projectState().patterns[0].name = "Before nested load";
+        editor_ = std::make_unique<BeatScholarLinuxEditor>(*processor_);
+        editor_->setSize(width, width * 9 / 16);
+        window_.setContentNonOwned(editor_.get(), true);
+        window_.setVisible(true);
+        window_.toFront(true);
+        phase_ = 0;
+        deadline_ = juce::Time::getMillisecondCounterHiRes() + 2000.0;
+    }
+
+    void finish()
+    {
+        juce::PopupMenu::dismissAllActiveMenus();
+        stopTimer();
+        window_.setVisible(false);
+        done_();
+    }
+
+    void timerCallback() override
+    {
+        if (phase_ == 0)
+        {
+            auto* button = childWithId<juce::TextButton>(*editor_, "toolbar.preset");
+            check(button != nullptr, "nested presets are reachable from the main preset button");
+            if (button == nullptr) { finish(); return; }
+            button->onClick();
+        }
+        else if (phase_ <= 3)
+        {
+            const char* labels[] = { "Category", "Subcategory", "Leaf" };
+            auto& desktop = juce::Desktop::getInstance();
+            juce::Component* menu = nullptr;
+            juce::AccessibilityHandler* action = nullptr;
+            for (int i = desktop.getNumComponents(); --i >= 0;)
+                if ((action = item(*desktop.getComponent(i), labels[phase_ - 1])) != nullptr)
+                {
+                    menu = desktop.getComponent(i);
+                    break;
+                }
+            if (action == nullptr && juce::Time::getMillisecondCounterHiRes() < deadline_) return;
+            check(action != nullptr, "nested preset menu displays " + juce::String(labels[phase_ - 1]));
+            if (action == nullptr) { finish(); return; }
+            const auto filename = "menu-" + juce::String(phase_) + ".png";
+            saveVisual(*menu, folder_, filename.toRawUTF8());
+            const bool invoked = action->getActions().invoke(juce::AccessibilityActionType::press);
+            check(invoked, "nested preset menu activates " + juce::String(labels[phase_ - 1]));
+            if (!invoked) { finish(); return; }
+        }
+        else
+        {
+            const auto& state = processor_->projectState();
+            if (state.ui.presetFile != preset_.getFullPathName().toStdString()
+                && juce::Time::getMillisecondCounterHiRes() < deadline_) return;
+            check(state.ui.presetFile == preset_.getFullPathName().toStdString()
+                      && state.patterns[0].name == "Nested preset loaded",
+                  "nested menu loads the selected file and its distinctive pattern");
+            auto* button = childWithId<juce::TextButton>(*editor_, "toolbar.preset");
+            check(button != nullptr && button->getButtonText() == "Leaf", "loaded nested preset updates the toolbar identity");
+            saveVisual(*editor_, folder_, "loaded.png");
+            if (++case_ == 4) finish();
+            else beginCase();
+            return;
+        }
+        ++phase_;
+        deadline_ = juce::Time::getMillisecondCounterHiRes() + 2000.0;
+    }
+
+    juce::File output_, folder_, preset_;
+    juce::String previousXdg_;
+    std::unique_ptr<BeatScholarLinuxProcessor> processor_;
+    std::unique_ptr<BeatScholarLinuxEditor> editor_;
+    juce::DocumentWindow window_ { "Nested preset menu regression", juce::Colours::black,
+                                   juce::DocumentWindow::closeButton };
+    std::function<void()> done_;
+    int case_ = 0, phase_ = 0;
+    double deadline_ = 0.0;
+    bool started_ = false;
+};
+
 class InitPresetMenuTests final : private juce::Timer
 {
 public:
@@ -3197,6 +3327,7 @@ void testTextEntryTabRouting(BeatScholarLinuxEditor& editor,
 
 void testKeyboardFocus(const juce::File& output)
 {
+    NestedPresetMenuTests nestedPresets(output.getChildFile("nested-presets"));
     RandomizerFileMenuTests randomizerFiles(output.getChildFile("randomizer-file-menu"));
     SwingReferenceMenuTests swingReferenceMenus(output);
     InitPresetMenuTests initPresetMenus(output);
@@ -3727,7 +3858,9 @@ void testKeyboardFocus(const juce::File& output)
                         initPresetMenus.start([&] {
                             swingReferenceMenus.start([&] {
                                 patternRename.start([&] {
-                                    randomizerFiles.start([] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
+                                    randomizerFiles.start([&] {
+                                        nestedPresets.start([] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
+                                    });
                                 });
                             });
                         });
@@ -10841,6 +10974,14 @@ int main(int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI initialiser;
     const juce::File output(argc > 1 ? argv[1] : "/tmp/beat-scholar-editor-tests");
     check(output.createDirectory().wasOk(), "create screenshot directory");
+    if (argc > 2 && juce::String(argv[2]) == "--preset-hierarchy")
+    {
+        NestedPresetMenuTests nestedPresets(output);
+        nestedPresets.start([] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
+        juce::MessageManager::getInstance()->runDispatchLoop();
+        std::cout << "Nested preset menu failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
     if (argc > 2 && juce::String(argv[2]) == "--brush-velocity-reference")
     {
         testTutorialRandomizerNumericUnits(output);
