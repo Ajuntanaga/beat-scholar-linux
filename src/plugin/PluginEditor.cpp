@@ -2310,8 +2310,10 @@ void BeatScholarLinuxEditor::paintPattern(juce::Graphics& graphics, juce::Rectan
                 graphics.fillPath(wedge);
                 graphics.setColour(populated ? juce::Colour(lookAndFeel_.palette().populatedBeatOutline)
                                              : juce::Colour(lookAndFeel_.palette().emptyBeatOutline));
+                // Original 1.6.2 keeps empty outlines at two screen pixels
+                // in both the 960px and 1280px editor captures.
                 graphics.strokePath(wedge, juce::PathStrokeType(
-                    std::max(1.0f, scale * (populated ? 2.0f : 8.0f / 3.0f))));
+                    populated ? std::max(1.0f, scale * 2.0f) : 2.0f));
             }
             if (previewing)
                 graphics.endTransparencyLayer();

@@ -999,3 +999,8 @@ Both uninstalled formats built. All 32 wrapper panel pairs match; four dual-laye
 ## One Shot drawing proportions — 2026-11-26
 
 Matched the indicator scale, label size/inset and dual-layer vertical placement to retained original captures. Both uninstalled formats built; 32/32 reference comparisons improved, 32/32 wrapper crops match, and 32/32 images are unchanged outside the control. The 960 ink bounds match; small 1280 raster differences remain. Lower-panel checks passed, followed by editor/actual VST3 regressions (2/2). Final bounded job peak: 969.2 MiB. Live REAPER and installed artifacts were preserved. Evidence: recovery/oneshot-drawing-20261127/RESULT.md. Full parity remains open.
+
+
+## Empty pie outline thickness — 2026-11-26
+
+Empty pie outlines now retain the original's two-pixel screen width at both measured editor sizes. Both uninstalled formats built. All 12 original/candidate comparisons improve at 1280, where effective stroke falls from 2.61 to 1.95 pixels; all 12 measurements at 960 are unchanged. All 24 standalone/VST3 crops match. Comparison screenshots were visually inspected. Editor and actual VST3 smoke passed 2/2 in 70.88 seconds. The serial job peaked at 969.2 MiB with no swap. Live REAPER and installed artifacts were preserved. Fine alignment/raster differences and full parity remain open. Evidence: recovery/empty-pie-outline-20261127/RESULT.md.
