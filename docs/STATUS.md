@@ -5,22 +5,15 @@ are described in [REFERENCES.md](REFERENCES.md).
 
 ## Current validation
 
-Published checkpoint: `cad44ae16f7a821037636788e11624b96f297319`.
-[GitHub validation run 45967730325](https://github.com/Ajuntanaga/beat-scholar-linux/actions/runs/45967730325)
-built successfully but failed four actual-VST3 checks at their shared
-state-roundtrip assertion. The test host expected omitted MIDI display keys,
-while the codec now writes their historical migration defaults explicitly.
+Published checkpoint: `83d9b60` (offline dependency licenses in all preset menus).
+[GitHub validation run 45975136530](https://github.com/Ajuntanaga/beat-scholar-linux/actions/runs/45975136530)
+completed successfully. The previous run on `5233dce` also completed successfully.
+The earlier state-roundtrip test-host mismatch has been repaired and published.
 
-The local test-host repair fills only missing expectations; supplied values
-remain strictly compared. The failure was reproduced before the repair, and
-all four affected checks passed afterward. This repair awaits publication and
-a new remote run. Remote Gain/Dist, host-gate timing, strictness-10 plugin
-validation and standalone settings/recall checks passed. Factory playback was
-skipped because the CI environment did not contain factory assets.
-
-Both standalone and VST3 candidates built locally. The full local editor
-regression passed, including the added denominator-reset sequence after adding
-a bar. That added regression also awaits publication.
+Both standalone and VST3 candidates built locally with the latest chooser
+changes. Their full isolated editor suite passed in 76.68 seconds. All eight isolated chooser checks passed; inspected screenshots confirm titles and empty save fields. The published
+license repair passed the full isolated editor suite in 74.12 seconds.
+Factory-asset playback remains distinct from CI checks without those assets.
 
 ## Recent changes
 
@@ -53,3 +46,7 @@ serially; the isolated editor suite passed in 74.12 seconds, including notice
 content, navigation, close/reopen and editor-owned window cleanup. Screenshots
 were inspected. An earlier test run received SIGTERM without a result; the
 retry passed. Full reference parity remains open.
+
+File-dialog follow-up: all eight main/kit load/save checks passed across isolated standalone and VST3 editor wrappers (titles, user directories, cancellation preserving state/history). Screenshot inspection confirmed blank filename fields in the inspected save dialogs. Native file extensions and operating-system dialog styling remain documented differences.
+
+Enable retention: original factory navigation preserves all four switches. The legacy loader now matches; native recall remains unchanged. Both formats rebuilt and the full isolated editor suite passed in 80.58 seconds, including the retention and chooser regressions.

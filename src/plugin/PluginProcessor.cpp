@@ -1394,6 +1394,11 @@ bool BeatScholarLinuxProcessor::loadPresetFile(const juce::File& file)
         restored.ui.middleCOctave = ui.middleCOctave;
         restored.ui.midiNoteNames = ui.midiNoteNames;
         restored.ui.darkMode = ui.darkMode;
+        const auto& global = projectEditor_.state().global;
+        restored.global.sequencerEnabled = global.sequencerEnabled;
+        restored.global.samplerEnabled = global.samplerEnabled;
+        restored.global.auxEnabled = global.auxEnabled;
+        restored.global.masterEnabled = global.masterEnabled;
     }
     const bool preserveKit = projectEditor_.state().global.kitLocked;
     auto current = projectEditor_.state();

@@ -4842,8 +4842,7 @@ void BeatScholarLinuxEditor::savePresetAs()
     directory.createDirectory();
     const juce::String extension = ".bslpreset";
     chooser_ = std::make_unique<juce::FileChooser>(
-        "Save Beat Scholar Linux preset",
-        directory.getChildFile(juce::String("My Preset") + extension), "*.bslpreset");
+        "Save Preset", directory, "*.bslpreset");
     chooser_->launchAsync(juce::FileBrowserComponent::saveMode
                               | juce::FileBrowserComponent::canSelectFiles
                               | juce::FileBrowserComponent::warnAboutOverwriting,
@@ -4871,8 +4870,7 @@ void BeatScholarLinuxEditor::saveKitAs()
     directory.createDirectory();
     const juce::String extension = ".bslkit";
     chooser_ = std::make_unique<juce::FileChooser>(
-        "Save Beat Scholar Linux kit",
-        directory.getChildFile(juce::String("My Kit") + extension), "*.bslkit");
+        "Save Preset", directory, "*.bslkit");
     chooser_->launchAsync(juce::FileBrowserComponent::saveMode
                               | juce::FileBrowserComponent::canSelectFiles
                               | juce::FileBrowserComponent::warnAboutOverwriting,
@@ -4946,7 +4944,7 @@ void BeatScholarLinuxEditor::showKitPresetMenu()
         if (result == 5)
         {
             safe->chooser_ = std::make_unique<juce::FileChooser>(
-                "Load Kit Preset", userDirectory, "*.json;*.bslkit");
+                "Load Preset", userDirectory, "*.json;*.bslkit");
             safe->chooser_->launchAsync(juce::FileBrowserComponent::openMode
                                           | juce::FileBrowserComponent::canSelectFiles,
                 [safe](const juce::FileChooser& chooser) {
@@ -5260,8 +5258,8 @@ void BeatScholarLinuxEditor::showPresetMenu()
         }
         if (result == 1)
         {
-            safe->chooser_ = std::make_unique<juce::FileChooser>("Load Beat Scholar preset",
-                                                                 factoryPresets, "*.json;*.bslpreset");
+            safe->chooser_ = std::make_unique<juce::FileChooser>("Load Preset",
+                                                                 dataRoot().getChildFile("User/Presets"), "*.json;*.bslpreset");
             safe->chooser_->launchAsync(juce::FileBrowserComponent::openMode
                                             | juce::FileBrowserComponent::canSelectFiles,
                                         [safe](const juce::FileChooser& chooser) {

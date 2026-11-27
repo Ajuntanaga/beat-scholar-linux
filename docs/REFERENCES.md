@@ -109,3 +109,9 @@ recall continue restoring their explicitly saved display settings.
 Dark Mode retention: a controlled original-plugin check confirmed that enabling Dark Mode and navigating from Aint Reznor to Unapologetic preserves the theme. Legacy preset loading preserves this application preference alongside MIDI display choices. Native state recall retains its existing behavior.
 
 Open Source Libs: the original main, kit and randomizer preset menus expose the license action. The main menu opens a separate 600 x 400 Open Source Licenses window with 36-pixel dependency rows. The Linux build uses that layout with its own JUCE, chowdsp_fft and Montserrat notices embedded for offline reading. The original License links were not exercised; the local text viewer is functional candidate behavior, not a verified match for those links.
+
+### Preset and kit file dialogs
+Original main and kit dialogs both use `Load Preset` and `Save Preset`, with an empty filename and a JSON filter. The candidate now matches the titles and empty save filename; its explicit native `.bslpreset`/`.bslkit` save formats remain, and load supports both JSON and native files. Main load starts in the user preset directory, corresponding to the original writable preset location. Cross-platform native dialog decoration is platform-owned.
+
+### Enable switches during factory preset navigation
+Desktop 1.6.2 retains Sequencer, Sampler, AUX and Master Enable choices across factory preset arrows. With all four disabled, the next preset leaves all four unchecked. Disabling AUX dims its controls. Legacy preset loading now preserves these application switches; native project/host recall still restores saved state.

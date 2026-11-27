@@ -3429,6 +3429,28 @@ private:
                       "project/kit file action restores saved pad settings");
             });
         }
+        for (const bool kit : { false, true })
+            for (const bool save : { false, true })
+            {
+                action([this] { remember(); });
+                menu(save ? "Save to File" : "Load from File", kit ? "kit.menu" : "toolbar.preset");
+                steps_.push_back([this, kit, save] {
+                    auto* dialog = dynamic_cast<juce::FileChooserDialogBox*>(
+                        juce::Component::getCurrentlyModalComponent());
+                    auto* browser = dialog ? descendant<juce::FileBrowserComponent>(*dialog) : nullptr;
+                    if (!browser) return false;
+                    check(dialog->getName() == (save ? "Save Preset" : "Load Preset"),
+                          "preset and kit chooser titles match reference");
+                    check(browser->getRoot() == bsl::dataRoot().getChildFile(
+                              kit ? "User/Kits" : "User/Presets"),
+                          "file chooser starts in its user preset directory");
+                    saveVisual(*dialog, folder_, (juce::String(kit ? "kit-" : "main-")
+                        + (save ? "save-dialog.png" : "load-dialog.png")).toRawUTF8());
+                    dialog->exitModalState(0);
+                    return true;
+                });
+                action([this] { unchanged("cancelled file dialog preserves project and history"); });
+            }
         action([this] { remember(); });
         menu("Default Preset", "kit.menu");
         action([this] { unchanged("kit Default preserves settings and history"); });
@@ -6310,7 +6332,13 @@ void testLegacyPresetKitIdentity(const juce::File& output)
     processor->projectState().ui.midiFlats = false;
     processor->projectState().ui.middleCOctave = 3;
     processor->projectState().ui.midiNoteNames = false;
+    auto& enable = processor->projectState().global;
+    enable.sequencerEnabled = enable.samplerEnabled = enable.auxEnabled = enable.masterEnabled = false;
     check(processor->loadPresetFile(preset), "load legacy tutorial identity");
+    const auto& restoredEnable = processor->projectState().global;
+    check(!restoredEnable.sequencerEnabled && !restoredEnable.samplerEnabled
+              && !restoredEnable.auxEnabled && !restoredEnable.masterEnabled,
+          "legacy preset load retains all four application Enable switches");
     check(!processor->projectState().ui.midiFlats
               && processor->projectState().ui.middleCOctave == 3
               && !processor->projectState().ui.midiNoteNames,
