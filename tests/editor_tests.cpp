@@ -6064,9 +6064,11 @@ void testRandomizerVelocityEndpointsStayVisibleAndOrdered()
 
 void testTutorialRandomizerNumericUnits(const juce::File& output)
 {
+    for (const auto wrapper : { juce::AudioProcessor::wrapperType_Standalone,
+                                juce::AudioProcessor::wrapperType_VST3 })
     for (const int width : { 960, 1280 })
     {
-        auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+        auto processor = makeProcessorForWrapper(wrapper);
         auto& state = processor->projectState();
         state.ui.darkMode = width == 960;
         state.randomizer.triggerChance = 0.91f;
@@ -6105,21 +6107,28 @@ void testTutorialRandomizerNumericUnits(const juce::File& output)
         check(std::abs(state.randomizer.triggerChance - 0.4f) < 1e-6f,
               "typed Trigger Chance percentage reaches the normalized model");
         childWithId<juce::TextButton>(*editor, "toolbar.undo")->onClick();
-        check(velocity->getMaximum() == 127 && velocity->getTextValueSuffix().isEmpty(),
-              "toolbar brush velocity uses MIDI units without a percent suffix");
-        typeValue(*velocity, "100", "102");
+        check(velocity->getMinimum() == 15 && velocity->getMaximum() == 127
+                  && velocity->getTextValueSuffix().isEmpty() && velocity->getValue() == 100,
+              "toolbar brush velocity starts at 100 within the original's 15-127 MIDI range");
+        typeValue(*velocity, "0", "100");
+        check(velocity->getValue() == 15
+                  && std::abs(state.global.defaultVelocity - 15.0f / 127.0f) < 1e-6f,
+              "typed toolbar velocity respects the original lower bound");
+        typeValue(*velocity, "100", "15");
         check(std::abs(state.global.defaultVelocity - 100.0f / 127.0f) < 1e-6f,
               "typed toolbar velocity uses the same MIDI units as Randomizer");
-        saveVisual(*editor, output, width == 960 ? "randomizer-tutorial-units-960.png"
-                                               : "randomizer-tutorial-units-1280.png");
+        const auto prefix = juce::String(wrapper == juce::AudioProcessor::wrapperType_Standalone
+                                            ? "" : "vst3-");
+        const auto filename = prefix + "randomizer-tutorial-units-" + juce::String(width) + ".png";
+        saveVisual(*editor, output, filename.toRawUTF8());
         typeValue(*velocity, "102", "100");
         const auto reset = visualEvent(*editor, velocity->getBounds().getCentre().toFloat(),
             juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::altModifier);
         editor->mouseDown(reset);
         editor->mouseUp(reset);
         check(state.global.defaultVelocity == bsl::GlobalState{}.defaultVelocity
-              && velocity->getValue() == 102.0,
-              "Alt-reset preserves the exact velocity default even when the display is already 102");
+              && velocity->getValue() == 100.0,
+              "Alt-reset restores the original's MIDI velocity 100");
         editor->mouseDown(reset);
         editor->mouseUp(reset);
         childWithId<juce::TextButton>(*editor, "toolbar.undo")->onClick();
@@ -10832,6 +10841,12 @@ int main(int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI initialiser;
     const juce::File output(argc > 1 ? argv[1] : "/tmp/beat-scholar-editor-tests");
     check(output.createDirectory().wasOk(), "create screenshot directory");
+    if (argc > 2 && juce::String(argv[2]) == "--brush-velocity-reference")
+    {
+        testTutorialRandomizerNumericUnits(output);
+        std::cout << "Brush velocity reference failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
     if (argc > 2 && juce::String(argv[2]) == "--bar-header-reference")
     {
         testSingleBarHeaderReference(output);

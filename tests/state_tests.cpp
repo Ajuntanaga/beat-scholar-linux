@@ -79,6 +79,28 @@ void testSwingReferenceDefaultsAndExplicitRecall()
           "a missing swing reference uses the tutorial's quarter-note default");
 }
 
+void testBrushVelocityDefaultAndExplicitRecall()
+{
+    auto source = bsl::ProjectState::makeDefault();
+    auto restored = source;
+    for (const float velocity : { 0.0f, 0.8f, 1.0f })
+    {
+        source.global.defaultVelocity = velocity;
+        const auto host = bsl::statecodec::encode(source);
+        check(bsl::statecodec::decode(host.getData(), host.getSize(), restored)
+                  && restored.global.defaultVelocity == velocity,
+              "host recall preserves explicit brush velocities including the former default");
+        check(bsl::statecodec::decodePresetJson(bsl::statecodec::encodePresetJson(source), restored)
+                  && restored.global.defaultVelocity == velocity,
+              "preset recall preserves explicit brush velocities without range migration");
+    }
+    auto missing = juce::JSON::parse(bsl::statecodec::encodePresetJson(source));
+    missing.getProperty("global", {}).getDynamicObject()->removeProperty("defaultVelocity");
+    check(bsl::statecodec::decodePresetJson(juce::JSON::toString(missing), restored)
+              && std::abs(restored.global.defaultVelocity - 100.0f / 127.0f) < 1e-7f,
+          "a missing brush velocity uses the original's MIDI velocity 100");
+}
+
 void testMonoStateRoundTripsAndOldStateDefaults()
 {
     auto source = bsl::ProjectState::makeDefault();
@@ -1564,6 +1586,7 @@ int main()
     testMidiChannelRecallAndCompatibility();
     testModuleEnablesRoundTripIndependentlyOfRouting();
     testSwingReferenceDefaultsAndExplicitRecall();
+    testBrushVelocityDefaultAndExplicitRecall();
     testMonoStateRoundTripsAndOldStateDefaults();
     testAuxiliaryReturnRecallAndCompatibility();
     testEmbeddedSampleBudgetMatchesLoaderReplacementSemantics();

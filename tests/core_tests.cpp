@@ -174,8 +174,10 @@ void testDefaultProjectMatchesDocumentedLimits()
     check(bsl::Sequencer::applySwing(0.5, 100.0, state.global.swingReference) > 0.5
               && bsl::Sequencer::applySwing(1.0, 100.0, state.global.swingReference) == 1.0,
           "default swing delays eighth notes while leaving quarter notes fixed");
-    check(std::abs(state.global.defaultVelocity - 0.8f) < 1.0e-7f,
-          "velocity brush defaults to the documented 80 percent");
+    check(std::abs(state.global.defaultVelocity - 100.0f / 127.0f) < 1.0e-7f,
+          "velocity brush starts at the original's MIDI velocity 100");
+    check(bsl::ProjectState::makeMainInit().global.defaultVelocity == state.global.defaultVelocity,
+          "Main Init uses the same brush velocity as a fresh project");
     check(state.global.auditionDuringPlayback, "pad audition during playback defaults on");
     check(!state.global.kitLocked, "kit selection defaults unlocked");
 }
@@ -634,6 +636,10 @@ void testRandomizerUsesDefaultVelocityWhenVelocityModuleIsOff()
     check(std::all_of(beat.slices.begin(), beat.slices.end(), [](const auto& slice) {
               return slice.enabled && std::abs(slice.velocity - 0.37f) < 1.0e-7f;
           }), "disabled randomizer velocity module applies the brush default velocity");
+    bsl::Randomizer::apply(beat, settings, 123u);
+    check(std::all_of(beat.slices.begin(), beat.slices.end(), [](const auto& slice) {
+              return slice.enabled && std::abs(slice.velocity - 100.0f / 127.0f) < 1.0e-7f;
+          }), "omitting the randomizer brush argument uses MIDI velocity 100");
 }
 
 void testPatternLifecycleKeepsTriggerNotesUnique()

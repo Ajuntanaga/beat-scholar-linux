@@ -614,7 +614,7 @@ bool projectFromVar(const juce::var& root, ProjectState& state)
         return false;
     candidate.global.swingReference = static_cast<SwingReference>(swingReference);
     candidate.global.beatsPerMinute = readDouble(global, "beatsPerMinute", 120.0);
-    candidate.global.defaultVelocity = readFloat(global, "defaultVelocity", 0.8f);
+    candidate.global.defaultVelocity = readFloat(global, "defaultVelocity", candidate.global.defaultVelocity);
     candidate.global.sequencerEnabled = readBool(global, "sequencerEnabled", true);
     candidate.global.samplerEnabled = readBool(global, "samplerEnabled", true);
     candidate.global.auxEnabled = readBool(global, "auxEnabled", true);

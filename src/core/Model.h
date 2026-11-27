@@ -48,7 +48,7 @@ struct GlobalState
     double swingPercent = 0.0;
     SwingReference swingReference = SwingReference::quarter;
     double beatsPerMinute = 120.0;
-    float defaultVelocity = 0.8f;
+    float defaultVelocity = 100.0f / 127.0f;
     int midiChannel = 1; // 0 (Any) sends each lane on its one-based channel.
     [[nodiscard]] std::uint8_t midiChannelForLane(std::size_t laneIndex) const noexcept
     {

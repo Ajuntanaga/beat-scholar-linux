@@ -545,10 +545,10 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     addAndMakeVisible(defaultVelocity_);
     defaultVelocity_.setSliderStyle(juce::Slider::LinearHorizontal);
     defaultVelocity_.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-    defaultVelocity_.setRange(0.0, 127.0, 1.0);
+    defaultVelocity_.setRange(15.0, 127.0, 1.0);
     defaultVelocity_.setTextValueSuffix("");
     defaultVelocity_.setTooltip("Default velocity used when a note slice is enabled.");
-    defaultVelocity_.setDoubleClickReturnValue(false, 102.0);
+    defaultVelocity_.setDoubleClickReturnValue(false, 100.0);
     defaultVelocity_.addMouseListener(this, false);
     defaultVelocity_.setValue(processor_.projectState().global.defaultVelocity * 127.0,
                               juce::dontSendNotification);
@@ -2989,7 +2989,7 @@ void BeatScholarLinuxEditor::mouseDown(const juce::MouseEvent& event)
                 checkpointModuleControl();
                 velocity = defaultVelocity;
             }
-            // The MIDI display rounds to 102; reset retains the exact model default.
+            // Preserve the exact normalized default while displaying integer MIDI units.
             defaultVelocity_.setValue(defaultVelocity * 127.0, juce::dontSendNotification);
             return;
         }
