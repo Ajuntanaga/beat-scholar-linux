@@ -764,6 +764,7 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     configureButton(kitSave_, "", [this] { saveKitAs(); });
     kitSave_.setComponentID("icon.save");
     kitSave_.getProperties().set("flatButton", true);
+    kitSave_.getProperties().set("compactSaveGlyph", true);
     kitSave_.setTitle("Save kit");
     kitSave_.setTooltip("Save the current kit");
     configureButton(midiMap_, "MAP", [this] {
@@ -2381,7 +2382,7 @@ void BeatScholarLinuxEditor::resized()
     presetPrevious_.setBounds(designRect(getWidth(), getHeight(), 161.0f, 16.0f, 24.0f, 28.0f));
     preset_.setBounds(designRect(getWidth(), getHeight(), 198.0f, 19.0f, 152.0f, 32.0f));
     presetNext_.setBounds(designRect(getWidth(), getHeight(), 361.0f, 16.0f, 24.0f, 28.0f));
-    presetSave_.setBounds(designRect(getWidth(), getHeight(), 391.0f, 16.0f, 24.0f, 28.0f));
+    presetSave_.setBounds(designRect(getWidth(), getHeight(), 391.0f, 16.0f, 24.0f, 32.0f));
     sequencer_.setVisible(false);
     sampler_.setVisible(false);
     swing_.setBounds(designRect(getWidth(), getHeight(), 444.0f, 33.0f, 82.0f, 20.0f));

@@ -1272,14 +1272,38 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
         return drawTriangle(g, area, id == "icon.next", tint);
     if (id == "icon.save")
     {
-        auto disk = area.reduced(area.getWidth() * 0.22f, area.getHeight() * 0.16f);
+        // Original 1.6.2: filled, notched disk, with a smaller kit-header glyph.
+        // Keep the button hit bounds independent of the measured ink bounds.
+        const bool compact = bool(button.getProperties().getWithDefault("compactSaveGlyph", false));
+        const float scale = area.getWidth() / (compact ? 28.0f : 24.0f);
+        const float side = (compact ? 13.0f : 19.0f) * scale;
+        const auto centre = area.getCentre() + juce::Point<float>(
+            (compact ? -2.5f : -0.5f) * scale, (compact ? 1.5f : 4.5f) * scale);
+        juce::Graphics::ScopedSaveState saved(g);
+        g.addTransform(juce::AffineTransform::scale(side / 20.0f)
+                           .translated(centre.x - side * 0.5f, centre.y - side * 0.5f));
+        juce::Path shell;
+        shell.startNewSubPath(0.0f, 0.0f);
+        shell.lineTo(16.0f, 0.0f);
+        shell.lineTo(20.0f, 4.0f);
+        shell.lineTo(20.0f, 20.0f);
+        shell.lineTo(0.0f, 20.0f);
+        shell.closeSubPath();
         g.setColour(tint);
-        g.drawRect(disk, std::max(1.2f, area.getWidth() * 0.055f));
-        g.fillRect(disk.removeFromTop(disk.getHeight() * 0.34f)
-                       .reduced(disk.getWidth() * 0.18f, 0.0f));
-        g.drawRect(disk.removeFromBottom(disk.getHeight() * 0.48f)
-                       .reduced(disk.getWidth() * 0.18f, 0.0f),
-                   std::max(1.0f, area.getWidth() * 0.045f));
+        g.fillPath(shell);
+        g.setColour(tint.interpolatedWith(juce::Colour(palette_.background), 0.65f));
+        g.fillRect(4.0f, 0.0f, 11.0f, 7.0f);
+        g.setColour(tint);
+        g.fillRect(5.0f, 0.0f, 9.0f, 5.7f);
+        g.setColour(tint.interpolatedWith(juce::Colour(palette_.background), 0.65f));
+        g.fillRect(12.0f, 1.0f, 1.0f, 3.5f);
+        g.setColour(tint.interpolatedWith(juce::Colour(palette_.background), 0.40f));
+        g.fillRect(2.0f, 11.0f, 16.0f, 9.0f);
+        g.setColour(tint);
+        g.fillRect(3.0f, 12.0f, 14.0f, 8.0f);
+        g.setColour(tint.interpolatedWith(juce::Colour(palette_.background), 0.50f));
+        g.fillRect(4.0f, 13.0f, 12.0f, 4.0f);
+        g.fillRect(6.0f, 17.0f, 8.0f, 1.5f);
         return;
     }
     if (id == "toolbar.undo" || id == "toolbar.redo")
