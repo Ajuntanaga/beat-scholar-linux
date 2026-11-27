@@ -982,3 +982,8 @@ The standalone fixture now derives its flam drag and sector clicks from the live
 Validation ran serially with a 3 GiB cap, two CPU cores and no swap. The full build/test service observed peak was 1,175,441,408 bytes; the final GUI-only service reported 104.4 MiB peak over 15.15 seconds. All owned jobs exited. Installed artifacts and the live REAPER session were preserved.
 
 Evidence in recovery: `sweep2-repairs-20261126/{ctest.log,resource-observation.json,standalone-settings-960/result.json,standalone-settings-1280/result.json,RESULT.md}`. Optional ThreadSanitizer stress was not run. Large SysEx may still exceed the ordinary-MIDI preallocation. Full reference parity remains open, including fine glyph contour/raster differences and physical live device reconnection.
+
+
+## Large clap and hi-hat contours — 2026-11-26
+
+Refined the large clap and both hi-hat drawings against retained original captures. Both uninstalled formats built. All six target comparisons improved at 960/1280; 32/32 wrapper crops match and 26/26 non-target crops are unchanged. Lower-panel checks and editor/actual VST3 regressions passed (2/2). Bounded serial jobs peaked at 433.2 MiB. Fine visual differences remain; these measurements do not establish full parity. Evidence: recovery/cymbal-clap-contours-20261127/RESULT.md. No installed artifacts or live REAPER changes.

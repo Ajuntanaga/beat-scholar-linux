@@ -91,18 +91,18 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         g.setColour(juce::Colour(0xffd7dbf6));
         juce::Path hand;
         hand.startNewSubPath(point(482.0f,633.0f));
-        hand.lineTo(point(493.0f,623.9f));
-        hand.quadraticTo(point(495.6f,622.0f),point(496.0f,625.5f));
-        hand.quadraticTo(point(496.3f,626.5f),point(495.4f,627.8f));
-        hand.lineTo(point(486.5f,634.7f));
-        hand.lineTo(point(497.2f,626.7f));
-        hand.quadraticTo(point(499.5f,625.8f),point(499.0f,629.2f));
-        hand.lineTo(point(489.4f,637.0f));
-        hand.lineTo(point(499.0f,630.4f));
-        hand.quadraticTo(point(500.6f,630.3f),point(500.6f,632.5f));
-        hand.lineTo(point(491.4f,640.6f));
-        hand.lineTo(point(496.5f,637.3f));
-        hand.quadraticTo(point(498.0f,637.0f),point(498.3f,638.8f));
+        hand.lineTo(point(492.8f,623.9f));
+        hand.quadraticTo(point(494.7f,622.8f),point(495.0f,625.2f));
+        hand.quadraticTo(point(495.3f,626.0f),point(494.7f,626.9f));
+        hand.lineTo(point(485.7f,634.0f));
+        hand.lineTo(point(496.5f,626.0f));
+        hand.quadraticTo(point(498.8f,625.8f),point(498.5f,628.8f));
+        hand.lineTo(point(488.8f,636.3f));
+        hand.lineTo(point(498.0f,630.0f));
+        hand.quadraticTo(point(499.0f,629.9f),point(499.0f,632.0f));
+        hand.lineTo(point(491.0f,640.0f));
+        hand.lineTo(point(496.0f,637.0f));
+        hand.quadraticTo(point(497.6f,636.9f),point(497.6f,638.5f));
         hand.lineTo(point(489.3f,648.3f));
         hand.cubicTo(point(484.0f,653.7f),point(479.0f,653.5f),point(474.7f,648.5f));
         hand.cubicTo(point(471.5f,645.0f),point(472.0f,641.0f),point(473.2f,637.5f));
@@ -115,8 +115,8 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         juce::Path rearHand;
         rearHand.startNewSubPath(point(474.0f,647.0f));
         rearHand.cubicTo(point(469.0f,645.7f),point(469.5f,640.0f),point(471.0f,635.0f));
-        rearHand.lineTo(point(477.0f,625.6f));
-        rearHand.quadraticTo(point(479.2f,624.0f),point(480.0f,626.5f));
+        rearHand.lineTo(point(477.6f,626.0f));
+        rearHand.quadraticTo(point(479.4f,624.7f),point(480.0f,626.8f));
         rearHand.lineTo(point(480.5f,628.4f));
         rearHand.startNewSubPath(point(482.5f,628.5f));
         rearHand.lineTo(point(488.0f,622.8f));
@@ -202,22 +202,42 @@ void drawInstrumentGlyph(juce::Graphics& g, juce::Rectangle<float> icon, int pad
         // Their stand lengths are not derived from the disc width.
         if (pad == 4)
         {
-            polygon({ {469,630.6f}, {484,626.0f}, {487.8f,625.3f},
-                      {491.5f,626.0f}, {506.5f,630.6f} });
-            g.setColour(tint.withAlpha(0.70f));
-            polygon({ {469,632.0f}, {487.8f,635.0f}, {506.5f,632.0f} });
+            juce::Path disc;
+            disc.startNewSubPath(point(469.0f,631.0f));
+            disc.cubicTo(point(476.0f,630.0f),point(481.6f,628.3f),point(484.0f,626.5f));
+            disc.quadraticTo(point(488.0f,623.6f),point(491.5f,626.5f));
+            disc.cubicTo(point(494.5f,628.5f),point(500.0f,630.0f),point(506.5f,631.0f));
+            disc.closeSubPath();
+            g.fillPath(disc);
+            g.setColour(tint.withAlpha(0.90f));
+            disc.clear();
+            disc.startNewSubPath(point(469.5f,632.3f));
+            disc.cubicTo(point(476.0f,634.0f),point(483.3f,634.9f),point(488.0f,634.9f));
+            disc.cubicTo(point(493.0f,634.9f),point(500.0f,634.0f),point(506.0f,632.3f));
+            disc.closeSubPath();
+            g.fillPath(disc);
             g.setColour(tint.withAlpha(0.55f));
-            line(487.8f,634.5f,487.8f,651.0f,1.6f);
+            line(488.0f,634.5f,488.0f,651.4f,1.6f);
             g.setColour(tint.withAlpha(0.70f));
-            line(487.8f,621.5f,487.8f,625.5f,1.3f);
+            line(488.0f,621.5f,488.0f,625.5f,1.6f);
         }
         else if (pad == 5)
         {
-            polygon({ {468,630.5f}, {483,626.6f}, {488.2f,625.4f},
-                      {492,627.2f}, {507.8f,632.5f} });
-            polygon({ {469,633.8f}, {488.2f,634.0f}, {506.8f,633.0f},
-                      {488.2f,636.8f} });
-            line(488.2f,621.3f,488.2f,651.0f,0.9f);
+            juce::Path disc;
+            disc.startNewSubPath(point(468.0f,630.5f));
+            disc.cubicTo(point(476.0f,629.1f),point(481.0f,628.0f),point(484.0f,626.8f));
+            disc.quadraticTo(point(488.5f,624.4f),point(492.0f,627.3f));
+            disc.lineTo(point(507.8f,632.5f));
+            disc.closeSubPath();
+            g.fillPath(disc);
+            disc.clear();
+            disc.startNewSubPath(point(469.0f,634.8f));
+            disc.lineTo(point(506.8f,633.2f));
+            disc.cubicTo(point(501.0f,636.0f),point(494.0f,637.0f),point(488.5f,637.0f));
+            disc.cubicTo(point(482.5f,637.0f),point(475.0f,636.0f),point(469.0f,634.8f));
+            disc.closeSubPath();
+            g.fillPath(disc);
+            line(488.5f,621.3f,488.5f,651.6f,0.65f);
             g.setColour(tint.withAlpha(0.72f));
             for (const auto offset : { juce::Point<float>(460.0f,626.0f),
                                        juce::Point<float>(507.5f,637.3f) })
