@@ -8267,7 +8267,7 @@ void testModifiedArrangementContextMenusDoNotEdit(const juce::File& output)
         }
 }
 
-void testKitAuditionToggleAcrossTransports()
+void testKitAuditionToggleAcrossTransports(const juce::File& output)
 {
     // Manual p15: pad selection always works; Trigger During Playback only
     // controls auditioning while the transport is running.
@@ -8306,6 +8306,19 @@ void testKitAuditionToggleAcrossTransports()
             toggle->onClick();
             check(processor->projectState().global.auditionDuringPlayback == allowDuringPlayback,
                   "Kit audition control changes playback audition preference");
+            // UI state follows the ordinary display timer after the click.
+            BeatScholarLinuxEditorTestAccess::tick(*editor);
+            if (!playing)
+                for (const int width : { 960, 1280 })
+                {
+                    editor->setSize(width, width * 720 / 1280);
+                    check(toggle->getToggleState() == allowDuringPlayback,
+                          "Kit audition indicator follows the playback audition preference");
+                    const auto name = juce::String(wrapper == juce::AudioProcessor::wrapperType_Standalone
+                                                      ? "standalone-" : "vst3-")
+                                    + juce::String(width) + (allowDuringPlayback ? "-on.png" : "-off.png");
+                    saveVisual(*editor, output, name.toRawUTF8());
+                }
             pad->onClick();
             check(processor->projectState().ui.selectedPad == 1,
                   "pad selection works even when playback audition is disabled");
@@ -10707,6 +10720,12 @@ int main(int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI initialiser;
     const juce::File output(argc > 1 ? argv[1] : "/tmp/beat-scholar-editor-tests");
     check(output.createDirectory().wasOk(), "create screenshot directory");
+    if (argc > 2 && juce::String(argv[2]) == "--audition-reference")
+    {
+        testKitAuditionToggleAcrossTransports(output);
+        std::cout << "Kit audition reference failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
     if (argc > 2 && juce::String(argv[2]) == "--factory-glyph-reference")
     {
         captureFactoryGlyphReference(output);
@@ -10946,7 +10965,7 @@ int main(int argc, char** argv)
     testSequencedOneShotGateUsesBeatDurationAcrossRatesAndBlocks();
     testSequencedOneShotGateMatchesCapturedHostTiming();
     testPadAuditionsPreserveRepeatedHits();
-    testKitAuditionToggleAcrossTransports();
+    testKitAuditionToggleAcrossTransports(output);
     testEmptyPadRestoreIsSilent();
     testHostNoteOffKeepsMidiChannelsIndependent();
     testReferenceLaneSpacing(output);

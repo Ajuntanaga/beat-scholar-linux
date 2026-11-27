@@ -1430,6 +1430,41 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
     }
     if (id == "kit.audition")
     {
+        if (!button.getToggleState())
+        {
+            // Original stopped/disabled captures at 960 and 1280: a framed
+            // speaker with a red cross, distinct from the enabled wave.
+            const float scale = area.getHeight() / 26.0f;
+            const auto icon = juce::Rectangle<float>(11.0f, 4.0f, 17.0f, 20.0f)
+                                  * scale;
+            const auto transform = juce::AffineTransform::scale(scale)
+                                       .translated(icon.getX(), icon.getY());
+            g.setColour(juce::Colour(0xffc8c8d5));
+            g.drawRect(icon, 1.25f * scale);
+            juce::Path mutedSpeaker;
+            mutedSpeaker.startNewSubPath(2.0f, 8.0f);
+            mutedSpeaker.lineTo(5.0f, 8.0f);
+            mutedSpeaker.lineTo(12.0f, 3.0f);
+            mutedSpeaker.lineTo(12.0f, 17.0f);
+            mutedSpeaker.lineTo(5.0f, 12.0f);
+            mutedSpeaker.lineTo(2.0f, 12.0f);
+            mutedSpeaker.closeSubPath();
+            g.setColour(tint);
+            g.strokePath(mutedSpeaker, juce::PathStrokeType(1.4f), transform);
+            juce::Path mutedWave;
+            mutedWave.addArc(11.0f, 6.0f, 3.0f, 8.0f,
+                             juce::MathConstants<float>::halfPi - 0.8f,
+                             juce::MathConstants<float>::halfPi + 0.8f, true);
+            g.strokePath(mutedWave, juce::PathStrokeType(1.4f), transform);
+            g.setColour(juce::Colour(0xffd24848));
+            g.drawLine(icon.getX() + 2.0f * scale, icon.getY() + 4.0f * scale,
+                       icon.getRight() - 2.0f * scale, icon.getBottom() - 4.0f * scale,
+                       2.0f * scale);
+            g.drawLine(icon.getRight() - 2.0f * scale, icon.getY() + 4.0f * scale,
+                       icon.getX() + 2.0f * scale, icon.getBottom() - 4.0f * scale,
+                       2.0f * scale);
+            return;
+        }
         auto speaker = area.reduced(area.getWidth() * 0.23f, area.getHeight() * 0.27f);
         juce::Path body;
         body.startNewSubPath(speaker.getX(), speaker.getCentreY() - speaker.getHeight() * 0.18f);
