@@ -53,6 +53,113 @@ void testMidiDisplayDefaultsAndLegacyRecall()
           "older native saves with omitted preferences keep C3 and sharps");
 }
 
+// The four (midiFlats, middleCOctave) pairs. Fresh projects now default to
+// (true, 4); the writer before the default change omitted midiFlats when false
+// and middleCOctave when 3, so omission means the OLD defaults (false / 3).
+struct DisplayChoice { bool flats; int octave; };
+constexpr DisplayChoice displayChoices[] = { { true, 4 }, { false, 4 }, { true, 3 }, { false, 3 } };
+
+juce::var uiOf(const juce::String& json)
+{
+    return juce::JSON::parse(json).getProperty("ui", {});
+}
+
+// Reads the JSON a host-state envelope carries, as the envelope boundary sees it.
+juce::String hostJson(const juce::MemoryBlock& blob)
+{
+    juce::MemoryInputStream input(blob.getData(), blob.getSize(), false);
+    input.skipNextBytes(8);
+    juce::GZIPDecompressorInputStream gzip(&input, false);
+    return gzip.readEntireStreamAsString();
+}
+
+juce::MemoryBlock hostEnvelope(const juce::String& json, int version)
+{
+    juce::MemoryOutputStream blob;
+    blob.write("BSLX", 4);
+    blob.writeInt(version);
+    {
+        juce::GZIPCompressorOutputStream gzip(blob, 9);
+        gzip.write(json.toRawUTF8(), json.getNumBytesAsUTF8());
+    }
+    return blob.getMemoryBlock();
+}
+
+// Reproduces the old writer (git show d8398fe:src/plugin/StateCodec.cpp):
+// the display keys appeared only when they differed from sharps / C3.
+juce::String oldWriterJson(const bsl::ProjectState& state)
+{
+    auto json = juce::JSON::parse(bsl::statecodec::encodePresetJson(state));
+    auto* ui = json.getProperty("ui", {}).getDynamicObject();
+    check(ui != nullptr, "old-writer fixture has a ui object");
+    if (ui == nullptr) return {};
+    ui->removeProperty("midiFlats");
+    ui->removeProperty("middleCOctave");
+    if (state.ui.midiFlats) ui->setProperty("midiFlats", true);
+    if (state.ui.middleCOctave != 3) ui->setProperty("middleCOctave", state.ui.middleCOctave);
+    return juce::JSON::toString(json);
+}
+
+void testMidiDisplayWriterStoresBothPreferencesExplicitly()
+{
+    for (const auto choice : displayChoices)
+    {
+        auto source = bsl::ProjectState::makeDefault();
+        source.ui.midiFlats = choice.flats;
+        source.ui.middleCOctave = choice.octave;
+        const auto describe = std::string(choice.flats ? "flats" : "sharps") + "/C" + std::to_string(choice.octave);
+        const auto explicitIn = [&](const juce::var& ui, const std::string& path) {
+            check(ui.hasProperty("midiFlats") && ui.getProperty("midiFlats", {}).isBool()
+                      && bool(ui.getProperty("midiFlats", !choice.flats)) == choice.flats,
+                  path + " stores midiFlats explicitly for " + describe);
+            check(ui.hasProperty("middleCOctave") && int(ui.getProperty("middleCOctave", -1)) == choice.octave,
+                  path + " stores middleCOctave explicitly for " + describe);
+        };
+        explicitIn(uiOf(bsl::statecodec::encodePresetJson(source)), "preset JSON");
+        explicitIn(uiOf(hostJson(bsl::statecodec::encode(source))), "host envelope");
+    }
+}
+
+void testMidiDisplayOldWriterBlobsKeepTheirChoice()
+{
+    for (const auto choice : displayChoices)
+    {
+        auto source = bsl::ProjectState::makeDefault();
+        source.ui.midiFlats = choice.flats;
+        source.ui.middleCOctave = choice.octave;
+        const auto describe = std::string(choice.flats ? "flats" : "sharps") + "/C" + std::to_string(choice.octave);
+        const auto legacy = oldWriterJson(source);
+        check(legacy.isNotEmpty(), "build old-writer JSON for " + describe);
+        const auto ui = uiOf(legacy);
+        check(ui.hasProperty("midiFlats") == choice.flats && ui.hasProperty("middleCOctave") == (choice.octave != 3),
+              "old-writer fixture omits exactly what the old writer omitted for " + describe);
+
+        // Destination holds the opposite choice, so keeping it cannot pass.
+        const auto opposite = [&] {
+            auto state = bsl::ProjectState::makeDefault();
+            state.ui.midiFlats = !choice.flats;
+            state.ui.middleCOctave = choice.octave == 4 ? 3 : 4;
+            return state;
+        };
+        auto fromPreset = opposite();
+        check(bsl::statecodec::decodePresetJson(legacy, fromPreset)
+                  && fromPreset.ui.midiFlats == choice.flats && fromPreset.ui.middleCOctave == choice.octave,
+              "old-writer preset keeps " + describe + " per key, not the new defaults");
+        auto fromHost = opposite();
+        const auto blob = hostEnvelope(legacy, source.schemaVersion);
+        check(bsl::statecodec::decode(blob.getData(), blob.getSize(), fromHost)
+                  && fromHost.ui.midiFlats == choice.flats && fromHost.ui.middleCOctave == choice.octave,
+              "old-writer host blob keeps " + describe + " per key, not the new defaults");
+
+        // Re-saving a migrated project must not lose the choice again.
+        auto resaved = bsl::ProjectState::makeDefault();
+        const auto upgraded = bsl::statecodec::encode(fromHost);
+        check(bsl::statecodec::decode(upgraded.getData(), upgraded.getSize(), resaved)
+                  && resaved.ui.midiFlats == choice.flats && resaved.ui.middleCOctave == choice.octave,
+              "a migrated old-writer project round-trips through the new writer as " + describe);
+    }
+}
+
 void testModuleEnablesRoundTripIndependentlyOfRouting()
 {
     for (const bool aux : { false, true })
@@ -1613,6 +1720,8 @@ void testMidiChannelRecallAndCompatibility()
 int main()
 {
     testMidiDisplayDefaultsAndLegacyRecall();
+    testMidiDisplayWriterStoresBothPreferencesExplicitly();
+    testMidiDisplayOldWriterBlobsKeepTheirChoice();
     testMidiChannelRecallAndCompatibility();
     testModuleEnablesRoundTripIndependentlyOfRouting();
     testSwingReferenceDefaultsAndExplicitRecall();
