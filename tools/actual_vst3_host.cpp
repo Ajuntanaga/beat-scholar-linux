@@ -447,6 +447,15 @@ int run(const Options& options)
     if (auto* master = expectedStateJson.getProperty("master", {}).getDynamicObject();
         master != nullptr && !master->hasProperty("reverbReturn"))
         master->setProperty("reverbReturn", 1.0);
+    if (auto* ui = expectedStateJson.getProperty("ui", {}).getDynamicObject())
+    {
+        // Older native saves omitted sharps/C3. The codec now writes these
+        // preferences explicitly; supplied values must still match exactly.
+        if (!ui->hasProperty("midiFlats"))
+            ui->setProperty("midiFlats", false);
+        if (!ui->hasProperty("middleCOctave"))
+            ui->setProperty("middleCOctave", 3);
+    }
     if (auto* pads = expectedStateJson.getProperty("pads", {}).getArray())
         for (auto& value : *pads)
             if (auto* pad = value.getDynamicObject())

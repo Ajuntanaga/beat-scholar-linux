@@ -2249,6 +2249,23 @@ void testBarMeterDragIsOneUndoStep(const juce::File& output)
     dragDenominator(-25.0f);
     check(switchProcessor->projectState().patterns[0].bars[0].denominator == 8,
           "pattern switch resets fractional denominator drag like original");
+
+    // Original reconstruction-{up50,addbar,down25}.png: adding a bar
+    // also reconstructs the denominator control and discards its fraction.
+    for (const auto index : { 1, 0 })
+    {
+        switchProcessor->selectPatternFromUi(index);
+        BeatScholarLinuxEditorTestAccess::tick(*switchEditor);
+    }
+    dragDenominator(50.0f);
+    check(switchProcessor->projectState().patterns[0].bars[0].denominator == 8,
+          "partial upward eighth-note drag remains eighth-note");
+    check(switchProcessor->projectEditor().addBar(0, { 4, 8 }),
+          "add bar for denominator reconstruction probe");
+    BeatScholarLinuxEditorTestAccess::tick(*switchEditor);
+    dragDenominator(-25.0f);
+    check(switchProcessor->projectState().patterns[0].bars[0].denominator == 16,
+          "adding a bar resets fractional denominator drag like original");
 }
 
 void testArrowTransformRequiresClick()
