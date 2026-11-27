@@ -29,22 +29,25 @@ void applyWithEngine(BeatState& beat, const RandomizerSettings& settings,
     for (auto& slice : beat.slices)
     {
         if (settings.fillEmptyOnly && slice.enabled)
-        {
-            previousTriggered = true;
             continue;
-        }
 
         bool triggered = slice.enabled;
         if (settings.triggeringEnabled)
         {
-            // Low Spacing continues a phrase; high Spacing leaves gaps.
-            // Trigger Chance starts phrases, with 100% always enabling all slices.
-            const float chance = previousTriggered && settings.triggerChance < 1.0f
-                                     ? 1.0f - settings.spacing : settings.triggerChance;
+            // Original 1.6.2: neutral Spacing retains Chance; lower values
+            // interpolate toward 1 after a hit, higher values toward 0.
+            float chance = settings.triggerChance;
+            if (previousTriggered)
+            {
+                if (settings.spacing < 0.5f)
+                    chance += (1.0f - chance) * (1.0f - 2.0f * settings.spacing);
+                else if (settings.spacing > 0.5f)
+                    chance *= 2.0f * (1.0f - settings.spacing);
+            }
             triggered = unit(engine) < chance;
+            previousTriggered = triggered;
         }
         slice.enabled = triggered;
-        previousTriggered = triggered;
         if (!triggered)
             continue;
         if (settings.noteSelectionEnabled)

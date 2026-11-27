@@ -542,7 +542,7 @@ void testRandomizerDefaultsEmptyPadSelectionToKick()
           }), "empty randomizer pad selection defaults generated hits to Kick");
 }
 
-void testFillEmptySpacingFollowsPreservedHits()
+void testFillEmptySpacingSkipsPreservedHits()
 {
     bsl::RandomizerSettings settings;
     settings.slicingEnabled = false;
@@ -558,35 +558,51 @@ void testFillEmptySpacingFollowsPreservedHits()
     const auto preserved = beat.slices[0];
     bsl::Randomizer::apply(beat, settings, 7u);
     check(beat.slices[0] == preserved, "Fill Empty leaves the existing hit untouched");
-    check(beat.slices[1].enabled, "Spacing follows a preserved hit in Fill Empty mode");
+    check(!beat.slices[1].enabled,
+          "a preserved hit does not change the previous random decision");
 
-    settings.spacing = 1.0f;
-    settings.triggerChance = 0.9f;
-    auto separated = bsl::BeatState::withSubdivision(2, 11, 0.25f);
-    separated.slices[1].enabled = false;
-    bsl::Randomizer::apply(separated, settings, 7u);
-    check(separated.slices[0] == preserved && !separated.slices[1].enabled,
-          "high Spacing separates hits even with 90 percent Trigger Chance");
-    settings.triggerChance = 1.0f;
-    bsl::Randomizer::apply(separated, settings, 7u);
-    check(separated.slices[1].enabled,
-          "100 percent Trigger Chance still enables every candidate at high Spacing");
-    settings.triggerChance = 0.0f;
-    settings.spacing = 0.0f;
+    auto lane = bsl::LaneState::make(2);
+    lane.beats[0].slices[0] = preserved;
+    lane.beats[1].slices[0].enabled = false;
+    bsl::Randomizer::apply(lane, settings, 7u);
+    check(lane.beats[0].slices[0] == preserved && !lane.beats[1].slices[0].enabled,
+          "Fill Empty skips preserved hits across beat boundaries too");
+}
 
-    auto state = bsl::ProjectState::makeDefault();
-    state.patterns[0].bars = { bsl::BarState::make(2, 4) };
-    state.patterns[0].lanes = { bsl::LaneState::make(2) };
-    state.patterns[0].lanes[0].beats[0].slices[0] = preserved;
-    state.randomizer = settings;
-    check(state.isValid(), "Fill Empty lane fixture is a valid project");
-    bsl::ProjectEditor editor(state);
-    check(editor.randomizeLane(0, 0, 7u), "Fill Empty lane edit succeeds");
-    const auto& lane = editor.state().patterns[0].lanes[0];
-    check(lane.beats[0].slices[0] == preserved,
-          "lane Fill Empty keeps the existing hit's pad and velocity");
-    check(lane.beats[1].slices[0].enabled,
-          "Spacing follows a preserved hit across the beat boundary");
+void testRandomizerConditionalSpacingProbability()
+{
+    // Original 1.6.2's triggerChance/spacing law, conditioned on a generated hit.
+    // Fixed seeds sample the distribution without requiring the original RNG sequence.
+    struct Case { float chance, spacing, expected; };
+    for (const auto test : { Case {0.2f, 0.5f, 0.2f}, Case {0.8f, 0.5f, 0.8f},
+                             Case {0.2f, 0.25f, 0.6f}, Case {0.8f, 0.75f, 0.4f},
+                             Case {1.0f, 1.0f, 0.0f} })
+    {
+        bsl::RandomizerSettings settings;
+        settings.slicingEnabled = false;
+        settings.noteSelectionEnabled = false;
+        settings.velocityEnabled = false;
+        settings.fillEmptyOnly = false;
+        settings.triggeringEnabled = true;
+        settings.triggerChance = test.chance;
+        settings.spacing = test.spacing;
+        int firstHits = 0;
+        int followingHits = 0;
+        for (std::uint32_t seed = 0; seed < 8192; ++seed)
+        {
+            auto beat = bsl::BeatState::withSubdivision(2, 0, 0.5f);
+            bsl::Randomizer::apply(beat, settings, seed);
+            if (beat.slices[0].enabled)
+            {
+                ++firstHits;
+                followingHits += beat.slices[1].enabled ? 1 : 0;
+            }
+        }
+        check(firstHits > 1000, "conditional probability has enough generated first hits");
+        const float observed = static_cast<float>(followingHits) / std::max(1, firstHits);
+        check(std::abs(observed - test.expected) < 0.04f,
+              "Spacing modulates Trigger Chance around its neutral midpoint");
+    }
 }
 
 void testLaneRandomizerSpacingCrossesBeatBoundaries()
@@ -1097,7 +1113,8 @@ int main()
     testRandomizerIsDeterministicAndRespectsFillEmpty();
     testRandomizerFillEmptyProtectsHitsWithTriggeringDisabled();
     testRandomizerDefaultsEmptyPadSelectionToKick();
-    testFillEmptySpacingFollowsPreservedHits();
+    testFillEmptySpacingSkipsPreservedHits();
+    testRandomizerConditionalSpacingProbability();
     testLaneRandomizerSpacingCrossesBeatBoundaries();
     testRandomizerUsesDefaultVelocityWhenVelocityModuleIsOff();
     testPatternLifecycleKeepsTriggerNotesUnique();
