@@ -1004,3 +1004,8 @@ Matched the indicator scale, label size/inset and dual-layer vertical placement 
 ## Empty pie outline thickness — 2026-11-26
 
 Empty pie outlines now retain the original's two-pixel screen width at both measured editor sizes. Both uninstalled formats built. All 12 original/candidate comparisons improve at 1280, where effective stroke falls from 2.61 to 1.95 pixels; all 12 measurements at 960 are unchanged. All 24 standalone/VST3 crops match. Comparison screenshots were visually inspected. Editor and actual VST3 smoke passed 2/2 in 70.88 seconds. The serial job peaked at 969.2 MiB with no swap. Live REAPER and installed artifacts were preserved. Fine alignment/raster differences and full parity remain open. Evidence: recovery/empty-pie-outline-20261127/RESULT.md.
+
+
+## Lower-panel gradient rounding — 2026-11-26
+
+Removed an intermediate integer truncation that darkened the measured lower-panel gradients. Both uninstalled formats built. All eight measured section/size background comparisons improve; both standalone/VST3 sample-body crop pairs match. Factory and lower-panel capture checks passed. Comparison sheets were visually inspected; editor regression and actual VST3 smoke passed 2/2 in 70.78 seconds. The serial job peaked at 968.8M with zero swap. Live REAPER and installed artifacts were preserved. Residual raster differences and full parity remain open. Evidence: recovery/lower-background-followup-20261127/RESULT.md.

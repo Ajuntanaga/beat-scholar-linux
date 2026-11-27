@@ -71,8 +71,13 @@ void setLowerBodyFill(juce::Graphics& graphics, const bsl::ui::Palette& palette,
     for (int step = 1; step < 16; ++step)
     {
         const float radius = step / 16.0f;
-        gradient.addColour(radius, edge.interpolatedWith(centre,
-                                      std::pow(1.0f - radius, shape.exponent)));
+        const float strength = std::pow(1.0f - radius, shape.exponent);
+        // Round each measured stop once. Integer Colour interpolation truncates
+        // here and again in the gradient lookup, darkening the fitted surface.
+        gradient.addColour(radius, juce::Colour::fromFloatRGBA(
+            juce::jmap(strength, edge.getFloatRed(), centre.getFloatRed()),
+            juce::jmap(strength, edge.getFloatGreen(), centre.getFloatGreen()),
+            juce::jmap(strength, edge.getFloatBlue(), centre.getFloatBlue()), 1.0f));
     }
     juce::FillType fill(gradient);
     fill.transform = juce::AffineTransform::scale(shape.radiusX * scale, shape.radiusY * scale)
