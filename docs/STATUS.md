@@ -1015,3 +1015,8 @@ Empty pie outlines now retain the original's two-pixel screen width at both meas
 ## Lower-panel gradient rounding — 2026-11-26
 
 Removed an intermediate integer truncation that darkened the measured lower-panel gradients. Both uninstalled formats built. All eight measured section/size background comparisons improve; both standalone/VST3 sample-body crop pairs match. Factory and lower-panel capture checks passed. Comparison sheets were visually inspected; editor regression and actual VST3 smoke passed 2/2 in 70.78 seconds. The serial job peaked at 968.8M with zero swap. Live REAPER and installed artifacts were preserved. Residual raster differences and full parity remain open. Evidence: recovery/lower-background-followup-20261127/RESULT.md.
+
+
+## Bar-header glyph rendering — 2026-11-26
+
+Bar-header Duplicate now uses filled overlapping pages, and Add/Remove use the measured compact strokes and placement from original 1.6.2 captures. Both uninstalled formats built. All 18 original/icon crop comparisons improve; mean max-channel pixel difference falls from 36.60 to 12.77. All eight standalone/VST3 header crop pairs match. Existing original-coordinate click tests pass. The full editor regression and actual VST3 loading smoke passed 2/2 in 73.03 seconds. Final screenshots were inspected. Small raster/alignment differences remain; these figures describe this repair, not overall parity. The bounded job peaked at 969.2 MiB with zero swap and exited. Live REAPER and installed artifacts were preserved. Evidence: recovery/header-glyph-rendering-20261127/RESULT.md.

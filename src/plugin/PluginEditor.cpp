@@ -1680,6 +1680,39 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
             graphics.drawLine(juce::Line<float>(cross.getTopRight(), cross.getBottomLeft()), stroke);
         }
     };
+    const auto drawHeaderActionGlyph = [this, &graphics, scale](juce::Rectangle<float> area, int glyph) {
+        // Original 1.6.2 header captures at 960/1280: white frames, filled
+        // overlapping pages, and compact 1.5px Add/Remove strokes. Keep the
+        // arrangement-card drawing and the shared header hit bounds unchanged.
+        const float x = std::round(area.getX() + 0.5f * scale);
+        const float offsetY = (getHeight() - 720.0f * scale) * 0.5f;
+        const float y = std::floor(offsetY + 82.0f * scale);
+        const auto rect = [=](float left, float top, float width, float height) {
+            return juce::Rectangle<float>(x + left * scale, y + top * scale,
+                                           width * scale, height * scale);
+        };
+        graphics.setColour(juce::Colours::white);
+        graphics.drawRect(rect(0.0f, 0.0f, 24.0f, 18.0f), scale);
+        if (glyph == 0)
+        {
+            graphics.setColour(juce::Colour(0xffa7b0e1U));
+            graphics.fillRect(rect(6.75f, 2.875f, 8.5f, 9.75f));
+            graphics.setColour(juce::Colours::white);
+            graphics.fillRect(rect(8.75f, 5.875f, 8.5f, 9.75f));
+        }
+        else if (glyph == 1)
+        {
+            graphics.fillRect(rect(11.0f, 3.25f, 1.5f, 11.75f));
+            graphics.fillRect(rect(5.75f, 8.375f, 12.0f, 1.5f));
+        }
+        else
+        {
+            const auto cross = rect(7.5f, 0.0f, 8.0f, 8.0f)
+                                   .withY(offsetY + 87.25f * scale);
+            graphics.drawLine(juce::Line<float>(cross.getTopLeft(), cross.getBottomRight()), 1.5f * scale);
+            graphics.drawLine(juce::Line<float>(cross.getTopRight(), cross.getBottomLeft()), 1.5f * scale);
+        }
+    };
     graphics.fillAll(juce::Colour(lookAndFeel_.palette().background));
 
     const auto toolbar = designRect(getWidth(), getHeight(), 8.0f, 8.0f, 1264.0f, 46.0f);
@@ -1779,7 +1812,7 @@ void BeatScholarLinuxEditor::paint(juce::Graphics& graphics)
         {
             const float actionWidth = actions.getWidth() / 3.0f;
             for (int action = 0; action < 3; ++action)
-                drawActionGlyph(actions.removeFromLeft(actionWidth)
+                drawHeaderActionGlyph(actions.removeFromLeft(actionWidth)
                                     .withSizeKeepingCentre(24.0f * scale, 18.0f * scale), action);
         }
         firstQuarter += duration;
