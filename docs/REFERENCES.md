@@ -105,3 +105,5 @@ Desktop 1.6.2 retains Use Sharps, Middle C = C3, and numeric note display
 when advancing from Init to a factory preset. Legacy preset loading preserves
 these application choices in the Linux build. Native preset and host-state
 recall continue restoring their explicitly saved display settings.
+
+Dark Mode retention: a controlled original-plugin check confirmed that enabling Dark Mode and navigating from Aint Reznor to Unapologetic preserves the theme. Legacy preset loading preserves this application preference alongside MIDI display choices. Native state recall retains its existing behavior.

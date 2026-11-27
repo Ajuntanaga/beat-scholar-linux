@@ -3162,7 +3162,9 @@ public:
         done_ = std::move(done);
         hadXdg_ = std::getenv("XDG_DATA_HOME") != nullptr;
         previousXdg_ = juce::SystemStats::getEnvironmentVariable("XDG_DATA_HOME", "");
-        const auto xdg = output_.getChildFile("randomizer-files-xdg");
+        // Re-running into the same screenshot directory must not inherit saved
+        // presets and turn the first-save checks into overwrite prompts.
+        const auto xdg = output_.getNonexistentChildFile("randomizer-files-xdg", "");
         setenv("XDG_DATA_HOME", xdg.getFullPathName().toRawUTF8(), 1);
         started_ = true;
         check(!juce::FileChooser::isPlatformDialogAvailable(), "Randomizer test uses isolated built-in chooser");
@@ -6245,6 +6247,7 @@ void testLegacyPresetKitIdentity(const juce::File& output)
       }}]}}})json";
     check(preset.replaceWithText(json), "write synthetic tutorial preset");
     auto processor = std::make_unique<BeatScholarLinuxProcessor>();
+    processor->projectState().ui.darkMode = true;
     processor->projectState().ui.midiFlats = false;
     processor->projectState().ui.middleCOctave = 3;
     processor->projectState().ui.midiNoteNames = false;
@@ -6253,6 +6256,8 @@ void testLegacyPresetKitIdentity(const juce::File& output)
               && processor->projectState().ui.middleCOctave == 3
               && !processor->projectState().ui.midiNoteNames,
           "legacy preset load retains sharps, C3 and numeric display as in the original");
+    check(processor->projectState().ui.darkMode,
+          "legacy preset load retains Dark Mode as in the original");
     check(processor->projectState().ui.kitFile == kit.getFullPathName().toStdString(),
           "legacy preset resolves kit identity by id despite differing names");
     check(processor->projectState().kit.pads[0].name == "Preset Kick"

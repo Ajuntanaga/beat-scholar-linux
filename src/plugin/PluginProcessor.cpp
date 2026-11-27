@@ -1388,11 +1388,12 @@ bool BeatScholarLinuxProcessor::loadPresetFile(const juce::File& file)
     {
         restored.ui.kitFile = legacyPresetKitFile(json).toStdString();
         // Original factory preset navigation retains the application's MIDI
-        // display choices; legacy musical presets do not carry these settings.
+        // display and theme choices; legacy musical presets do not carry them.
         const auto& ui = projectEditor_.state().ui;
         restored.ui.midiFlats = ui.midiFlats;
         restored.ui.middleCOctave = ui.middleCOctave;
         restored.ui.midiNoteNames = ui.midiNoteNames;
+        restored.ui.darkMode = ui.darkMode;
     }
     const bool preserveKit = projectEditor_.state().global.kitLocked;
     auto current = projectEditor_.state();
