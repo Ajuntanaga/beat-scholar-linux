@@ -778,10 +778,12 @@ BeatScholarLinuxEditor::BeatScholarLinuxEditor(BeatScholarLinuxProcessor& owner)
     configureButton(kitPrevious_, "", [this] { loadAdjacentKit(-1); });
     kitPrevious_.setComponentID("icon.prev");
     kitPrevious_.getProperties().set("flatButton", true);
+    kitPrevious_.getProperties().set("kitNavigationGlyph", true);
     kitPrevious_.setTitle("Previous kit");
     configureButton(kitNext_, "", [this] { loadAdjacentKit(1); });
     kitNext_.setComponentID("icon.next");
     kitNext_.getProperties().set("flatButton", true);
+    kitNext_.getProperties().set("kitNavigationGlyph", true);
     kitNext_.setTitle("Next kit");
     configureButton(randomizerPrevious_, "", [this] { loadAdjacentRandomizer(-1); });
     randomizerPrevious_.setComponentID("icon.prev");
@@ -2422,7 +2424,7 @@ void BeatScholarLinuxEditor::resized()
     kitLocked_.setBounds(designRect(getWidth(), getHeight(), 290.0f, 526.0f, 28.0f, 26.0f));
     kitSave_.setBounds(designRect(getWidth(), getHeight(), 322.0f, 526.0f, 28.0f, 26.0f));
     kitPrevious_.setBounds(designRect(getWidth(), getHeight(), 354.0f, 526.0f, 18.0f, 26.0f));
-    kitNext_.setBounds(designRect(getWidth(), getHeight(), 374.0f, 526.0f, 18.0f, 26.0f));
+    kitNext_.setBounds(designRect(getWidth(), getHeight(), 381.0f, 526.0f, 18.0f, 26.0f));
     soundTab_.setBounds(designRect(getWidth(), getHeight(), 570.0f, 526.0f, 360.0f, 30.0f));
     randomizerTab_.setBounds(designRect(getWidth(), getHeight(), 546.0f, 524.0f, 360.0f, 30.0f));
     randomizerPrevious_.setBounds(designRect(getWidth(), getHeight(), 1004.0f, 528.0f, 24.0f, 26.0f));

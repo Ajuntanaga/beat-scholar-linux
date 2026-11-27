@@ -1269,7 +1269,28 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
         return;
     }
     if (id == "icon.prev" || id == "icon.next")
+    {
+        if (bool(button.getProperties().getWithDefault("kitNavigationGlyph", false)))
+        {
+            // Original 1.6.2 kit header: small arrows, below the button centre.
+            // The larger component remains the pointer target.
+            const float scale = area.getHeight() / 26.0f;
+            auto ink = area.withSizeKeepingCentre(8.0f * scale, 12.0f * scale)
+                           .translated(0.0f, 1.5f * scale);
+            juce::Path path;
+            const bool right = id == "icon.next";
+            const float base = right ? ink.getX() : ink.getRight();
+            const float tip = right ? ink.getRight() : ink.getX();
+            path.startNewSubPath(base, ink.getY());
+            path.lineTo(tip, ink.getCentreY());
+            path.lineTo(base, ink.getBottom());
+            path.closeSubPath();
+            g.setColour(tint);
+            g.fillPath(path);
+            return;
+        }
         return drawTriangle(g, area, id == "icon.next", tint);
+    }
     if (id == "icon.save")
     {
         // Original 1.6.2: filled, notched disk, with a smaller kit-header glyph.

@@ -1037,3 +1037,7 @@ Bar-header Duplicate now uses filled overlapping pages, and Add/Remove use the m
 - Standalone/VST3 build succeeded; full CTest 13/13 passed (142.25 s), then expanded core/scheduler regressions 2/2 passed (0.77 s). CI path/timeout assertions and diff whitespace check passed.
 - Validation isolated, 3 GiB/no-swap/two-core cap, observed memory peak 1,337,516,032 bytes. No REAPER, installed plugin, VM, archive, or governor changes.
 - Evidence: review-cebd211-repairs/{build.log,tests.log,targeted-build.log,targeted-tests.log}. CI was inspected locally, not executed remotely. Unvoted speculative test-quality findings not treated as confirmed defects. Full reference parity remains open.
+
+
+## Kit navigation arrows — 2026-11-27
+Matched the original 1.6.2 kit arrows using retained original captures: smaller ink and wider spacing; the next-arrow pointer target moves with its glyph and retains its size. Standalone and VST3 built. Both focused screenshot passes report zero failures. Full editor and actual VST3 smoke tests passed 2/2 (64.59 s). Original crop mean RGB error improves 21.71 to 4.41 at 960 and 18.46 to 2.06 at 1280; standalone/VST3 crops match at both widths. Comparison image inspected; minor raster differences remain. Evidence: kit-arrows-20261127/comparison.png, comparison.json, build.log and ctest.log. Isolated validation; REAPER and installed artifacts untouched. Full parity remains open; no public push attempted.
