@@ -96,14 +96,14 @@ void addShortcutMenuItem(juce::PopupMenu& menu, int id, const juce::String& text
     menu.addItem(std::move(item));
 }
 
-// Matched 1.6.2 capture: shift the tutorial action group 24 design pixels
-// right, retaining its spacing. Share the rectangle between paint and input.
+// Fit the first control center to retained 1.6.2 single-bar, mixed-meter and
+// zoomed captures (within one pixel). Share the rectangle between paint and input.
 juce::Rectangle<float> barHeaderActions(juce::Rectangle<float> bounds, float scale)
 {
     if (bounds.getWidth() < 300.0f * scale)
         return {};
     constexpr float spacing = 33.0f;
-    return { bounds.getX() + bounds.getWidth() * 0.70f + (24.0f - spacing * 0.5f) * scale,
+    return { bounds.getX() + bounds.getWidth() * 0.7564f - (6.75f + spacing * 0.5f) * scale,
              bounds.getY(), 3.0f * spacing * scale, bounds.getHeight() };
 }
 

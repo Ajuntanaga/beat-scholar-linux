@@ -1275,6 +1275,63 @@ void testMixedMeterGeometry(const juce::File& output)
     saveVisual(*editor, output, "mixed-meters-zoomed.png");
 }
 
+void testSingleBarHeaderReference(const juce::File& output)
+{
+    for (const auto wrapper : { juce::AudioProcessor::wrapperType_Standalone,
+                               juce::AudioProcessor::wrapperType_VST3 })
+        for (const int width : { 960, 1280 })
+        {
+            auto processor = makeProcessorForWrapper(wrapper);
+            auto& state = processor->projectState();
+            auto source = bsl::BeatState::withSubdivision(3, 7, 0.6f);
+            source.slices[0].enabled = true;
+            state.patterns[0].lanes[0].beats[0] = source;
+            auto editor = std::make_unique<BeatScholarLinuxEditor>(*processor);
+            editor->setSize(width, width * 9 / 16);
+            const float scale = width / 1280.0f;
+            const auto click = [&](float x) {
+                const auto event = visualEvent(*editor, { x * scale, 90.0f * scale });
+                editor->mouseDown(event);
+                editor->mouseUp(event);
+            };
+            const auto prefix = juce::String(wrapper == juce::AudioProcessor::wrapperType_Standalone
+                                                ? "standalone-" : "vst3-") + juce::String(width);
+            saveVisual(*editor, output, (prefix + "-one-bar.png").toRawUTF8());
+            // Centers measured in original 1.6.2 single-bar captures at 960/1280.
+            // Verify content too: a shifted duplicate target can hit Add instead.
+            click(866.5f);
+            const auto& duplicated = state.patterns[0];
+            check(duplicated.bars.size() == 2 && duplicated.lanes[0].beats.size() == 8
+                      && duplicated.lanes[0].beats[4] == source,
+                  prefix + " original duplicate target copies the source beat");
+            check(processor->projectEditor().undo() && state.patterns[0].bars.size() == 1,
+                  prefix + " one Undo restores the single bar");
+            click(899.5f);
+            const auto& added = state.patterns[0];
+            check(added.bars.size() == 2 && added.lanes[0].beats.size() == 8
+                      && added.lanes[0].beats[0] == source
+                      && added.lanes[0].beats[4].slices.size() == 1
+                      && !added.lanes[0].beats[4].slices[0].enabled,
+                  prefix + " original add target appends an empty bar");
+
+            // Match the retained original 4/8 + 4/4 geometry at fit and two zoom steps.
+            state.patterns[0].bars = { { 4, 8 }, { 4, 4 } };
+            for (auto& lane : state.patterns[0].lanes) lane.beats.resize(8);
+            saveVisual(*editor, output, (prefix + "-mixed-fit.png").toRawUTF8());
+            float previousZoom = 1.0f;
+            for (const float zoomFactor : { 1.45f, 1.90f })
+            {
+                juce::MouseWheelDetails zoom {};
+                zoom.deltaY = std::log(zoomFactor / previousZoom) / 1.8f;
+                editor->mouseWheelMove(visualEvent(*editor, { 100.0f * scale, 300.0f * scale },
+                    juce::ModifierKeys(juce::ModifierKeys::altModifier)), zoom);
+                saveVisual(*editor, output,
+                    (prefix + "-mixed-zoom" + juce::String(zoomFactor, 2) + ".png").toRawUTF8());
+                previousZoom = zoomFactor;
+            }
+        }
+}
+
 void testBarHeaderActions(const juce::File& output)
 {
     for (const int width : { 960, 1280, 1600 })
@@ -1290,7 +1347,7 @@ void testBarHeaderActions(const juce::File& output)
             editor->mouseUp(event);
         };
         const auto barCount = [&] { return processor->projectState().patterns.front().bars.size(); };
-        // Matched original centers include the 24-design-pixel group offset.
+        // Original action targets remain usable as adding bars resizes each header.
         click(460);
         check(barCount() == 3, "bar-header duplicate follows tutorial placement at each window size");
         check(processor->projectEditor().undo() && barCount() == 2,
@@ -10775,6 +10832,13 @@ int main(int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI initialiser;
     const juce::File output(argc > 1 ? argv[1] : "/tmp/beat-scholar-editor-tests");
     check(output.createDirectory().wasOk(), "create screenshot directory");
+    if (argc > 2 && juce::String(argv[2]) == "--bar-header-reference")
+    {
+        testSingleBarHeaderReference(output);
+        testBarHeaderActions(output);
+        std::cout << "Bar header reference failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
     if (argc > 2 && juce::String(argv[2]) == "--keyboard-focus")
     {
         testKeyboardFocus(output);
@@ -11031,6 +11095,7 @@ int main(int argc, char** argv)
     testHostNoteOffKeepsMidiChannelsIndependent();
     testReferenceLaneSpacing(output);
     testMixedMeterGeometry(output);
+    testSingleBarHeaderReference(output);
     testBarHeaderActions(output);
     testCustomSampleAndMasterVisualStates(output);
     testEmbeddedLayerVisualStateAndHistory(output);
