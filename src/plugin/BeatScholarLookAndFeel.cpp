@@ -1552,12 +1552,16 @@ void BeatScholarLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton&
     }
     if (id == "master.settings")
     {
-        const auto centre = area.getCentre();
+        // Retained original 1.6.2 captures: cardinal teeth and dark backing.
+        const float scale = area.getHeight() / 27.0f;
+        const auto centre = area.getCentre().translated(-2.5f * scale, 0.0f);
         const float outer = std::min(area.getWidth(), area.getHeight()) * 0.29f;
+        g.setColour(juce::Colours::black);
+        g.fillEllipse(juce::Rectangle<float>(outer * 2.12f, outer * 2.12f).withCentre(centre));
         juce::Path cog;
         for (int point = 0; point < 32; ++point)
         {
-            const float angle = juce::MathConstants<float>::twoPi * static_cast<float>(point) / 32.0f;
+            const float angle = juce::MathConstants<float>::twoPi * (static_cast<float>(point) - 1.5f) / 32.0f;
             const float radius = outer * ((point % 4 == 1 || point % 4 == 2) ? 1.0f : 0.76f);
             const auto x = centre.x + std::cos(angle) * radius;
             const auto y = centre.y + std::sin(angle) * radius;
