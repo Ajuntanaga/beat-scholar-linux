@@ -5073,13 +5073,14 @@ void BeatScholarLinuxEditor::showAbout()
 bool BeatScholarLinuxEditor::keyPressed(const juce::KeyPress& key)
 {
     refreshRestoredState();
+    auto* focused = juce::Component::getCurrentlyFocusedComponent();
+    const bool textInputActive = numericEntry_.isVisible()
+        || dynamic_cast<juce::TextEditor*>(focused) != nullptr
+        || (focused != nullptr && focused->findParentComponentOfClass<juce::TextEditor>() != nullptr);
     if (key == juce::KeyPress::spaceKey)
     {
-        auto* focused = juce::Component::getCurrentlyFocusedComponent();
         if (processor_.wrapperType != juce::AudioProcessor::wrapperType_Standalone
-            || numericEntry_.isVisible()
-            || dynamic_cast<juce::TextEditor*>(focused) != nullptr
-            || (focused != nullptr && focused->findParentComponentOfClass<juce::TextEditor>() != nullptr))
+            || textInputActive)
             return false;
         play_.onClick();
         return true;
@@ -5137,6 +5138,9 @@ bool BeatScholarLinuxEditor::keyPressed(const juce::KeyPress& key)
     }
     if (key.getKeyCode() == juce::KeyPress::tabKey)
     {
+        // TextEditor leaves Tab unhandled so the peer can move focus. Do not
+        // consume it as a brush shortcut while editing a value or name.
+        if (textInputActive) return false;
         const auto next = brush_ == Brush::drum ? previousBrush_ : Brush::drum;
         previousBrush_ = brush_;
         brush_ = next;

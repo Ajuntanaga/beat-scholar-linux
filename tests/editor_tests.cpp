@@ -3089,6 +3089,55 @@ private:
     int wrapper_ = 0;
 };
 
+void testTextEntryTabRouting(BeatScholarLinuxEditor& editor,
+                             BeatScholarLinuxProcessor& processor,
+                             const juce::File& output, const juce::String& wrapper)
+{
+    auto* slicer = childWithId<juce::TextButton>(editor, "brush.slicer");
+    auto* drum = childWithId<juce::TextButton>(editor, "brush.drum");
+    auto* sound = childWithId<juce::Slider>(editor, "sound.0");
+    auto* peer = editor.getPeer();
+    check(slicer != nullptr && drum != nullptr && sound != nullptr && peer != nullptr,
+          "locate text-entry keyboard routing controls");
+    if (slicer == nullptr || drum == nullptr || sound == nullptr || peer == nullptr) return;
+    auto* previousBrush = drum->getToggleState() ? drum : slicer;
+    slicer->onClick();
+    const auto selectedPad = processor.projectState().ui.selectedPad;
+    for (const bool reverse : { false, true })
+    {
+        editor.mouseDoubleClick(visualEvent(editor, sound->getBounds().getCentre().toFloat()));
+        auto* entry = childWithId<juce::TextEditor>(editor, "control.value");
+        check(entry != nullptr && entry->isVisible() && entry->hasKeyboardFocus(false),
+              "numeric value receives real peer keyboard focus");
+        if (entry == nullptr) break;
+        entry->setText("0", false);
+        entry->selectAll();
+        // Dispatch through the peer: a direct editor.keyPressed() call would
+        // bypass TextEditor's handling of printable and filtered characters.
+        peer->handleKeyPress(juce::KeyPress('3', {}, '3'));
+        peer->handleKeyPress(juce::KeyPress('q', {}, 'q'));
+        check(entry->getText() == "3" && processor.projectState().ui.selectedPad == selectedPad
+                  && slicer->getToggleState(),
+              "numeric input consumes typed digits and filtered pad shortcuts");
+        if (!reverse) saveVisual(editor, output, ("numeric-entry-" + wrapper + ".png").toRawUTF8());
+        peer->handleKeyPress(juce::KeyPress(juce::KeyPress::tabKey,
+            reverse ? juce::ModifierKeys::shiftModifier : juce::ModifierKeys::noModifiers, 0));
+        check(!entry->hasKeyboardFocus(false),
+              "Tab and Shift-Tab leave numeric entry through normal focus traversal");
+        check(slicer->getToggleState() && !drum->getToggleState(),
+              "Tab and Shift-Tab in numeric entry preserve the active brush");
+        entry->onEscapeKey();
+        editor.grabKeyboardFocus();
+        slicer->onClick();
+    }
+    peer->handleKeyPress(juce::KeyPress(juce::KeyPress::tabKey));
+    check(drum->getToggleState(), "Tab outside text entry still selects the Drum brush");
+    peer->handleKeyPress(juce::KeyPress(juce::KeyPress::tabKey));
+    check(slicer->getToggleState(), "Tab outside text entry restores the previous brush");
+    previousBrush->onClick();
+    editor.grabKeyboardFocus();
+}
+
 void testKeyboardFocus(const juce::File& output)
 {
     RandomizerFileMenuTests randomizerFiles(output.getChildFile("randomizer-file-menu"));
@@ -3121,7 +3170,7 @@ void testKeyboardFocus(const juce::File& output)
         parent.addAndMakeVisible(control);
         control->setWantsKeyboardFocus(true);
     }
-    auto laneProcessor = std::make_unique<BeatScholarLinuxProcessor>();
+    auto laneProcessor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_Standalone);
     laneProcessor->projectState().patterns[0].lanes = { bsl::LaneState::make(4) };
     auto laneEditor = std::make_unique<BeatScholarLinuxEditor>(*laneProcessor);
     const std::array<const char*, 3> keys { "Left", "Right", "Down" };
@@ -3213,7 +3262,7 @@ void testKeyboardFocus(const juce::File& output)
             return true;
         }, next, "JUCE receives every injected key, mouse and menu action");
     };
-    auto shortcutProcessor = std::make_unique<BeatScholarLinuxProcessor>();
+    auto shortcutProcessor = makeProcessorForWrapper(juce::AudioProcessor::wrapperType_VST3);
     shortcutProcessor->projectState().patterns[0].lanes = { bsl::LaneState::make(4) };
     auto shortcutEditor = std::make_unique<BeatScholarLinuxEditor>(*shortcutProcessor);
     struct ClickDeliveryTrace final : juce::MouseListener
@@ -3635,7 +3684,10 @@ void testKeyboardFocus(const juce::File& output)
         momentaryStep = step;
         momentarySteps[step]();
         if (step == 0)
-            focusEditor([&] { testMomentaryShortcuts(1); });
+            focusEditor([&] {
+                testTextEntryTabRouting(*shortcutEditor, *shortcutProcessor, output, "vst3");
+                testMomentaryShortcuts(1);
+            });
         else if (step + 1 < momentarySteps.size())
             afterInput([&, step] { testMomentaryShortcuts(step + 1); });
     };
@@ -3996,7 +4048,10 @@ void testKeyboardFocus(const juce::File& output)
               parent.removeChildComponent(control);
           parent.setContentNonOwned(laneEditor.get(), true);
           parent.toFront(true);
-          focusEditor([&] { testArrow(0); });
+          focusEditor([&] {
+              testTextEntryTabRouting(*laneEditor, *laneProcessor, output, "standalone");
+              testArrow(0);
+          });
       }
       else
       {
@@ -10720,6 +10775,12 @@ int main(int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI initialiser;
     const juce::File output(argc > 1 ? argv[1] : "/tmp/beat-scholar-editor-tests");
     check(output.createDirectory().wasOk(), "create screenshot directory");
+    if (argc > 2 && juce::String(argv[2]) == "--keyboard-focus")
+    {
+        testKeyboardFocus(output);
+        std::cout << "Keyboard focus failures: " << failures << '\n';
+        return failures == 0 ? 0 : 1;
+    }
     if (argc > 2 && juce::String(argv[2]) == "--audition-reference")
     {
         testKitAuditionToggleAcrossTransports(output);
