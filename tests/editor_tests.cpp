@@ -9323,8 +9323,8 @@ void testPlaybackLightingFollowsHostTriggers(const juce::File& output, bool fact
               && BeatScholarLinuxEditorTestAccess::sliceLit(*editor, 0, 0, 0),
           "whole-beat sector remains fully lit for nearly half a second");
     saveVisual(*editor, output, "playback-whole-beat-held.png");
-    check(BeatScholarLinuxEditorTestAccess::displayInterval(*editor) <= 17,
-          "playback refresh runs at least 60Hz");
+    check(BeatScholarLinuxEditorTestAccess::displayInterval(*editor) == 10,
+          "playback refresh matches the original 10 ms playhead listener");
     render(23520, false);
     check(BeatScholarLinuxEditorTestAccess::displayInterval(*editor) == 50,
           "idle display returns to 20Hz");

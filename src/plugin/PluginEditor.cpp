@@ -5394,7 +5394,8 @@ void BeatScholarLinuxEditor::updateDisplay(int activityCount)
     const auto patternId = state.patterns[state.activePattern].runtimeId;
     const auto epoch = processor_.playbackActivityEpoch();
     const bool sequencing = processor_.isTransportPlaying() && state.global.sequencerEnabled;
-    const int displayInterval = sequencing ? 1000 / 60 : 1000 / 20;
+    // Original 1.6.2 polls each slice's playhead listener on its 10 ms timer.
+    const int displayInterval = sequencing ? 10 : 1000 / 20;
     if (getTimerInterval(0) != displayInterval) startTimer(0, displayInterval);
     if (!sequencing || patternId != flashPattern_ || epoch != flashEpoch_)
     {
