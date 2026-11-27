@@ -2408,7 +2408,11 @@ void BeatScholarLinuxEditor::resized()
     padMute_.setBounds(designRect(getWidth(), getHeight(), 414.0f, 532.0f, 24.0f, 18.0f));
     padSolo_.setBounds(designRect(getWidth(), getHeight(), 449.0f, 532.0f, 24.0f, 18.0f));
     mono_.setBounds(designRect(getWidth(), getHeight(), 490.0f, 532.0f, 60.0f, 18.0f));
-    oneShot_.setBounds(designRect(getWidth(), getHeight(), custom ? 440.0f : 452.0f, custom ? 672.0f : 650.0f, 80.0f, 24.0f));
+    // Single-layer factory pads place One Shot below the glyph; Kick/Snare
+    // leave room for their second selector. Keep custom-sample geometry separate.
+    const float oneShotY = custom ? 672.0f
+                                 : (processor_.projectState().ui.selectedPad <= 1 ? 650.0f : 671.0f);
+    oneShot_.setBounds(designRect(getWidth(), getHeight(), custom ? 440.0f : 452.0f, oneShotY, 80.0f, 24.0f));
 
     if (module_ == Module::randomizer)
     {
@@ -3765,6 +3769,7 @@ void BeatScholarLinuxEditor::configureModuleControls()
     const auto& pad = state.kit.pads[state.ui.selectedPad];
     const bool randomizerVisible = module_ == Module::randomizer;
     const bool custom = !pad.customSampleLayered && !pad.customSamples[0].name.empty();
+    const bool hasTwoFactoryLayers = state.ui.selectedPad <= 1;
     const std::array<bool, 4> moduleEnabled { state.randomizer.noteSelectionEnabled,
         state.randomizer.slicingEnabled, state.randomizer.triggeringEnabled, state.randomizer.velocityEnabled };
     for (std::size_t index = 0; index < randomModuleToggles_.size(); ++index)
@@ -3816,7 +3821,7 @@ void BeatScholarLinuxEditor::configureModuleControls()
     for (std::size_t index = 0; index < values.size(); ++index)
     {
         const bool visibleControl = index < visible && !(randomizerVisible && index >= 4 && index <= 6)
-                                    && !(!randomizerVisible && custom && index == 4);
+                                    && !(!randomizerVisible && (custom || !hasTwoFactoryLayers) && index == 4);
         soundControls_[index].setVisible(visibleControl && !(randomizerVisible && index == 7));
         soundControls_[index].setEnabled(!randomizerVisible || index >= 4
                                          || moduleEnabled[index < 2 ? 2 : 3]);
@@ -3862,7 +3867,6 @@ void BeatScholarLinuxEditor::configureModuleControls()
     }
     if (!randomizerVisible)
     {
-        const bool hasTwoFactoryLayers = state.ui.selectedPad <= 1;
         soundControls_[4].setEnabled(hasTwoFactoryLayers);
         soundLabels_[4].setEnabled(hasTwoFactoryLayers);
         soundControls_[4].setTooltip(hasTwoFactoryLayers
@@ -3938,7 +3942,7 @@ void BeatScholarLinuxEditor::configureModuleControls()
     clearSample_.setVisible(!randomizerVisible
                             && (!pad.customSamples[0].empty() || !pad.customSamples[1].empty()));
     layerOne_.setVisible(!randomizerVisible);
-    layerTwo_.setVisible(!randomizerVisible && !custom && state.ui.selectedPad <= 1);
+    layerTwo_.setVisible(!randomizerVisible && !custom && hasTwoFactoryLayers);
     padSolo_.setVisible(!randomizerVisible);
     padMute_.setVisible(!randomizerVisible);
     oneShot_.setVisible(!randomizerVisible);

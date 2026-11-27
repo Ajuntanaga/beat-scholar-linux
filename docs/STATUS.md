@@ -987,3 +987,10 @@ Evidence in recovery: `sweep2-repairs-20261126/{ctest.log,resource-observation.j
 ## Large clap and hi-hat contours — 2026-11-26
 
 Refined the large clap and both hi-hat drawings against retained original captures. Both uninstalled formats built. All six target comparisons improved at 960/1280; 32/32 wrapper crops match and 26/26 non-target crops are unchanged. Lower-panel checks and editor/actual VST3 regressions passed (2/2). Bounded serial jobs peaked at 433.2 MiB. Fine visual differences remain; these measurements do not establish full parity. Evidence: recovery/cymbal-clap-contours-20261127/RESULT.md. No installed artifacts or live REAPER changes.
+
+
+## Factory sample-layer layout — 2026-11-26
+
+The 14 single-layer factory pads now omit the blend slider and place One Shot below the glyph, matching all retained original 1.6.2 factory layouts. Kick and Snare Hit retain two selectors and their blend slider. Custom-sample layout is unchanged.
+
+Both uninstalled formats built. All 32 wrapper panel pairs match; four dual-layer panels and the custom-sample screenshot remain unchanged. Single-layer One Shot positions differ by at most 0.5 pixels from retained originals. Lower-panel checks passed; editor/actual VST3 regressions passed 2/2. The serial job reported 1.1G peak under a 3 GiB cap. Full parity remains open. Evidence: recovery/sample-layer-layout-20261127/RESULT.md.

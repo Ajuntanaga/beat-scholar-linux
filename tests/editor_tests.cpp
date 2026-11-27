@@ -6940,6 +6940,56 @@ void captureFactoryGlyphReference(const juce::File& output)
             }
 }
 
+void testFactoryLayerPanel()
+{
+    // Original 1.6.2 sample-glyph-all-reference captures: only Kick/Snare
+    // show two selectors and a blend fader. Other factory pads put One Shot
+    // at y=683 (1280) / 512 (960), below the glyph.
+    for (const auto wrapper : { juce::AudioProcessor::wrapperType_Standalone,
+                               juce::AudioProcessor::wrapperType_VST3 })
+        for (const int width : { 960, 1280 })
+        {
+            auto processor = makeProcessorForWrapper(wrapper);
+            processor->projectState() = bsl::ProjectState::makeMainInit();
+            BeatScholarLinuxEditor editor(*processor);
+            editor.setSize(width, width * 720 / 1280);
+            editor.setVisible(true);
+            const float scale = float(width) / 1280.0f;
+            // Return to Kick after all single-layer pads to catch stale visibility.
+            for (int selection = 0; selection <= 16; ++selection)
+            {
+                const int pad = selection % 16;
+                auto* button = childWithId<juce::TextButton>(editor, "pad." + juce::String(pad));
+                check(button != nullptr, "factory pad selection exists");
+                if (button == nullptr) continue;
+                button->onClick();
+                check(processor->projectState().ui.selectedPad == std::size_t(pad),
+                      "factory panel follows pad selection");
+                int visibleLayers = 0;
+                for (auto* child : editor.getChildren())
+                    visibleLayers += child->isVisible() && child->getComponentID() == "sample.layer";
+                check(visibleLayers == (pad <= 1 ? 2 : 1), "factory layer count matches original");
+                auto* mix = childWithId<juce::Slider>(editor, "sound.4");
+                check(mix != nullptr && mix->isVisible() == (pad <= 1),
+                      "only two-layer factory pads show the blend fader");
+                auto* oneShot = childWithId<juce::TextButton>(editor, "sample.oneshot");
+                check(oneShot != nullptr, "factory panel exposes One Shot");
+                if (oneShot == nullptr) continue;
+                check(std::abs(oneShot->getBounds().getCentreY() / scale - (pad <= 1 ? 663.0f : 683.0f)) <= 1.5f,
+                      "factory One Shot position matches original layer layout");
+                check(editor.getComponentAt(oneShot->getBounds().getCentre()) == oneShot,
+                      "relocated One Shot remains reachable");
+                const bool before = processor->projectState().kit.pads[pad].oneShot;
+                const auto event = visualEvent(editor, oneShot->getBounds().getCentre().toFloat())
+                                       .getEventRelativeTo(oneShot);
+                static_cast<juce::Component*>(oneShot)->mouseDown(event);
+                static_cast<juce::Component*>(oneShot)->mouseUp(event);
+                check(processor->projectState().kit.pads[pad].oneShot != before,
+                      "One Shot click changes the selected pad after switching layer layouts");
+            }
+        }
+}
+
 void testOriginalLowerPanelFrames(const juce::File& output)
 {
     // Original 1.6.2 captures 18-horizontal-min and 23-resize-border in
@@ -10665,6 +10715,7 @@ int main(int argc, char** argv)
     }
     if (argc > 2 && juce::String(argv[2]) == "--lower-panel-reference")
     {
+        testFactoryLayerPanel();
         testOriginalLowerPanelFrames(output.getChildFile("lower-panel"));
         testCustomSampleAndMasterVisualStates(output);
         testRenderedLevelMetersAndLayout(output);
@@ -10822,6 +10873,7 @@ int main(int argc, char** argv)
     captureTutorialFactorySoundSelection(output);
     testTutorialPatternAddTile(output);
     testArrangementOverflowAndContextActions(output);
+    testFactoryLayerPanel();
     testOriginalLowerPanelFrames(output.getChildFile("lower-panel"));
     testOriginalZoomGeometry(output.getChildFile("original-zoom"));
     testOriginalZoomRailGestures(output.getChildFile("zoom-rail"));
